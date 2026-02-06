@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vantage Feed</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <img src="../icons/icon48.png" alt="Vantage Feed" width="28" height="28">
+        <h1>Vantage Feed</h1>
+      </div>
+      <span class="version" id="versionDisplay"></span>
+    </header>
+
+    <!-- Setup View - Connection String Input -->
+    <div id="setupView" class="view">
+      <div class="welcome-section">
+        <h2>Connect to Server</h2>
+        <p class="welcome-text">Paste your connection string from the MCP server console to get started.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="connectionString">Connection String</label>
+        <textarea
+          id="connectionString"
+          placeholder="vf://eyJ2IjoxLCJz..."
+          autocomplete="off"
+          rows="3"
+        ></textarea>
+      </div>
+
+      <button class="connect-btn" id="connectBtn">
+        <span>Connect</span>
+      </button>
+
+      <div class="error-message" id="setupError"></div>
+    </div>
+
+    <!-- Connected View -->
+    <div id="connectedView" class="view hidden">
+      <div class="status-card connected">
+        <div class="status-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <div class="status-content">
+          <span class="status-title">Connected</span>
+          <span class="status-subtitle" id="serverUrlDisplay">ws://localhost:3456</span>
+        </div>
+      </div>
+
+      <button class="disconnect-btn" id="disconnectBtn">
+        Disconnect
+      </button>
+    </div>
+
+    <!-- Connecting View -->
+    <div id="connectingView" class="view hidden">
+      <div class="status-card connecting">
+        <div class="status-icon spinning">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        </div>
+        <div class="status-content">
+          <span class="status-title">Connecting...</span>
+          <span class="status-subtitle" id="connectingUrlDisplay">ws://localhost:3456</span>
+        </div>
+      </div>
+
+      <div class="error-message" id="connectingError"></div>
+    </div>
+
+    <!-- Disconnected View -->
+    <div id="disconnectedView" class="view hidden">
+      <div class="status-card disconnected">
+        <div class="status-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+          </svg>
+        </div>
+        <div class="status-content">
+          <span class="status-title">Disconnected</span>
+          <span class="status-subtitle" id="disconnectedUrlDisplay">ws://localhost:3456</span>
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button class="reconnect-btn" id="reconnectBtn">Reconnect</button>
+        <button class="forget-btn" id="forgetBtn">Forget</button>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span>MCP Browser Control</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
