@@ -1,10 +1,10 @@
-# Vantage Feed MCP Integration Guide
+# WebPilot MCP Integration Guide
 
-Reference documentation for AI agents integrating with the Vantage Feed browser control MCP server.
+Reference documentation for AI agents integrating with the WebPilot browser control MCP server.
 
 ## Overview
 
-The Vantage Feed MCP server provides browser tab control capabilities to AI agents via the Model Context Protocol (MCP). Agents can list, open, and close browser tabs in the user's Chrome browser.
+The WebPilot MCP server provides browser tab control capabilities to AI agents via the Model Context Protocol (MCP). Agents can list, open, and close browser tabs in the user's Chrome browser.
 
 ## Available Tools
 
@@ -42,7 +42,7 @@ Lists all open browser tabs.
 - Tab IDs are stable for the lifetime of the tab
 - Navigating to a new URL within the same tab keeps the same ID
 - Tab IDs only change when the tab is closed and a new one is opened
-- Tabs interacted with via VantageFeed are automatically grouped into a cyan "VantageFeed" tab group
+- Tabs interacted with via WebPilot are automatically grouped into a cyan "WebPilot" tab group
 
 ---
 
@@ -442,7 +442,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
   - ≥ 1200px: max 1000Hz
 - **Acceleration curve**: slow start → peak speed at 50-80% → slow end
 - Both visual cursor and CDP `mouseMoved` events are dispatched for each path point
-- SVG arrow pointer with "VantageFeed" text label:
+- SVG arrow pointer with "WebPilot" text label:
   - Arrow: black fill, white stroke, RGB color-shifting outer glow
   - Text: black fill, white stroke, RGB color-shifting outer glow (synced with arrow)
   - Text positioned to the right of cursor, vertically centered
@@ -776,7 +776,7 @@ Agent:
 ### Adding to Claude Code
 
 ```bash
-claude mcp add -s project --transport sse vantage-feed "http://localhost:3456/sse"
+claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
 ```
 
 ### Prerequisites

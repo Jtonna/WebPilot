@@ -1,4 +1,4 @@
-# Vantage Feed - MCP Browser Control
+# WebPilot - MCP Browser Control
 
 Self-contained Chrome extension and MCP server for AI agent browser control.
 
@@ -35,7 +35,7 @@ MCP Server running on :3456
 
 ### 3. Configure the Extension
 
-1. Click the Vantage Feed extension icon
+1. Click the WebPilot extension icon
 2. **Copy the connection string** from the server output
 3. **Paste it** into the extension popup
 4. Click **Connect**
@@ -46,7 +46,7 @@ MCP Server running on :3456
 Run this command in your project:
 
 ```bash
-claude mcp add -s project --transport sse vantage-feed "http://localhost:3456/sse"
+claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
 ```
 
 Or add to your `.mcp.json` manually:
@@ -54,7 +54,7 @@ Or add to your `.mcp.json` manually:
 ```json
 {
   "mcpServers": {
-    "vantage-feed": {
+    "webpilot": {
       "type": "sse",
       "url": "http://localhost:3456/sse"
     }
@@ -75,7 +75,7 @@ In Claude Code, try:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    vantage-feed-extension                   │
+│                         webpilot                            │
 │                                                             │
 │  ┌─────────────────────┐       ┌─────────────────────┐     │
 │  │  unpacked-extension │       │     mcp-server      │     │
@@ -112,7 +112,7 @@ In Claude Code, try:
 ## Folder Structure
 
 ```
-vantage-feed-extension/
+webpilot/
 ├── unpacked-extension/           # Chrome extension (load in chrome://extensions)
 │   ├── manifest.json
 │   ├── background.js             # Thin orchestrator (~330 lines)
@@ -202,7 +202,7 @@ The extension uses **manual connect** - it does NOT auto-connect on browser star
 
 **Option 2: Clear storage via DevTools**
 1. Go to `chrome://extensions/`
-2. Find Vantage Feed and click the "Service worker" link
+2. Find WebPilot and click the "Service worker" link
 3. In the DevTools console, run:
    ```js
    chrome.storage.local.clear()
@@ -224,6 +224,6 @@ npm run dev
 For extension changes:
 1. Edit files in `unpacked-extension/`
 2. Go to `chrome://extensions/`
-3. Click the refresh icon on the Vantage Feed extension
+3. Click the refresh icon on the WebPilot extension
 
 See [EXTENSION.md](./EXTENSION.md) for detailed technical documentation.

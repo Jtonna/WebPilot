@@ -1,6 +1,6 @@
-# Vantage Feed Development Guide
+# WebPilot Development Guide
 
-Guide for adding new features to the Vantage Feed browser control extension.
+Guide for adding new features to the WebPilot browser control extension.
 
 ## Architecture Overview
 
@@ -177,7 +177,7 @@ Use this checklist when adding a new tool:
 
 After changing extension files:
 1. Go to `chrome://extensions`
-2. Click refresh icon on Vantage Feed
+2. Click refresh icon on WebPilot
 3. Re-connect in the extension popup
 
 ### 2. Restart the MCP Server
@@ -204,7 +204,7 @@ Ask Claude to use your new tool:
 
 **Extension logs:**
 1. Go to `chrome://extensions`
-2. Click "Service worker" link on Vantage Feed
+2. Click "Service worker" link on WebPilot
 3. Check Console tab for errors
 
 **Server logs:**
@@ -375,7 +375,7 @@ Site-specific formatters extract structured data (posts, feeds, etc.) from acces
 ### Architecture
 
 ```
-vantage-feed-extension/
+webpilot/
 ├── mcp-server/src/mcp-handler.js  # Tool definitions
 ├── unpacked-extension/
 │   ├── background.js              # Command handlers

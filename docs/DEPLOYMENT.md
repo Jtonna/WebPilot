@@ -1,4 +1,4 @@
-# VantageFeed Extension Deployment
+# WebPilot Extension Deployment
 
 How the Chrome extension is packaged and installed for end users.
 
@@ -11,10 +11,10 @@ Due to Chrome's security restrictions, the extension must be sideloaded via Deve
 unpacked-extension/ --> electron build --> bundled in installer
 
 [Install Time - Windows]
-NSIS extracts extension to: %LOCALAPPDATA%\VantageFeed\extension\
+NSIS extracts extension to: %LOCALAPPDATA%\WebPilot\extension\
 
 [Install Time - macOS]
-DMG extracts extension to: ~/Library/Application Support/VantageFeed/extension/
+DMG extracts extension to: ~/Library/Application Support/WebPilot/extension/
 
 [First Launch]
 App detects extension not loaded --> shows onboarding screen
@@ -43,7 +43,7 @@ The extension is bundled with the Electron app via `extraResources`:
 ```yaml
 # electron-builder.yml
 extraResources:
-  - from: "../vantage-feed-extension/unpacked-extension"
+  - from: "../webpilot/unpacked-extension"
     to: "extension"
     filter:
       - "**/*"
@@ -57,7 +57,7 @@ This copies `unpacked-extension/` into the app resources during build.
 
 The NSIS installer extracts the extension to:
 ```
-%LOCALAPPDATA%\VantageFeed\extension\
+%LOCALAPPDATA%\WebPilot\extension\
 ```
 
 This path is:
@@ -69,7 +69,7 @@ This path is:
 
 The app extracts the extension on first run to:
 ```
-~/Library/Application Support/VantageFeed/extension/
+~/Library/Application Support/WebPilot/extension/
 ```
 
 ## User Onboarding Flow
@@ -113,14 +113,14 @@ When updating:
 
 1. Run `build-windows.bat` (or `build-mac.sh`)
 2. Run the installer
-3. Launch VantageFeed app
+3. Launch WebPilot app
 4. Follow the onboarding flow to sideload the extension
 5. Verify extension appears in `chrome://extensions`
 6. Test extension functionality
 
 To reset for re-testing:
 1. Remove the extension from `chrome://extensions`
-2. Delete `%LOCALAPPDATA%\VantageFeed\extension\` (Windows) or `~/Library/Application Support/VantageFeed/extension/` (macOS)
+2. Delete `%LOCALAPPDATA%\WebPilot\extension\` (Windows) or `~/Library/Application Support/WebPilot/extension/` (macOS)
 3. Uninstall and reinstall the app
 
 ## Key Files
