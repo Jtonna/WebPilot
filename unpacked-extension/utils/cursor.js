@@ -51,7 +51,7 @@ export function generateCursorCreateCode(x, y) {
       path.setAttribute('stroke-width', '1.5');
       svg.appendChild(path);
 
-      // Create text SVG for "VantageFeed" label
+      // Create text SVG for "WebPilot" label
       const textSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       textSvg.setAttribute('width', '90');
       textSvg.setAttribute('height', '20');
@@ -70,7 +70,7 @@ export function generateCursorCreateCode(x, y) {
       textOuter.setAttribute('stroke', '#ff0000');
       textOuter.setAttribute('stroke-width', '4');
       textOuter.id = '__mcp_text_outer__';
-      textOuter.textContent = 'VantageFeed';
+      textOuter.textContent = 'WebPilot';
       textSvg.appendChild(textOuter);
 
       // Middle white stroke text
@@ -83,7 +83,7 @@ export function generateCursorCreateCode(x, y) {
       textMiddle.setAttribute('fill', 'none');
       textMiddle.setAttribute('stroke', '#fff');
       textMiddle.setAttribute('stroke-width', '2');
-      textMiddle.textContent = 'VantageFeed';
+      textMiddle.textContent = 'WebPilot';
       textSvg.appendChild(textMiddle);
 
       // Inner black fill text
@@ -94,7 +94,7 @@ export function generateCursorCreateCode(x, y) {
       textInner.setAttribute('font-size', '14');
       textInner.setAttribute('font-weight', '600');
       textInner.setAttribute('fill', '#000');
-      textInner.textContent = 'VantageFeed';
+      textInner.textContent = 'WebPilot';
       textSvg.appendChild(textInner);
 
       // Add RGB color shifting animation for outer strokes (cursor and text)

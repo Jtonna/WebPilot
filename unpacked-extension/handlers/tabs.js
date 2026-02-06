@@ -1,32 +1,32 @@
 /**
  * Tab handlers - create, close, and list browser tabs.
- * Includes automatic tab group organization for VantageFeed.
+ * Includes automatic tab group organization for WebPilot.
  */
 
-// Track the VantageFeed group ID (null if not yet created)
-let vantageFeedGroupId = null;
+// Track the WebPilot group ID (null if not yet created)
+let webPilotGroupId = null;
 
 /**
- * Ensure the VantageFeed tab group exists, creating if needed.
+ * Ensure the WebPilot tab group exists, creating if needed.
  * Returns the group ID or null if no group exists yet.
  */
 async function ensureTabGroup() {
   // If we have a cached ID, verify it still exists
-  if (vantageFeedGroupId !== null) {
+  if (webPilotGroupId !== null) {
     try {
-      const group = await chrome.tabGroups.get(vantageFeedGroupId);
-      if (group) return vantageFeedGroupId;
+      const group = await chrome.tabGroups.get(webPilotGroupId);
+      if (group) return webPilotGroupId;
     } catch {
       // Group no longer exists, reset
-      vantageFeedGroupId = null;
+      webPilotGroupId = null;
     }
   }
 
-  // Search for existing VantageFeed group
-  const groups = await chrome.tabGroups.query({ title: 'VantageFeed' });
+  // Search for existing WebPilot group
+  const groups = await chrome.tabGroups.query({ title: 'WebPilot' });
   if (groups.length > 0) {
-    vantageFeedGroupId = groups[0].id;
-    return vantageFeedGroupId;
+    webPilotGroupId = groups[0].id;
+    return webPilotGroupId;
   }
 
   // No existing group - return null (will be created on first tab add)
@@ -34,7 +34,7 @@ async function ensureTabGroup() {
 }
 
 /**
- * Add a tab to the VantageFeed group.
+ * Add a tab to the WebPilot group.
  * Creates the group if it doesn't exist.
  *
  * @param {number} tabId - Tab ID to add to group
@@ -48,10 +48,10 @@ export async function addTabToGroup(tabId) {
       // Create new group with this tab
       groupId = await chrome.tabs.group({ tabIds: tabId });
       await chrome.tabGroups.update(groupId, {
-        title: 'VantageFeed',
+        title: 'WebPilot',
         color: 'cyan'
       });
-      vantageFeedGroupId = groupId;
+      webPilotGroupId = groupId;
     } else {
       // Add to existing group
       await chrome.tabs.group({ tabIds: tabId, groupId });
@@ -81,7 +81,7 @@ export async function createTab(params) {
 
   const tab = await chrome.tabs.create({ url, active: true });
 
-  // Add to VantageFeed group (non-blocking, non-fatal)
+  // Add to WebPilot group (non-blocking, non-fatal)
   addTabToGroup(tab.id);
 
   return {

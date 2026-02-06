@@ -1,8 +1,8 @@
-# Vantage Feed Extension - Technical Documentation
+# WebPilot Extension - Technical Documentation
 
 ## Overview
 
-Vantage Feed is a Chrome extension that enables AI agents to control browser tabs via the Model Context Protocol (MCP). It consists of two components:
+WebPilot is a Chrome extension that enables AI agents to control browser tabs via the Model Context Protocol (MCP). It consists of two components:
 
 1. **Chrome Extension** - Executes browser commands using Chrome APIs
 2. **MCP Server** - Bridges MCP-compatible agents to the extension via WebSocket

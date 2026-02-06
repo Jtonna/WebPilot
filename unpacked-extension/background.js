@@ -28,7 +28,7 @@ let config = {
 
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Vantage Feed extension installed');
+  console.log('WebPilot extension installed');
   loadConfig();
 });
 

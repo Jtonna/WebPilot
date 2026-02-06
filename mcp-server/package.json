@@ -1,5 +1,5 @@
 {
-  "name": "vantage-feed-mcp-server",
+  "name": "webpilot-mcp-server",
   "version": "0.2.0",
   "description": "MCP server for browser control via Chrome extension",
   "main": "index.js",
