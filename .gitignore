@@ -54,3 +54,5 @@ config.local.json
 
 # Additional editor files
 *.code-workspace
+/packages/electron/.next
+/packages/electron/out
