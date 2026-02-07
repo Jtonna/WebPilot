@@ -40,3 +40,17 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Build output - pkg compiled binaries
+*.exe
+!packages/extension/icons/*
+
+# pkg build cache
+.pkg-cache/
+pkg-cache/
+
+# Additional environment and secrets
+config.local.json
+
+# Additional editor files
+*.code-workspace
