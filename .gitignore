@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Build output
 dist/
@@ -43,7 +42,7 @@ temp/
 
 # Build output - pkg compiled binaries
 *.exe
-!packages/extension/icons/*
+!packages/chrome-extension-unpacked/icons/*
 
 # pkg build cache
 .pkg-cache/
