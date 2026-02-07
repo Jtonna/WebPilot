@@ -60,12 +60,7 @@ function deployFiles() {
 
     // Deploy server binary (only if built)
     if (fs.existsSync(serverDistDir)) {
-      // Only deploy the server binary for the current platform
-      const platformSuffix = process.platform === 'win32' ? '-win.exe'
-        : process.platform === 'darwin' ? '-macos'
-        : '-linux';
-
-      const files = fs.readdirSync(serverDistDir).filter(f => f.endsWith(platformSuffix) || !f.includes('-'));
+      const files = fs.readdirSync(serverDistDir);
       for (const file of files) {
         fs.copyFileSync(
           path.join(serverDistDir, file),
@@ -90,12 +85,7 @@ function deployFiles() {
 
     // Deploy server binary
     if (fs.existsSync(serverResourceDir)) {
-      // Only deploy the server binary for the current platform
-      const platformSuffix = process.platform === 'win32' ? '-win.exe'
-        : process.platform === 'darwin' ? '-macos'
-        : '-linux';
-
-      const files = fs.readdirSync(serverResourceDir).filter(f => f.endsWith(platformSuffix) || !f.includes('-'));
+      const files = fs.readdirSync(serverResourceDir);
       for (const file of files) {
         fs.copyFileSync(
           path.join(serverResourceDir, file),
