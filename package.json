@@ -1,17 +1,17 @@
 {
-  "name": "webpilot",
-  "version": "0.0.1",
-  "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
-  "scripts": {
-    "dev": "echo Available commands: && echo   npm run dev:server     - Start the MCP server in watch mode && echo   npm run dev:onboarding  - Start the onboarding UI && echo   npm run dist:win        - Build Windows installer && echo   npm run dist:mac        - Build macOS installer && echo   npm run dist:linux      - Build Linux installer && exit 1",
-    "dev:server": "npm run dev --workspace=packages/server-for-chrome-extension",
-    "dev:onboarding": "npm run dev --workspace=packages/electron",
-    "start": "npm run start --workspace=packages/server-for-chrome-extension",
-    "dist:win": "npm run build:win --workspace=packages/server-for-chrome-extension && npm run dist:win --workspace=packages/electron",
-    "dist:mac": "npm run build:mac --workspace=packages/server-for-chrome-extension && npm run dist:mac --workspace=packages/electron",
-    "dist:linux": "npm run build:linux --workspace=packages/server-for-chrome-extension && npm run dist:linux --workspace=packages/electron"
-  }
+    "name":  "webpilot",
+    "version":  "0.1.0",
+    "private":  true,
+    "workspaces":  [
+                       "packages/*"
+                   ],
+    "scripts":  {
+                    "dev":  "echo Available commands: \u0026\u0026 echo   npm run dev:server     - Start the MCP server in watch mode \u0026\u0026 echo   npm run dev:onboarding  - Start the onboarding UI \u0026\u0026 echo   npm run dist:win        - Build Windows installer \u0026\u0026 echo   npm run dist:mac        - Build macOS installer \u0026\u0026 echo   npm run dist:linux      - Build Linux installer \u0026\u0026 exit 1",
+                    "dev:server":  "npm run dev --workspace=packages/server-for-chrome-extension",
+                    "dev:onboarding":  "npm run dev --workspace=packages/electron",
+                    "start":  "npm run start --workspace=packages/server-for-chrome-extension",
+                    "dist:win":  "npm run build:win --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:win --workspace=packages/electron",
+                    "dist:mac":  "npm run build:mac --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:mac --workspace=packages/electron",
+                    "dist:linux":  "npm run build:linux --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:linux --workspace=packages/electron"
+                }
 }
