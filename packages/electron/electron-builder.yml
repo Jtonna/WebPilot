@@ -31,7 +31,7 @@ nsis:
 mac:
   target:
     - target: dmg
-      arch: [universal]
+      arch: [x64]
   artifactName: ${productName}-${version}-mac.${ext}
   category: public.app-category.utilities
 
