@@ -1,0 +1,42 @@
+appId: com.webpilot.app
+productName: WebPilot
+npmRebuild: false
+publish: null
+
+directories:
+  output: ../../dist
+
+files:
+  - electron/**/*
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: ../server-for-chrome-extension/dist
+    to: server
+  - from: ../chrome-extension-unpacked
+    to: chrome-extension
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-windows.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: false
+  perMachine: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+  artifactName: ${productName}-${version}-mac.${ext}
+  category: public.app-category.utilities
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  artifactName: ${productName}-${version}-linux.${ext}
