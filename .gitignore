@@ -55,3 +55,4 @@ config.local.json
 *.code-workspace
 /packages/electron/.next
 /packages/electron/out
+.claude/settings.local.json
