@@ -9,7 +9,6 @@ const {
   getDaemonLogPath,
   getPidPath,
   getPortPath,
-  getPort,
 } = require('./paths');
 
 // Registry Run key — standard auto-start mechanism, no admin required
@@ -66,31 +65,47 @@ function status() {
       registered = true;
     } catch (e) { /* not registered */ }
 
-    // Check PID file
+    // Check PID file and validate PID is alive
     let pid = null;
     try {
       pid = fs.readFileSync(getPidPath(), 'utf8').trim();
     } catch (e) { /* no pid file */ }
 
-    // Check port file
+    let pidAlive = false;
+    if (pid) {
+      try {
+        process.kill(parseInt(pid, 10), 0);
+        pidAlive = true;
+      } catch (e) {
+        // Process is dead — clean up stale files
+        pid = null;
+        try { fs.unlinkSync(getPidPath()); } catch (e2) { /* */ }
+        try { fs.unlinkSync(getPortPath()); } catch (e2) { /* */ }
+      }
+    }
+
+    // Check port file — only if PID is alive
     let port = null;
-    try {
-      port = fs.readFileSync(getPortPath(), 'utf8').trim();
-    } catch (e) { /* no port file */ }
+    if (pidAlive) {
+      try {
+        port = fs.readFileSync(getPortPath(), 'utf8').trim();
+      } catch (e) { /* no port file */ }
+    }
 
-    // Check if server is listening on the port
+    // Check if server is listening on the port (only if we have a port)
     let portListening = false;
-    const checkPort = port || getPort();
-    try {
-      const netstatOutput = execSync(`netstat -ano | findstr ":${checkPort}"`, {
-        stdio: 'pipe',
-        encoding: 'utf8',
-        windowsHide: true,
-      });
-      portListening = netstatOutput.includes('LISTENING');
-    } catch (e) { /* port not in use */ }
+    if (port) {
+      try {
+        const netstatOutput = execSync(`netstat -ano | findstr ":${port}"`, {
+          stdio: 'pipe',
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+        portListening = netstatOutput.includes('LISTENING');
+      } catch (e) { /* port not in use */ }
+    }
 
-    const running = portListening || !!pid;
+    const running = pidAlive && (portListening || !!pid);
 
     return {
       success: true,
@@ -102,10 +117,10 @@ function status() {
         `Data dir:   ${getDataDir()}`,
         `Service:    ${registered ? 'Registered (WebPilotServer)' : 'Not registered'}`,
         `Running:    ${running ? 'yes' : 'no'}`,
-        pid ? `PID:        ${pid}` : null,
-        `Port:       ${checkPort}`,
-        running ? `Health:     http://localhost:${checkPort}/health` : null,
-        running ? `SSE:        http://localhost:${checkPort}/sse` : null,
+        running && pid ? `PID:        ${pid}` : null,
+        running && port ? `Port:       ${port}` : null,
+        running && port ? `Health:     http://localhost:${port}/health` : null,
+        running && port ? `SSE:        http://localhost:${port}/sse` : null,
       ].filter(Boolean).join('\n'),
     };
   } catch (err) {

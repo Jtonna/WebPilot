@@ -11,7 +11,6 @@ const {
   getDaemonLogPath,
   getPidPath,
   getPortPath,
-  getPort,
 } = require('./paths');
 
 const UNIT_NAME = 'webpilot-server.service';
@@ -116,15 +115,30 @@ function status() {
       } catch (e) { /* inactive or failed */ }
     }
 
-    // Check PID/port files
+    // Check PID file and validate PID is alive
     let pid = null;
     try { pid = fs.readFileSync(getPidPath(), 'utf8').trim(); } catch (e) { /* no file */ }
 
-    let port = null;
-    try { port = fs.readFileSync(getPortPath(), 'utf8').trim(); } catch (e) { /* no file */ }
+    let pidAlive = false;
+    if (pid) {
+      try {
+        process.kill(parseInt(pid, 10), 0);
+        pidAlive = true;
+      } catch (e) {
+        // Process is dead — clean up stale files
+        pid = null;
+        try { fs.unlinkSync(getPidPath()); } catch (e2) { /* */ }
+        try { fs.unlinkSync(getPortPath()); } catch (e2) { /* */ }
+      }
+    }
 
-    const checkPort = port || getPort();
-    const running = systemdRunning || !!pid;
+    // Check port file — only if PID is alive
+    let port = null;
+    if (pidAlive) {
+      try { port = fs.readFileSync(getPortPath(), 'utf8').trim(); } catch (e) { /* no file */ }
+    }
+
+    const running = pidAlive && (systemdRunning || !!pid);
 
     return {
       success: true,
@@ -136,10 +150,10 @@ function status() {
         `Data dir:   ${getDataDir()}`,
         `Service:    ${registered ? 'Registered (WebPilotServer)' : 'Not registered'}`,
         `Running:    ${running ? 'yes' : 'no'}`,
-        pid ? `PID:        ${pid}` : null,
-        `Port:       ${checkPort}`,
-        running ? `Health:     http://localhost:${checkPort}/health` : null,
-        running ? `SSE:        http://localhost:${checkPort}/sse` : null,
+        running && pid ? `PID:        ${pid}` : null,
+        running && port ? `Port:       ${port}` : null,
+        running && port ? `Health:     http://localhost:${port}/health` : null,
+        running && port ? `SSE:        http://localhost:${port}/sse` : null,
       ].filter(Boolean).join('\n'),
     };
   } catch (err) {
