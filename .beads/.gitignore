@@ -2,6 +2,7 @@
 beads.db
 beads.db-shm
 beads.db-wal
+*.db?*
 bd.sock
 daemon.lock
 daemon.pid
@@ -9,3 +10,15 @@ daemon.log
 .jsonl.lock
 .local_version
 last-touched
+redirect
+.sync.lock
+sync_base.jsonl
+export-state/
+
+# Merge artifacts
+beads.base.jsonl
+beads.left.jsonl
+beads.right.jsonl
+beads.base.meta.json
+beads.left.meta.json
+beads.right.meta.json
