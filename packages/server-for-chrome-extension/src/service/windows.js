@@ -117,11 +117,11 @@ function status() {
         `Data dir:   ${getDataDir()}`,
         `Service:    ${registered ? 'Registered (WebPilotServer)' : 'Not registered'}`,
         `Running:    ${running ? 'yes' : 'no'}`,
-        running && pid ? `PID:        ${pid}` : null,
-        running && port ? `Port:       ${port}` : null,
-        running && port ? `Health:     http://localhost:${port}/health` : null,
-        running && port ? `SSE:        http://localhost:${port}/sse` : null,
-      ].filter(Boolean).join('\n'),
+        `PID:        ${running && pid ? pid : '-'}`,
+        `Port:       ${running && port ? port : '-'}`,
+        `Health:     ${running && port ? 'http://localhost:' + port + '/health' : '-'}`,
+        `SSE:        ${running && port ? 'http://localhost:' + port + '/sse' : '-'}`,
+      ].join('\n'),
     };
   } catch (err) {
     return { success: false, message: `Failed to check status: ${err.message}` };
