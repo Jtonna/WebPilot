@@ -8,16 +8,13 @@ const isDev = !app.isPackaged;
 function getServerBinaryPath() {
   const ext = process.platform === 'win32' ? '.exe' : '';
   if (isDev) {
-    // In dev, use the built binary from the server package dist
     return path.join(__dirname, '..', '..', 'server-for-chrome-extension', 'dist', `webpilot-server-for-chrome-extension${ext}`);
   }
-  // In production, use the binary from app resources
   return path.join(process.resourcesPath, 'server', `webpilot-server-for-chrome-extension${ext}`);
 }
 
 function getDataDir() {
   if (isDev) {
-    // Dev mode — use platform-specific user-local config directory
     if (process.platform === 'win32') {
       return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'WebPilot');
     } else if (process.platform === 'darwin') {
@@ -27,8 +24,14 @@ function getDataDir() {
       return path.join(configHome, 'WebPilot');
     }
   }
-  // In production, data dir lives next to resources/ inside the install dir
   return path.join(path.dirname(process.resourcesPath), 'data');
+}
+
+function getExtensionPath() {
+  if (isDev) {
+    return path.join(__dirname, '..', '..', 'chrome-extension-unpacked');
+  }
+  return path.join(process.resourcesPath, 'chrome-extension');
 }
 
 function ensureDataDir() {
@@ -64,6 +67,12 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
+      additionalArguments: [
+        `--data-dir=${getDataDir()}`,
+        `--server-binary=${getServerBinaryPath()}`,
+        `--extension-path=${getExtensionPath()}`,
+      ],
     },
   });
 
