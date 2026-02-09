@@ -3,13 +3,52 @@
 import { useState, useEffect } from 'react';
 
 export default function Home() {
-  const [status, setStatus] = useState({ extensionExists: false, deploymentPath: '' });
+  const [serverStatus, setServerStatus] = useState('Starting...');
+  const [extensionConnected, setExtensionConnected] = useState(false);
+  const [extensionInfo, setExtensionInfo] = useState({ extensionExists: false, extensionPath: '' });
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.webpilot) {
-      setStatus(window.webpilot.isDeployed());
+    if (typeof window === 'undefined' || !window.webpilot) return;
+
+    // Check extension availability once on mount
+    setExtensionInfo(window.webpilot.isExtensionAvailable());
+
+    // Poll server health every 3 seconds
+    async function checkHealth() {
+      const port = window.webpilot.getServerPort();
+      if (!port) {
+        setServerStatus('Starting...');
+        setExtensionConnected(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`http://localhost:${port}/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          setServerStatus('Running');
+          setExtensionConnected(!!data.extensionConnected);
+        } else {
+          setServerStatus('Offline');
+          setExtensionConnected(false);
+        }
+      } catch {
+        setServerStatus('Offline');
+        setExtensionConnected(false);
+      }
     }
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 3000);
+    return () => clearInterval(interval);
   }, []);
+
+  const statusColor =
+    serverStatus === 'Running' ? '#22c55e' :
+    serverStatus === 'Starting...' ? '#eab308' :
+    '#ef4444';
 
   return (
     <div style={{
@@ -31,19 +70,34 @@ export default function Home() {
         backgroundColor: '#f0f0f0',
         borderRadius: '8px',
         fontSize: '0.9rem',
-        color: '#888',
+        color: '#555',
+        minWidth: '320px',
       }}>
         <p style={{ margin: '0.25rem 0' }}>
-          Extension deployed: {status.extensionExists ? 'Yes' : 'No'}
+          MCP Server:{' '}
+          <span style={{ color: statusColor, fontWeight: 600 }}>{serverStatus}</span>
         </p>
-        {status.deploymentPath && (
-          <p style={{ margin: '0.25rem 0', fontSize: '0.8rem' }}>
-            Path: {status.deploymentPath}
+        <p style={{ margin: '0.25rem 0' }}>
+          Chrome Extension:{' '}
+          {extensionConnected ? (
+            <span style={{ color: '#22c55e', fontWeight: 600 }}>Connected</span>
+          ) : (
+            <span style={{ color: '#888' }}>Not connected</span>
+          )}
+        </p>
+        <p style={{ margin: '0.25rem 0' }}>
+          Extension files:{' '}
+          {extensionInfo.extensionExists ? (
+            <span style={{ color: '#22c55e', fontWeight: 600 }}>Available</span>
+          ) : (
+            <span style={{ color: '#ef4444' }}>Not found</span>
+          )}
+        </p>
+        {extensionInfo.extensionPath && (
+          <p style={{ margin: '0.5rem 0 0.25rem', fontSize: '0.8rem', color: '#888', wordBreak: 'break-all' }}>
+            Extension path: {extensionInfo.extensionPath}
           </p>
         )}
-        <p style={{ margin: '0.25rem 0' }}>
-          MCP Server: Not connected
-        </p>
       </div>
     </div>
   );
