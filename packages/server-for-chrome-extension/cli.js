@@ -156,8 +156,9 @@ function isAlreadyRunning() {
       return pid;
     }
   } catch (e) {
-    // Process doesn't exist or no PID file — clean up stale file
+    // Process doesn't exist or no PID file — clean up stale files
     try { fs.unlinkSync(pidPath); } catch (e2) { /* non-fatal */ }
+    try { fs.unlinkSync(getPortPath()); } catch (e2) { /* non-fatal */ }
   }
   return null;
 }

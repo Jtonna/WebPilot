@@ -6,7 +6,6 @@ const {
   SERVICE_NAME,
   getBinaryPath,
   getDataDir,
-  getDaemonLogPath,
   getPidPath,
   getPortPath,
 } = require('./paths');
@@ -105,7 +104,7 @@ function status() {
       } catch (e) { /* port not in use */ }
     }
 
-    const running = pidAlive && (portListening || !!pid);
+    const running = pidAlive;
 
     return {
       success: true,

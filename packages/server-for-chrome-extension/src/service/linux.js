@@ -8,7 +8,6 @@ const {
   SERVICE_DESCRIPTION,
   getBinaryPath,
   getDataDir,
-  getDaemonLogPath,
   getPidPath,
   getPortPath,
 } = require('./paths');
@@ -138,7 +137,7 @@ function status() {
       try { port = fs.readFileSync(getPortPath(), 'utf8').trim(); } catch (e) { /* no file */ }
     }
 
-    const running = pidAlive && (systemdRunning || !!pid);
+    const running = pidAlive;
 
     return {
       success: true,
