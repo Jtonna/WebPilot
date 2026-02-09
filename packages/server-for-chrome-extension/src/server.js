@@ -1,9 +1,30 @@
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
+
+const { getDataDir } = require('./service/paths');
+
+function writePidAndPortFiles(port) {
+  const dataDir = getDataDir();
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'server.pid'), String(process.pid), 'utf8');
+    fs.writeFileSync(path.join(dataDir, 'server.port'), String(port), 'utf8');
+  } catch (e) {
+    console.error('Warning: Could not write PID/port files:', e.message);
+  }
+}
+
+function cleanupPidAndPortFiles() {
+  const dataDir = getDataDir();
+  try { fs.unlinkSync(path.join(dataDir, 'server.pid')); } catch (e) { /* non-fatal */ }
+  try { fs.unlinkSync(path.join(dataDir, 'server.port')); } catch (e) { /* non-fatal */ }
+}
 
 function generateConnectionString(serverUrl, apiKey) {
   const data = { v: 1, s: serverUrl, k: apiKey };
@@ -90,26 +111,42 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
   });
 
   server.listen(port, host, () => {
+    // Write PID and port files for service management
+    writePidAndPortFiles(port);
+
     const networkMode = host === '0.0.0.0';
-    console.log(`MCP Server running on ${host}:${port}${networkMode ? ' (network mode)' : ''}`);
-    console.log(`  SSE endpoint: http://${publicHost}:${port}/sse`);
-    console.log(`  WebSocket: ${wsUrl}`);
+
+    // Startup info in YAML format
+    console.log('server:');
+    console.log(`  host: ${host}`);
+    console.log(`  port: ${port}`);
+    console.log('  local:');
+    console.log(`    sse: http://localhost:${port}/sse`);
+    console.log(`    ws: ws://localhost:${port}`);
+    console.log('  network:');
     if (networkMode) {
-      console.log('');
-      console.log(`\x1b[33m  Network access enabled — other devices can connect at:`);
-      console.log(`    http://${publicHost}:${port}/sse`);
-      console.log(`    ws://${publicHost}:${port}\x1b[0m`);
+      console.log(`    sse: http://${publicHost}:${port}/sse`);
+      console.log(`    ws: ws://${publicHost}:${port}`);
     } else {
-      console.log('');
-      console.log('\x1b[90m  Localhost only. Use --network flag or npm run dev:network for LAN access.\x1b[0m');
+      console.log('    sse: disabled');
+      console.log('    ws: disabled');
     }
-    console.log('');
-    console.log('\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m');
-    console.log('\x1b[36m  Connection String (paste in extension):\x1b[0m');
-    console.log('');
-    console.log(`  \x1b[32m${connectionString}\x1b[0m`);
-    console.log('');
-    console.log('\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m');
+
+    // Connection string for pasting into the extension
+    console.log(`connection_string: ${connectionString}`);
+  });
+
+  // Clean up PID/port files on shutdown
+  process.on('SIGTERM', () => {
+    cleanupPidAndPortFiles();
+    server.close(() => process.exit(0));
+  });
+  process.on('SIGINT', () => {
+    cleanupPidAndPortFiles();
+    server.close(() => process.exit(0));
+  });
+  process.on('exit', () => {
+    cleanupPidAndPortFiles();
   });
 
   return { app, server, wss };

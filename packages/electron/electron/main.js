@@ -1,100 +1,58 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const isDev = !app.isPackaged;
 
-// Deployment paths
-function getDeploymentDir() {
-  if (process.platform === 'win32') {
-    // %LOCALAPPDATA%\WebPilot
-    return path.join(process.env.LOCALAPPDATA, 'WebPilot');
-  } else if (process.platform === 'darwin') {
-    // ~/Library/Application Support/WebPilot
-    return path.join(app.getPath('home'), 'Library', 'Application Support', 'WebPilot');
-  } else {
-    // ~/.config/WebPilot (respects XDG_CONFIG_HOME)
-    const configHome = process.env.XDG_CONFIG_HOME || path.join(app.getPath('home'), '.config');
-    return path.join(configHome, 'WebPilot');
-  }
-}
-
-function getExtensionDir() {
-  return path.join(getDeploymentDir(), 'chrome extension', 'unpacked-extension');
-}
-
 function getServerBinaryPath() {
   const ext = process.platform === 'win32' ? '.exe' : '';
-  return path.join(getDeploymentDir(), `webpilot-server${ext}`);
-}
-
-// Copy directory recursively
-function copyDirSync(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
-  }
-}
-
-function deployFiles() {
-  const deployDir = getDeploymentDir();
-  fs.mkdirSync(deployDir, { recursive: true });
-
   if (isDev) {
-    // In dev mode, resources are in the repo
-    const serverDistDir = path.join(__dirname, '..', '..', 'server-for-chrome-extension', 'dist');
-    const extensionDir = path.join(__dirname, '..', '..', 'chrome-extension-unpacked');
+    // In dev, use the built binary from the server package dist
+    return path.join(__dirname, '..', '..', 'server-for-chrome-extension', 'dist', `webpilot-server-for-chrome-extension${ext}`);
+  }
+  // In production, use the binary from app resources
+  return path.join(process.resourcesPath, 'server', `webpilot-server-for-chrome-extension${ext}`);
+}
 
-    // Deploy extension (always available in dev)
-    if (fs.existsSync(extensionDir)) {
-      copyDirSync(extensionDir, getExtensionDir());
-      console.log('Deployed extension to:', getExtensionDir());
-    }
-
-    // Deploy server binary (only if built)
-    if (fs.existsSync(serverDistDir)) {
-      const files = fs.readdirSync(serverDistDir);
-      for (const file of files) {
-        fs.copyFileSync(
-          path.join(serverDistDir, file),
-          path.join(deployDir, file)
-        );
-      }
-      console.log('Deployed server binary to:', deployDir);
+function getDataDir() {
+  if (isDev) {
+    // Dev mode — use platform-specific user-local config directory
+    if (process.platform === 'win32') {
+      return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'WebPilot');
+    } else if (process.platform === 'darwin') {
+      return path.join(os.homedir(), 'Library', 'Application Support', 'WebPilot');
     } else {
-      console.log('Server binary not built yet — skipping server deployment');
-    }
-  } else {
-    // In production, resources are in the app's resources directory
-    const resourcesPath = process.resourcesPath;
-    const serverResourceDir = path.join(resourcesPath, 'server');
-    const extensionResourceDir = path.join(resourcesPath, 'chrome-extension');
-
-    // Deploy extension
-    if (fs.existsSync(extensionResourceDir)) {
-      copyDirSync(extensionResourceDir, getExtensionDir());
-      console.log('Deployed extension to:', getExtensionDir());
-    }
-
-    // Deploy server binary
-    if (fs.existsSync(serverResourceDir)) {
-      const files = fs.readdirSync(serverResourceDir);
-      for (const file of files) {
-        fs.copyFileSync(
-          path.join(serverResourceDir, file),
-          path.join(deployDir, file)
-        );
-      }
-      console.log('Deployed server binary to:', deployDir);
+      const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+      return path.join(configHome, 'WebPilot');
     }
   }
+  // In production, data dir lives next to resources/ inside the install dir
+  return path.join(path.dirname(process.resourcesPath), 'data');
+}
+
+function ensureDataDir() {
+  const dataDir = getDataDir();
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+function startServer() {
+  const serverPath = getServerBinaryPath();
+  if (!fs.existsSync(serverPath)) {
+    console.log('Server binary not found; skipping server start');
+    return;
+  }
+  const { spawn } = require('child_process');
+  // Spawn with detached + windowsHide to prevent console window flash.
+  // The server exe handles everything internally: already-running check,
+  // auto-register, background daemon spawn, health check.
+  const child = spawn(serverPath, [], {
+    detached: true,
+    windowsHide: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  console.log('Server process launched.');
 }
 
 function createWindow() {
@@ -120,7 +78,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  deployFiles();
+  ensureDataDir();
+  startServer();
   createWindow();
 
   app.on('activate', () => {

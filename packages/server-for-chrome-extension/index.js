@@ -1,8 +1,9 @@
 const os = require('os');
 const { createServer } = require('./src/server');
+const { getPort, getApiKey } = require('./src/service/paths');
 
-const PORT = process.env.PORT || 3456;
-const API_KEY = process.env.API_KEY || 'dev-123-test';
+const PORT = getPort();
+const API_KEY = getApiKey();
 const NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
 
 function getLocalIP() {
