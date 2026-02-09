@@ -1,0 +1,34 @@
+name: Beads → GitHub Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.beads/issues.jsonl'
+
+  workflow_dispatch:
+
+env:
+  PROJECT_NUMBER: ""
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+      repository-projects: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync beads to GitHub Issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PROJECT_NUMBER: ${{ env.PROJECT_NUMBER }}
+        run: |
+          chmod +x .github/scripts/beads-sync.sh
+          .github/scripts/beads-sync.sh

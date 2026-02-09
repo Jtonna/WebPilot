@@ -16,6 +16,11 @@ function getDeploymentDir() {
   }
 }
 
+function getServerBinaryPath() {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  return path.join(getDeploymentDir(), `webpilot-server-for-chrome-extension${ext}`);
+}
+
 contextBridge.exposeInMainWorld('webpilot', {
   getDeploymentPath: () => getDeploymentDir(),
   isDeployed: () => {
@@ -24,5 +29,44 @@ contextBridge.exposeInMainWorld('webpilot', {
       path.join(dir, 'chrome extension', 'unpacked-extension', 'manifest.json')
     );
     return { extensionExists, deploymentPath: dir };
+  },
+  installService: () => {
+    const { execFileSync } = require('child_process');
+    const binaryPath = getServerBinaryPath();
+    try {
+      const output = execFileSync(binaryPath, ['--install'], {
+        encoding: 'utf8',
+        timeout: 15000,
+      });
+      return { success: true, message: output };
+    } catch (err) {
+      return { success: false, message: err.stderr || err.message };
+    }
+  },
+  uninstallService: () => {
+    const { execFileSync } = require('child_process');
+    const binaryPath = getServerBinaryPath();
+    try {
+      const output = execFileSync(binaryPath, ['--uninstall'], {
+        encoding: 'utf8',
+        timeout: 15000,
+      });
+      return { success: true, message: output };
+    } catch (err) {
+      return { success: false, message: err.stderr || err.message };
+    }
+  },
+  getServiceStatus: () => {
+    const { execFileSync } = require('child_process');
+    const binaryPath = getServerBinaryPath();
+    try {
+      const output = execFileSync(binaryPath, ['--status'], {
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      return { success: true, message: output };
+    } catch (err) {
+      return { success: false, message: err.stderr || err.message };
+    }
   },
 });
