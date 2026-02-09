@@ -20,6 +20,10 @@ packages/
 - [docs/MCP_SERVER.md](docs/MCP_SERVER.md) — MCP server architecture
 - [docs/ELECTRON_APP.md](docs/ELECTRON_APP.md) — Electron app architecture (Phase 2)
 
+## Issue Tracking
+
+WebPilot uses [beads](https://github.com/steveyegge/beads) for git-backed issue tracking. Issues live in `.beads/issues.jsonl` and sync to the GitHub Projects kanban board when merged to `main`. See [docs/BEADS_SYNC.md](docs/BEADS_SYNC.md) for details.
+
 ## Quick Start
 
 Start the MCP server:
