@@ -84,7 +84,7 @@ function createMcpHandler(extensionBridge, apiKey) {
           },
           usePlatformOptimizer: {
             type: 'boolean',
-            description: 'Use platform-specific formatting if available (e.g., Threads feed parser). Default: false'
+            description: 'Use platform-specific formatting if available (e.g., Threads feed parser). Default: true'
           }
         },
         required: ['tab_id']
@@ -380,7 +380,7 @@ function createMcpHandler(extensionBridge, apiKey) {
         commandType = 'get_accessibility_tree';
         commandParams = {
           tab_id: args.tab_id,
-          usePlatformOptimizer: args.usePlatformOptimizer ?? false
+          usePlatformOptimizer: args.usePlatformOptimizer ?? true
         };
         break;
 
