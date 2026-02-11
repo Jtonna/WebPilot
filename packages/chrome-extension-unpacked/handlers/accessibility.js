@@ -62,11 +62,11 @@ function buildRefContext(tab_id, nodes, refs) {
  *
  * @param {Object} params
  * @param {number} params.tab_id - Target tab ID
- * @param {boolean} [params.usePlatformOptimizer=false] - Use platform-specific formatting if available
+ * @param {boolean} [params.usePlatformOptimizer=true] - Use platform-specific formatting if available
  * @returns {Promise<Object>} Formatted tree and element count
  */
 export async function getAccessibilityTree(params) {
-  const { tab_id, usePlatformOptimizer = false } = params;
+  const { tab_id, usePlatformOptimizer = true } = params;
 
   if (!tab_id) {
     throw new Error('tab_id is required');

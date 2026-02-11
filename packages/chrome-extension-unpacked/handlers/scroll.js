@@ -5,7 +5,7 @@
 
 import { getSession } from '../utils/debugger.js';
 import { getBackendNodeId } from '../accessibility-storage.js';
-import { animateScroll, calculateScrollDuration } from '../utils/scroll.js';
+import { animateScroll, calculateScrollDuration, scrollElementIntoView } from '../utils/scroll.js';
 
 /**
  * Scroll to bring an element into view OR scroll by pixel amount.
@@ -39,15 +39,77 @@ export async function scroll(params) {
   if (hasPixels) {
     scrollDelta = pixels;
   } else {
-    // Get element's absolute Y position
-    let elementAbsoluteY;
+    // First, check if element is inside a scrollable container (e.g., dropdown, modal)
+    let containerHandled = false;
 
-    if (ref) {
+    if (selector) {
+      const containerResult = await scrollElementIntoView(
+        target,
+        `document.querySelector(${JSON.stringify(selector)})`
+      );
+      if (containerResult.containerScrolled) {
+        return {
+          success: true,
+          scrolled: true,
+          tab_id,
+          ref,
+          selector,
+          scrollDelta: 0,
+          duration: 0,
+          containerScrolled: true
+        };
+      }
+    } else if (ref) {
       const backendNodeId = getBackendNodeId(tab_id, ref);
       if (!backendNodeId) {
         throw new Error(`Ref "${ref}" not found. Fetch accessibility tree first.`);
       }
 
+      // Resolve to JS object, tag it, check for scrollable container
+      try {
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', {
+          backendNodeId
+        });
+        if (resolved?.object?.objectId) {
+          await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+            objectId: resolved.object.objectId,
+            functionDeclaration: 'function() { this.setAttribute("data-webpilot-scroll-target", "1"); }',
+            returnByValue: true
+          });
+
+          const containerResult = await scrollElementIntoView(
+            target,
+            `document.querySelector('[data-webpilot-scroll-target]')`
+          );
+
+          await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+            objectId: resolved.object.objectId,
+            functionDeclaration: 'function() { this.removeAttribute("data-webpilot-scroll-target"); }',
+            returnByValue: true
+          }).catch(() => {});
+
+          if (containerResult.containerScrolled) {
+            return {
+              success: true,
+              scrolled: true,
+              tab_id,
+              ref,
+              scrollDelta: 0,
+              duration: 0,
+              containerScrolled: true
+            };
+          }
+        }
+      } catch (e) {
+        // Fall through to window scroll
+      }
+    }
+
+    // No scrollable container — calculate window scroll delta
+    let elementAbsoluteY;
+
+    if (ref) {
+      const backendNodeId = getBackendNodeId(tab_id, ref);
       const boxModel = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', {
         backendNodeId
       });

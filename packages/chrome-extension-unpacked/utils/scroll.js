@@ -4,14 +4,61 @@
 
 /**
  * Calculate scroll duration based on distance.
- * Formula: 50ms per 50px of scroll distance.
  *
  * @param {number} scrollDelta - Pixels to scroll
+ * @param {number} [msPerStep=50] - Milliseconds per 50px of distance (50 for window, 75 for container)
  * @returns {number} Duration in ms
  */
-export function calculateScrollDuration(scrollDelta) {
+export function calculateScrollDuration(scrollDelta, msPerStep = 50) {
   const distance = Math.abs(scrollDelta);
-  return Math.max(100, Math.round((distance / 50) * 50));
+  return Math.max(100, Math.round((distance / 50) * msPerStep));
+}
+
+/**
+ * Generate JavaScript code for a smooth scroll animation with easeInOutCubic easing.
+ * Intended for injection into page context via Runtime.evaluate.
+ *
+ * Expects `startPos`, `delta`, `duration` variables to be defined in the calling scope.
+ *
+ * @param {string} setScroll - JS statement to apply scroll. Use `scrollPos` for the computed position.
+ * @param {string} onComplete - JS statement to execute on completion.
+ * @returns {string} JavaScript code for the animation loop
+ */
+function generateScrollAnimationCode(setScroll, onComplete) {
+  return `
+    const startTime = performance.now();
+    const maxTime = duration + 2000;
+
+    function easeInOutCubic(t) {
+      return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function step(currentTime) {
+      const elapsed = currentTime - startTime;
+
+      if (elapsed > maxTime) {
+        const scrollPos = startPos + delta;
+        ${setScroll};
+        ${onComplete};
+        return;
+      }
+
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = easeInOutCubic(progress);
+      const scrollPos = startPos + delta * eased;
+      ${setScroll};
+
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        ${onComplete};
+      }
+    }
+
+    requestAnimationFrame(step);
+  `;
 }
 
 /**
@@ -25,46 +72,16 @@ export function calculateScrollDuration(scrollDelta) {
 export async function animateScroll(target, scrollDelta, duration) {
   const actualDuration = duration ?? calculateScrollDuration(scrollDelta);
 
-  // Run entire animation in-page for smoothness
-  // Includes hard timeout to prevent RAF hangs on inactive/throttled tabs
   await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
     expression: `
       new Promise(resolve => {
-        const startY = window.scrollY;
+        const startPos = window.scrollY;
         const delta = ${scrollDelta};
         const duration = ${actualDuration};
-        const startTime = performance.now();
-        const maxTime = duration + 2000; // Hard limit: animation + 2s safety margin
-
-        function easeInOutCubic(t) {
-          return t < 0.5
-            ? 4 * t * t * t
-            : 1 - Math.pow(-2 * t + 2, 3) / 2;
-        }
-
-        function step(currentTime) {
-          const elapsed = currentTime - startTime;
-
-          // Safety timeout: if animation hangs, jump to final position
-          if (elapsed > maxTime) {
-            window.scrollTo(0, startY + delta);
-            resolve();
-            return;
-          }
-
-          const progress = Math.min(elapsed / duration, 1);
-          const eased = easeInOutCubic(progress);
-
-          window.scrollTo(0, startY + delta * eased);
-
-          if (progress < 1) {
-            requestAnimationFrame(step);
-          } else {
-            resolve();
-          }
-        }
-
-        requestAnimationFrame(step);
+        ${generateScrollAnimationCode(
+          'window.scrollTo(0, scrollPos)',
+          'resolve()'
+        )}
       })
     `,
     awaitPromise: true,
@@ -132,4 +149,74 @@ export function generateScrollIntoViewCode(selector) {
       return { scrolled: false };
     })();
   `;
+}
+
+/**
+ * Scroll an element into view, handling scrollable containers correctly.
+ * If the element is inside a scrollable container (e.g., dropdown, modal),
+ * smoothly scrolls the container using the same easeInOutCubic animation
+ * as the main page scroll (75ms per 50px).
+ *
+ * @param {Object} target - Chrome debugger target
+ * @param {string} elementExpression - JS expression that resolves to the DOM element
+ * @returns {Promise<{scrolled: boolean, containerScrolled: boolean, scrollDelta: number, duration: number}>}
+ */
+export async function scrollElementIntoView(target, elementExpression) {
+  const result = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+    expression: `
+      new Promise(resolve => {
+        const el = ${elementExpression};
+        if (!el) {
+          resolve({ scrolled: false, containerScrolled: false, error: 'Element not found' });
+          return;
+        }
+
+        // Walk up the DOM to find the nearest scrollable ancestor
+        function getScrollableParent(element) {
+          let parent = element.parentElement;
+          while (parent && parent !== document.documentElement && parent !== document.body) {
+            const style = window.getComputedStyle(parent);
+            const overflowY = style.overflowY;
+            if ((overflowY === 'auto' || overflowY === 'scroll') && parent.scrollHeight > parent.clientHeight) {
+              return parent;
+            }
+            parent = parent.parentElement;
+          }
+          return null;
+        }
+
+        const container = getScrollableParent(el);
+
+        if (!container) {
+          resolve({ scrolled: false, containerScrolled: false });
+          return;
+        }
+
+        // Calculate scroll delta to center element within the container's visible area
+        const elRect = el.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const elRelativeTop = elRect.top - containerRect.top + container.scrollTop;
+        const targetScrollTop = elRelativeTop - container.clientHeight / 2 + elRect.height / 2;
+        const delta = targetScrollTop - container.scrollTop;
+
+        // Skip if already visible enough
+        if (Math.abs(delta) < 10) {
+          resolve({ scrolled: false, containerScrolled: false });
+          return;
+        }
+
+        const startPos = container.scrollTop;
+        const distance = Math.abs(delta);
+        const duration = Math.max(100, Math.round((distance / 50) * 75));
+        ${generateScrollAnimationCode(
+          'container.scrollTop = scrollPos',
+          'resolve({ scrolled: true, containerScrolled: true, scrollDelta: Math.round(delta), duration })'
+        )}
+      })
+    `,
+    awaitPromise: true,
+    returnByValue: true
+  });
+
+  return result.result?.value || { scrolled: false, containerScrolled: false };
 }

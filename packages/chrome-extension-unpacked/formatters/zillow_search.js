@@ -21,15 +21,14 @@ export function formatSearchPage(context) {
   let sortLabel = null;
   let sortRef = null;
 
-  // Find the filters region
-  const allRegions = findChildrenByRole(rootNode.nodeId, 'region');
+  // Find the filters container (may be role="region" or role="generic" depending on Zillow's markup)
   let filtersRegion = null;
   let mainNode = null;
 
-  for (const region of allRegions) {
-    const name = getNodeName(region);
-    if (name === 'filters') {
-      filtersRegion = region;
+  for (const [, node] of nodeMap) {
+    if (getNodeName(node) === 'filters' && (getNodeRole(node) === 'region' || getNodeRole(node) === 'generic')) {
+      filtersRegion = node;
+      break;
     }
   }
 
@@ -68,7 +67,7 @@ export function formatSearchPage(context) {
       }
 
       // Note: Clear button may not appear in a11y tree (hidden until hover/focus)
-      if (name === 'Clear search text' || name === 'Clear' || name.includes('Clear')) {
+      if (name === 'Clear search text' || name === 'Clear' || name.toLowerCase().includes('clear')) {
         clearRef = getRef(btn);
         continue;
       }
@@ -86,6 +85,8 @@ export function formatSearchPage(context) {
     }
   }
 
+  const activeFilter = filtersRegion ? extractActiveFilter(filtersRegion, context) : null;
+
   // Extract result count from main
   if (mainNode) {
     const headings = findChildrenByRole(mainNode.nodeId, 'heading');
@@ -102,7 +103,7 @@ export function formatSearchPage(context) {
   for (const [, node] of nodeMap) {
     const name = getNodeName(node);
     if (getNodeRole(node) === 'button' && name && name.includes('Sort')) {
-      sortLabel = name.replace(/^Sort options, /, '').replace(/ selected$/, '');
+      sortLabel = name.replace(/^Sort(?:\s*options)?,?\s*/i, '').replace(/ selected$/, '');
       sortRef = getRef(node);
       break;
     }
@@ -150,6 +151,7 @@ export function formatSearchPage(context) {
     },
     _filterSchema: ['label', 'ref', 'expanded'],
     filters,
+    activeFilter,
     saveSearchRef,
     resultCount,
     sort: sortLabel ? { label: sortLabel, ref: sortRef } : null,
@@ -321,4 +323,187 @@ function collectTexts(nodeId, context) {
   }
   walk(nodeId);
   return texts;
+}
+
+/**
+ * Read the checked property from a node.
+ * Returns true, false, "mixed", or null if not present.
+ */
+function getCheckedState(node) {
+  if (node.properties) {
+    for (const prop of node.properties) {
+      if (prop.name === 'checked') {
+        const val = prop.value?.value;
+        if (val === 'mixed') return 'mixed';
+        if (val === true) return true;
+        if (val === false) return false;
+        return val ?? null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Read the pressed property from a node.
+ * Returns true, false, or null if not present.
+ */
+function getPressedState(node) {
+  if (node.properties) {
+    for (const prop of node.properties) {
+      if (prop.name === 'pressed') {
+        const val = prop.value?.value;
+        if (val === true) return true;
+        if (val === false) return false;
+        return val ?? null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if an option node is selected.
+ */
+function getSelectedState(node) {
+  if (node.properties) {
+    for (const prop of node.properties) {
+      if (prop.name === 'selected') {
+        return prop.value?.value === true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Read the accessible value from a node (for textbox, combobox, slider).
+ * Returns the string value or '' if not found.
+ */
+function getNodeValue(node) {
+  return node.value?.value ?? '';
+}
+
+/**
+ * Extract the contents of an open filter dialog within the filters region.
+ * Returns null if no dialog is open.
+ */
+function extractActiveFilter(filtersRegion, context) {
+  const { nodeMap, getRef, getNodeName, getNodeRole, findChildrenByRole } = context;
+
+  const dialogs = findChildrenByRole(filtersRegion.nodeId, 'dialog');
+  if (dialogs.length === 0) return null;
+
+  const dialog = dialogs[0];
+
+  // Dialog name: prefer the dialog's accessible name, fall back to first heading
+  let name = getNodeName(dialog);
+  if (!name) {
+    const headings = findChildrenByRole(dialog.nodeId, 'heading');
+    if (headings.length > 0) {
+      name = getNodeName(headings[0]) || null;
+    }
+  }
+
+  const items = [];
+
+  function walk(nodeId) {
+    const node = nodeMap.get(nodeId);
+    if (!node) return;
+
+    const role = getNodeRole(node);
+    const nodeName = getNodeName(node);
+
+    switch (role) {
+      case 'heading':
+        items.push(['heading', nodeName, null, null]);
+        // Recurse into heading children (headings can contain text structure)
+        if (node.childIds) {
+          for (const childId of node.childIds) walk(childId);
+        }
+        return;
+
+      case 'group':
+        items.push(['group', nodeName, null, null]);
+        if (node.childIds) {
+          for (const childId of node.childIds) walk(childId);
+        }
+        return;
+
+      case 'radio':
+        items.push(['radio', nodeName, getRef(node), getCheckedState(node)]);
+        return;
+
+      case 'checkbox':
+        items.push(['checkbox', nodeName, getRef(node), getCheckedState(node)]);
+        return;
+
+      case 'button':
+        if (nodeName) {
+          items.push(['button', nodeName, getRef(node), getPressedState(node)]);
+        }
+        return;
+
+      case 'textbox':
+        items.push(['textbox', nodeName, getRef(node), getNodeValue(node)]);
+        return;
+
+      case 'combobox':
+        items.push(['combobox', nodeName, getRef(node), getNodeValue(node)]);
+        // Expose option children so AI can see and select available values
+        if (node.childIds) {
+          for (const childId of node.childIds) {
+            const child = nodeMap.get(childId);
+            if (!child) continue;
+            const childRole = getNodeRole(child);
+            if (childRole === 'option') {
+              items.push(['option', getNodeName(child), getRef(child), getSelectedState(child)]);
+            } else if (childRole === 'listbox' && child.childIds) {
+              // Options may be nested inside a listbox child
+              for (const optId of child.childIds) {
+                const opt = nodeMap.get(optId);
+                if (opt && getNodeRole(opt) === 'option') {
+                  items.push(['option', getNodeName(opt), getRef(opt), getSelectedState(opt)]);
+                }
+              }
+            }
+          }
+        }
+        return;
+
+      case 'slider':
+        items.push(['slider', nodeName, getRef(node), getNodeValue(node)]);
+        return;
+
+      default:
+        // For all other roles, recurse into children without emitting
+        if (node.childIds) {
+          for (const childId of node.childIds) walk(childId);
+        }
+        return;
+    }
+  }
+
+  // Walk all children of the dialog
+  if (dialog.childIds) {
+    for (const childId of dialog.childIds) {
+      walk(childId);
+    }
+  }
+
+  // Find the Apply button ref
+  let applyRef = null;
+  for (const item of items) {
+    if (item[0] === 'button' && item[1] === 'Apply') {
+      applyRef = item[2];
+      break;
+    }
+  }
+
+  return {
+    name,
+    _schema: ['type', 'label', 'ref', 'state'],
+    items,
+    applyRef
+  };
 }

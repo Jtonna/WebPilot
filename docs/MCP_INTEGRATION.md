@@ -104,7 +104,7 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
 | Parameter | Type   | Required | Description                    |
 |-----------|--------|----------|--------------------------------|
 | `tab_id`  | number | Yes      | The tab ID to get the tree from |
-| `usePlatformOptimizer` | boolean | No | Use platform-specific formatting if available (default: false) |
+| `usePlatformOptimizer` | boolean | No | Use platform-specific formatting if available (default: true) |
 
 **Returns (default):**
 ```json

@@ -14,7 +14,7 @@ import {
   generateRippleCode,
   generateCursorRemoveCode
 } from '../utils/cursor.js';
-import { generateViewportCheckCode, animateScroll, calculateScrollDelta } from '../utils/scroll.js';
+import { generateViewportCheckCode, animateScroll, calculateScrollDelta, scrollElementIntoView } from '../utils/scroll.js';
 
 /**
  * Click at coordinates, CSS selector, or accessibility tree ref.
@@ -119,24 +119,78 @@ export async function click(params) {
 
     // If off-screen, scroll element into view with smooth animation
     if (!inViewport && (ref || selector)) {
-      // Calculate element's absolute Y position (document coordinates)
-      const scrollYResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: 'window.scrollY',
-        returnByValue: true
-      });
-      const currentScrollY = scrollYResult.result?.value || 0;
-      const elementAbsoluteY = y + currentScrollY;
+      // First, check if element is inside a scrollable container (e.g., dropdown, modal)
+      // If so, scroll the container instead of the main page
+      let containerHandled = false;
 
-      // Calculate scroll delta to center element in viewport
-      const scrollDelta = await calculateScrollDelta(target, elementAbsoluteY);
+      if (selector) {
+        const containerResult = await scrollElementIntoView(
+          target,
+          `document.querySelector(${JSON.stringify(selector)})`
+        );
+        if (containerResult.containerScrolled) {
+          scrolled = true;
+          containerHandled = true;
+          await sleep(150);
+        }
+      } else if (ref && backendNodeId) {
+        // Resolve backendNodeId to a JS object, tag it temporarily, then check for scrollable container
+        try {
+          const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', {
+            backendNodeId: backendNodeId
+          });
+          if (resolved?.object?.objectId) {
+            // Tag the element so we can find it from in-page JS
+            await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+              objectId: resolved.object.objectId,
+              functionDeclaration: 'function() { this.setAttribute("data-webpilot-scroll-target", "1"); }',
+              returnByValue: true
+            });
 
-      // Perform smooth animated scroll (75ms per 50px)
-      if (Math.abs(scrollDelta) >= 50) {
-        await animateScroll(target, scrollDelta);
-        scrolled = true;
+            const containerResult = await scrollElementIntoView(
+              target,
+              `document.querySelector('[data-webpilot-scroll-target]')`
+            );
 
-        // Let page settle after scroll (layout shifts, lazy loading, React re-renders)
-        await sleep(150);
+            // Clean up the temporary attribute
+            await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+              objectId: resolved.object.objectId,
+              functionDeclaration: 'function() { this.removeAttribute("data-webpilot-scroll-target"); }',
+              returnByValue: true
+            }).catch(() => {});
+
+            if (containerResult.containerScrolled) {
+              scrolled = true;
+              containerHandled = true;
+              await sleep(150);
+            }
+          }
+        } catch (e) {
+          // If resolving fails, fall through to window scroll
+        }
+      }
+
+      // If not handled by container scroll, use window scroll with custom easing
+      if (!containerHandled) {
+        // Calculate element's absolute Y position (document coordinates)
+        const scrollYResult = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+          expression: 'window.scrollY',
+          returnByValue: true
+        });
+        const currentScrollY = scrollYResult.result?.value || 0;
+        const elementAbsoluteY = y + currentScrollY;
+
+        // Calculate scroll delta to center element in viewport
+        const scrollDelta = await calculateScrollDelta(target, elementAbsoluteY);
+
+        // Perform smooth animated scroll (75ms per 50px)
+        if (Math.abs(scrollDelta) >= 50) {
+          await animateScroll(target, scrollDelta);
+          scrolled = true;
+
+          // Let page settle after scroll (layout shifts, lazy loading, React re-renders)
+          await sleep(150);
+        }
       }
 
       // Re-fetch coordinates after scroll with element verification
