@@ -46,10 +46,17 @@ WebSocket client that:
 - **Manual connect only** - does not auto-connect on browser startup
 
 #### popup/
-Configuration UI with three views:
+Configuration UI with four views:
 - **Setup View**: First-time configuration with connection string
-- **Connected View**: Shows connection status, disconnect button
-- **Disconnected View**: Shows stored config, reconnect/forget buttons
+- **Connected View**: Shows connection status, disconnect button, settings
+- **Connecting View**: Shows spinner while connecting, error display
+- **Disconnected View**: Shows stored config, reconnect/forget buttons, settings
+
+**Settings** (visible when connected or disconnected):
+- **Focus new tabs**: Toggle whether new tabs steal focus (default: off)
+- **Tab organization**: Choose between "Existing window" (default) or "New window" — a dedicated WebPilot window for all tabs
+
+Both modes organize tabs into a cyan "WebPilot" tab group. Settings persist in `chrome.storage.local`.
 
 ### MCP Server (`mcp-server/`)
 
@@ -288,8 +295,10 @@ Browser Restart with stored config → Disconnected View (manual reconnect)
 - [ ] Paste connection string → Extension connects
 - [ ] Status shows "Connected"
 - [ ] `browser_get_tabs` returns tab list
-- [ ] `browser_create_tab` opens new tab
+- [ ] `browser_create_tab` opens new tab (respects focus and window settings)
 - [ ] `browser_close_tab` closes specified tab
+- [ ] Settings toggle: Focus new tabs on/off
+- [ ] Settings dropdown: Existing window / New window
 - [ ] Disconnect → Shows disconnected view
 - [ ] Reconnect → Reconnects successfully
 - [ ] Forget → Returns to setup view

@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const serverUrlDisplay = document.getElementById('serverUrlDisplay');
   const connectingUrlDisplay = document.getElementById('connectingUrlDisplay');
   const disconnectedUrlDisplay = document.getElementById('disconnectedUrlDisplay');
+  const settingsSection = document.getElementById('settingsSection');
+  const focusNewTabsToggle = document.getElementById('focusNewTabs');
+  const tabModeSelect = document.getElementById('tabMode');
 
   loadStateAndShow();
 
@@ -27,6 +30,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   connectionStringInput.addEventListener('input', () => {
     hideError(setupError);
+  });
+
+  focusNewTabsToggle.addEventListener('change', () => {
+    chrome.storage.local.set({ focusNewTabs: focusNewTabsToggle.checked });
+  });
+
+  tabModeSelect.addEventListener('change', () => {
+    chrome.storage.local.set({ tabMode: tabModeSelect.value });
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -212,11 +223,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function loadSettings() {
+    chrome.storage.local.get(['focusNewTabs', 'tabMode'], (result) => {
+      focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
+      tabModeSelect.value = result.tabMode || 'group'; // default 'group'
+    });
+  }
+
   function showView(viewName) {
     setupView.classList.add('hidden');
     connectedView.classList.add('hidden');
     connectingView.classList.add('hidden');
     disconnectedView.classList.add('hidden');
+
+    // Show settings when connected or disconnected (has config)
+    if (viewName === 'connected' || viewName === 'disconnected') {
+      settingsSection.classList.remove('hidden');
+      loadSettings();
+    } else {
+      settingsSection.classList.add('hidden');
+    }
 
     if (viewName === 'setup') {
       setupView.classList.remove('hidden');

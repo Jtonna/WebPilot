@@ -6,6 +6,9 @@
 // Track the WebPilot group ID (null if not yet created)
 let webPilotGroupId = null;
 
+// Track the WebPilot window ID for window mode (null if not yet created)
+let webPilotWindowId = null;
+
 /**
  * Ensure the WebPilot tab group exists, creating if needed.
  * Returns the group ID or null if no group exists yet.
@@ -31,6 +34,73 @@ async function ensureTabGroup() {
 
   // No existing group - return null (will be created on first tab add)
   return null;
+}
+
+/**
+ * Read tab settings from chrome.storage.local.
+ * @returns {Promise<{tabMode: string, focusNewTabs: boolean}>}
+ */
+async function getSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['tabMode', 'focusNewTabs'], (result) => {
+      resolve({
+        tabMode: result.tabMode || 'group',
+        focusNewTabs: result.focusNewTabs === true // default false
+      });
+    });
+  });
+}
+
+/**
+ * Ensure the WebPilot window exists, returning its ID or null.
+ * @returns {Promise<number|null>}
+ */
+async function ensureWebPilotWindow() {
+  if (webPilotWindowId !== null) {
+    try {
+      const win = await chrome.windows.get(webPilotWindowId);
+      if (win) return webPilotWindowId;
+    } catch {
+      webPilotWindowId = null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Move a tab into the WebPilot window.
+ * @param {number} tabId - Tab ID to move
+ * @returns {Promise<Object>} Result with success status and windowId
+ */
+export async function addTabToWindow(tabId) {
+  try {
+    let windowId = await ensureWebPilotWindow();
+    if (windowId !== null) {
+      await chrome.tabs.move(tabId, { windowId, index: -1 });
+      return { success: true, windowId };
+    }
+    // No WebPilot window yet - don't create one just for organizing
+    return { success: false, error: 'No WebPilot window exists' };
+  } catch (error) {
+    console.warn('Failed to move tab to WebPilot window:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Organize a tab based on the current tabMode setting.
+ * In 'window' mode, moves tab to the WebPilot window.
+ * In 'group' mode (default), adds tab to the WebPilot tab group.
+ *
+ * @param {number} tabId - Tab ID to organize
+ * @returns {Promise<Object>} Result with success status
+ */
+export async function organizeTab(tabId) {
+  const { tabMode } = await getSettings();
+  if (tabMode === 'window') {
+    return addTabToWindow(tabId);
+  }
+  return addTabToGroup(tabId);
 }
 
 /**
@@ -79,11 +149,40 @@ export async function createTab(params) {
     throw new Error('URL is required');
   }
 
-  const tab = await chrome.tabs.create({ url, active: true });
+  const { tabMode, focusNewTabs } = await getSettings();
 
-  // Add to WebPilot group (non-blocking, non-fatal)
+  if (tabMode === 'window') {
+    let windowId = await ensureWebPilotWindow();
+
+    if (windowId === null) {
+      // Create new WebPilot window with this URL
+      const win = await chrome.windows.create({ url, focused: true });
+      webPilotWindowId = win.id;
+      const tab = win.tabs[0];
+      addTabToGroup(tab.id);
+      return {
+        tab_id: tab.id,
+        url: tab.url || url,
+        title: tab.title || ''
+      };
+    }
+
+    // Add tab to existing WebPilot window
+    const tab = await chrome.tabs.create({ url, windowId, active: focusNewTabs });
+    if (focusNewTabs) {
+      await chrome.windows.update(windowId, { focused: true });
+    }
+    addTabToGroup(tab.id);
+    return {
+      tab_id: tab.id,
+      url: tab.url || url,
+      title: tab.title || ''
+    };
+  }
+
+  // Default: tab group mode
+  const tab = await chrome.tabs.create({ url, active: focusNewTabs });
   addTabToGroup(tab.id);
-
   return {
     tab_id: tab.id,
     url: tab.url || url,

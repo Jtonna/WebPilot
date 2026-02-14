@@ -170,8 +170,12 @@ The extension uses **manual connect** - it does NOT auto-connect on browser star
 
 **Views:**
 - **Setup View**: First-time setup, paste connection string
-- **Connected View**: Shows status, disconnect button
-- **Disconnected View**: Reconnect or Forget buttons
+- **Connected View**: Shows status, disconnect button, settings
+- **Disconnected View**: Reconnect or Forget buttons, settings
+
+**Settings:**
+- **Focus new tabs** (default: off): When disabled, new tabs open in the background without stealing focus
+- **Tab organization** (default: Existing window): Choose between opening tabs in the current window or a dedicated WebPilot window. Both modes use a cyan "WebPilot" tab group
 
 **After browser restart:** Extension shows Disconnected view. Click Reconnect to connect.
 
