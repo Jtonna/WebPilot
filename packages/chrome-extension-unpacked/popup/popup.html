@@ -98,6 +98,33 @@
       </div>
     </div>
 
+    <!-- Settings Section -->
+    <div id="settingsSection" class="settings-section hidden">
+      <h3 class="settings-header">Settings</h3>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Focus new tabs</span>
+          <span class="setting-desc">Switch to new tabs when opened</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="focusNewTabs">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Tab organization</span>
+          <span class="setting-desc">How WebPilot tabs are organized</span>
+        </div>
+        <select id="tabMode" class="setting-select">
+          <option value="group">Existing window</option>
+          <option value="window">New window</option>
+        </select>
+      </div>
+    </div>
+
     <footer class="footer">
       <span>MCP Browser Control</span>
     </footer>

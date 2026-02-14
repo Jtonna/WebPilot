@@ -6,7 +6,7 @@
 import { clearRefs } from './accessibility-storage.js';
 import { clearPosition } from './utils/mouse-state.js';
 import { cleanup as cleanupDebugger } from './utils/debugger.js';
-import { createTab, closeTab, getTabs, addTabToGroup } from './handlers/tabs.js';
+import { createTab, closeTab, getTabs, organizeTab } from './handlers/tabs.js';
 import { getAccessibilityTree } from './handlers/accessibility.js';
 import { injectScript, executeJs, handleNavigationComplete, handleTabClosed } from './handlers/scripts.js';
 import { click } from './handlers/click.js';
@@ -279,27 +279,27 @@ async function handleServerCommand(message) {
         break;
       case 'get_accessibility_tree':
         result = await getAccessibilityTree(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       case 'inject_script':
         result = await injectScript(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       case 'execute_js':
         result = await executeJs(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       case 'click':
         result = await click(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       case 'scroll':
         result = await scroll(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       case 'type':
         result = await typeText(params);
-        addTabToGroup(params.tab_id);
+        organizeTab(params.tab_id);
         break;
       default:
         throw new Error(`Unknown command type: ${type}`);
