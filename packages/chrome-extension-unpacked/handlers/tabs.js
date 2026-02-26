@@ -121,6 +121,10 @@ export async function addTabToGroup(tabId) {
         title: 'WebPilot',
         color: 'cyan'
       });
+      // Force Chrome to render the title/color by toggling collapsed state.
+      // Without this, Chrome may not visually update until the user clicks the group.
+      await chrome.tabGroups.update(groupId, { collapsed: true });
+      await chrome.tabGroups.update(groupId, { collapsed: false });
       webPilotGroupId = groupId;
     } else {
       // Add to existing group
