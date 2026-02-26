@@ -230,10 +230,11 @@ Options:
   --uninstall    Remove the background service
   --stop         Stop the running server
   --status       Check service status
-  --network      Bind to 0.0.0.0 for LAN access (instead of 127.0.0.1)
   --help         Show help message
   --version      Show version number
 ```
+
+> **Note:** The `--network` flag (bind to `0.0.0.0` for LAN access) is also supported at runtime but is not listed in `--help` output.
 
 Running with no options starts the server as a background daemon.
 
@@ -252,6 +253,8 @@ To expose the server on your local network (bind to `0.0.0.0` instead of `127.0.
 npm run dev:network     # Dev mode with network access
 npm run start:network   # Production mode with network access
 ```
+
+> **Note:** These scripts are defined in `packages/server-for-chrome-extension/package.json`, not the root workspace. Run them from within `packages/server-for-chrome-extension/`, or use `npm run dev:network --workspace=packages/server-for-chrome-extension` from the root.
 
 Or use the `--network` flag or `NETWORK=1` environment variable.
 

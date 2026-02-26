@@ -51,7 +51,7 @@ The app is built with Next.js (`^15.0.0`, React `^19.0.0`) inside Electron `33.4
 | macOS    | `.dmg` |
 | Linux    | AppImage |
 
-The installer bundles both the compiled MCP server binary and the unpacked extension files via `extraResources` in `electron-builder.yml`. During installation, it deploys these to the platform app data directory and registers the server as a background service.
+The installer bundles both the compiled MCP server binary and the unpacked extension files via `extraResources` in `electron-builder.yml`. These are placed in the app's `resources/` subdirectory within the installation directory (e.g., `resources/server/` and `resources/chrome-extension/`). No service registration occurs during installation; the server is launched by the Electron main process each time the app starts (see [Server Launching](#server-launching) below).
 
 ### Server Launching
 

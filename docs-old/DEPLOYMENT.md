@@ -116,7 +116,7 @@ The server stores PID files, port files, config, and logs in a separate data dir
 
 | Mode | Windows | macOS | Linux |
 |------|---------|-------|-------|
-| Packaged | `<install-dir>\data\` | `<app-bundle>/../data/` | `<app-dir>/data/` |
+| Packaged | `<install-dir>\data\` | `<app-bundle>/Contents/data/` | `<app-dir>/data/` |
 | Dev | `%LOCALAPPDATA%\WebPilot\` | `~/Library/Application Support/WebPilot/` | `$XDG_CONFIG_HOME/WebPilot/` (default `~/.config/WebPilot/`) |
 
 ## Auto-Start Service Registration
@@ -125,6 +125,7 @@ On first launch, the server binary auto-registers itself as a background service
 
 - **Windows**: Adds a Registry Run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`)
 - **macOS**: Creates a launchd plist
+- **Linux**: Creates a systemd user service unit (`~/.config/systemd/user/webpilot-server.service`)
 
 This allows the MCP server to be available immediately when the user logs in, without requiring the Electron app to be open.
 

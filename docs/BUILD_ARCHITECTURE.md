@@ -63,9 +63,13 @@ resources/
   chrome-extension/
     manifest.json
     background.js
-    popup/
+    accessibility-storage.js
+    accessibility-tree.js
+    formatters/
     handlers/
-    ...                                            All extension files
+    icons/
+    popup/
+    utils/
 ```
 
 The Electron app (Next.js inside Electron) provides:
@@ -105,9 +109,13 @@ The server binary and extension files remain in the Electron app's `resources/` 
     chrome-extension/                                Unpacked Chrome extension files
       manifest.json
       background.js
-      popup/
+      accessibility-storage.js
+      accessibility-tree.js
+      formatters/
       handlers/
-      ...
+      icons/
+      popup/
+      utils/
   data/                                              Created at runtime
     config/
       server.json                                    API key and port configuration
@@ -248,14 +256,14 @@ Each `dist:*` script chains the server build and the Electron build in sequence.
 [Electron App]  ──────────────────────────────────────┐
   %LOCALAPPDATA%\Programs\WebPilot\                   |
        |                                              |
-       | resources/ (bundled, no copying)             |
-       ├── server/                                    |
-       │     webpilot-server-for-chrome-extension.exe |
-       ├── chrome-extension/                          |
-       └── data/ (created at runtime)                 |
-             ├── config/server.json                   |
-             ├── server.pid / server.port             |
-             └── logs/                                |
+       ├── resources/ (bundled, no copying)             |
+       │     ├── server/                               |
+       │     │     webpilot-server-for-chrome-extension.exe
+       │     └── chrome-extension/                     |
+       └── data/ (created at runtime)                  |
+             ├── config/server.json                    |
+             ├── server.pid / server.port              |
+             └── logs/                                 |
        |                                              |
        | on launch, spawns server from resources/     |
        | (auto-registers as background service)       |

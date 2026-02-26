@@ -73,7 +73,7 @@ Tab lifecycle management.
 - `getTabs()` -- Returns all open tabs with their ID, URL, title, active state, window ID, and group ID.
 - `organizeTab(tabId)` -- Reads the `tabMode` setting from `chrome.storage.local` and routes to either `addTabToGroup(tabId)` (group mode, default) or `addTabToWindow(tabId)` (window mode). Called automatically when any command interacts with a tab.
 - `addTabToGroup(tabId)` -- Adds a tab to a cyan "WebPilot" tab group, creating the group if it does not exist.
-- `addTabToWindow(tabId)` -- Moves a tab to a dedicated WebPilot Chrome window, creating the window on first use and adding subsequent tabs to it.
+- `addTabToWindow(tabId)` -- Moves a tab to the dedicated WebPilot Chrome window if one already exists. Returns a failure if no WebPilot window has been created yet. Window creation happens exclusively in `createTab` when `tabMode` is set to `'window'` and no WebPilot window exists.
 
 ### `handlers/click.js`
 

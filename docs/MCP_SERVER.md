@@ -30,7 +30,7 @@ Binary entry point. Parses command-line flags using Node 18's built-in `util.par
 - `--stop` -- Kills a running server by reading its PID file, sends SIGTERM, and cleans up PID/port files (on Windows, SIGTERM kills immediately without running exit handlers, so manual file cleanup is required)
 - `--foreground` -- Runs the server in the foreground (in the current process) instead of spawning a background daemon
 - `--help` / `--version` -- Print help text or version from `package.json`
-- `--network` -- Forwarded to `index.js` via `process.argv`
+- `--network` -- Forwarded to `index.js` via `process.env.NETWORK = '1'` (also readable from `process.argv` in foreground mode, but the env var is the reliable mechanism since the background daemon spawns with empty args)
 - No flags -- Starts the server as a **background daemon**: spawns a detached child process with `WEBPILOT_FOREGROUND=1` env var and exits. The `--foreground` flag (or the env var) is needed to run the server in the current process.
 
 ### `index.js`
@@ -178,7 +178,7 @@ The CLI (`cli.js`) supports `--install`, `--uninstall`, and `--status` flags for
 
 Each platform module provides complete `install()`, `uninstall()`, and `status()` functions with PID/port file management, PID-alive validation, and detailed status output.
 
-**Note (dead code)**: All three platform service modules compute a `portListening` variable (checking whether the port is actually listening via netstat/lsof) but never use it in the status output or return value.
+**Note (dead code)**: Two of the three platform service modules (Windows and macOS) compute a `portListening` variable (checking whether the port is actually listening via netstat/lsof) but never use it in the status output or return value. Linux's `status()` has no port-listening check.
 
 ### Background Daemon
 

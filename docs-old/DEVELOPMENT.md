@@ -71,7 +71,7 @@ Handler files:
 
 ### Utility Modules
 
-- `utils/debugger.js` - Persistent debugger session management (`getSession`, `cleanupDebugger`, `isProtectedPage`)
+- `utils/debugger.js` - Persistent debugger session management (`getSession`, `cleanup`, `isProtectedPage`)
 - `utils/mouse-state.js` - Mouse position tracking per tab
 - `utils/cursor.js` - Visual cursor rendering
 - `utils/timing.js` - Timing utilities
@@ -206,7 +206,7 @@ import { yourHandlerFunction } from './handlers/your_handler.js';
 case 'your_command_type':
   result = await yourHandlerFunction(params);
   // Call organizeTab unless your tool manages tabs itself
-  await organizeTab(params.tab_id);
+  organizeTab(params.tab_id);
   break;
 ```
 
@@ -462,7 +462,7 @@ import { createTab, closeTab, getTabs, organizeTab, focusTab } from './handlers/
 // In handleServerCommand switch:
 case 'focus_tab':
   result = await focusTab(params);
-  await organizeTab(params.tab_id);
+  organizeTab(params.tab_id);
   break;
 ```
 
@@ -483,14 +483,14 @@ packages/chrome-extension-unpacked/
 │   └── accessibility.js               # getAccessibilityTree + detectPlatform()
 ├── formatters/
 │   ├── threads.js                     # Threads router (delegates by page type)
-│   │   ├── threads_home.js
-│   │   ├── threads_search.js
-│   │   └── threads_activity.js
-│   └── zillow.js                      # Zillow router (delegates by page type)
-│       ├── zillow_home.js
-│       ├── zillow_search.js
-│       ├── zillow_detail.js
-│       └── zillow_detail_page.js
+│   ├── threads_home.js
+│   ├── threads_search.js
+│   ├── threads_activity.js
+│   ├── zillow.js                      # Zillow router (delegates by page type)
+│   ├── zillow_home.js
+│   ├── zillow_search.js
+│   ├── zillow_detail.js
+│   └── zillow_detail_page.js
 └── utils/
     ├── debugger.js                    # Persistent debugger sessions
     ├── mouse-state.js                 # Mouse position tracking
@@ -561,11 +561,15 @@ Add your platform to the `detectPlatform()` function:
 
 ```javascript
 function detectPlatform(url) {
-  const hostname = new URL(url).hostname;
-  if (hostname.includes('threads.net')) return 'threads';
-  if (hostname.includes('zillow.com')) return 'zillow';
-  if (hostname.includes('yoursite.com')) return 'yoursite';  // Add here
-  return null;
+  try {
+    const hostname = new URL(url).hostname;
+    if (hostname.includes('threads.com')) return { formatter: formatThreadsTree, platform: 'threads' };
+    if (hostname.includes('zillow.com')) return { formatter: formatZillowTree, platform: 'zillow' };
+    if (hostname.includes('yoursite.com')) return { formatter: formatYourSiteTree, platform: 'yoursite' };  // Add here
+    return null;
+  } catch {
+    return null;
+  }
 }
 ```
 

@@ -156,7 +156,7 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
 **Returns (with usePlatformOptimizer=true on Threads Search Results):**
 ```json
 {
-  "tree": "{\"source\":{\"title\":\"Search • Threads\",\"url\":\"https://www.threads.com/search?q=AI&serp_type=default\"},\"nav\":[...],\"filter\":\"Top\",\"_postSchema\":[\"url\",\"content\",\"time\",\"likes\",\"replies\",\"reposts\",\"shares\",\"likeRef\",\"replyRef\",\"tags\"],\"posts\":[[\"https://www.threads.com/@user/post/xyz\",\"Post content about AI...\",1737295920000,47,34,0,0,\"e20\",\"e21\",[\"AI Threads\"]],...]}",
+  "tree": "{\"source\":{\"title\":\"Search • Threads\",\"url\":\"https://www.threads.com/search?q=AI&serp_type=default\"},\"nav\":[...],\"filter\":\"Top\",\"_filterSchema\":[\"name\",\"ref\"],\"filters\":[[\"Top\",\"e10\"],[\"Recent\",\"e11\"],[\"Profiles\",\"e12\"]],\"_postSchema\":[\"url\",\"content\",\"time\",\"likes\",\"replies\",\"reposts\",\"shares\",\"likeRef\",\"replyRef\",\"tags\"],\"posts\":[[\"https://www.threads.com/@user/post/xyz\",\"Post content about AI...\",1737295920000,47,34,0,0,\"e20\",\"e21\",[\"AI Threads\"]],...]}",
   "elementCount": 120,
   "postCount": 15,
   "platform": "threads"
@@ -504,6 +504,8 @@ This happens automatically - agents just call `browser_click(ref="e16")` and the
 ### browser_scroll
 
 Scroll to element OR by pixel amount. Uses smooth easing (50ms per 50px for window scrolls, 75ms per 50px for container scrolls).
+
+> **Note:** The registered MCP tool description in `mcp-handler.js` says "Uses smooth easing (75ms per 50px)" without differentiating window vs container scrolls. In practice, `calculateScrollDuration()` in `utils/scroll.js` defaults to 50ms per 50px for window scrolls, while container scrolls use 75ms per 50px (hardcoded in `scrollElementIntoView()`). The tool description string is slightly inaccurate; the behavior documented below is correct.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
