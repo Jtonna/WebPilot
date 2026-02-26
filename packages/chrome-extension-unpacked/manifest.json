@@ -10,7 +10,8 @@
     "tabGroups",
     "debugger",
     "scripting",
-    "webNavigation"
+    "webNavigation",
+    "windows"
   ],
   "host_permissions": [
     "<all_urls>"
