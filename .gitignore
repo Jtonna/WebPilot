@@ -57,16 +57,14 @@ config.local.json
 /packages/electron/out
 .claude/settings.local.json
 
-# beads daemon artifacts
-.beads/issues.jsonl
-.beads/.jsonl.lock
-.beads/beads.db
-.beads/beads.db-shm
-.beads/beads.db-wal
-.beads/daemon.lock
-.beads/daemon.log
-.beads/daemon.pid
-.beads/bd.sock
-.beads/.local_version
-.beads/sync-state.json
-.beads/config.yaml
+# starterpack — these paths must be tracked by git
+!.beads/
+!.beads/**
+!.starterpack/
+!.starterpack/**
+!.claude/
+!.claude/**
+!.github/
+!.github/**
+!CLAUDE.md
+!.gitattributes
