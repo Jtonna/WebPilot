@@ -17,10 +17,6 @@ packages/
 
 See [Documentation Index](docs/INDEX.md) for system architecture, development guides, and API reference.
 
-## Issue Tracking
-
-WebPilot uses [beads](https://github.com/steveyegge/beads) for git-backed issue tracking. Issues live in `.beads/issues.jsonl` and sync to the GitHub Projects kanban board when merged to `main`.
-
 ## Quick Start
 
 Start the MCP server:
