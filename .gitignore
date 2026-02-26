@@ -56,3 +56,15 @@ config.local.json
 /packages/electron/.next
 /packages/electron/out
 .claude/settings.local.json
+
+# starterpack — these paths must be tracked by git
+!.beads/
+!.beads/**
+!.starterpack/
+!.starterpack/**
+!.claude/
+!.claude/**
+!.github/
+!.github/**
+!CLAUDE.md
+!.gitattributes
