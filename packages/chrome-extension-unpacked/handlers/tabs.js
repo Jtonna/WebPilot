@@ -159,7 +159,7 @@ export async function createTab(params) {
       const win = await chrome.windows.create({ url, focused: true });
       webPilotWindowId = win.id;
       const tab = win.tabs[0];
-      addTabToGroup(tab.id);
+      await addTabToGroup(tab.id);
       return {
         tab_id: tab.id,
         url: tab.url || url,
@@ -172,7 +172,7 @@ export async function createTab(params) {
     if (focusNewTabs) {
       await chrome.windows.update(windowId, { focused: true });
     }
-    addTabToGroup(tab.id);
+    await addTabToGroup(tab.id);
     return {
       tab_id: tab.id,
       url: tab.url || url,
@@ -182,7 +182,7 @@ export async function createTab(params) {
 
   // Default: tab group mode
   const tab = await chrome.tabs.create({ url, active: focusNewTabs });
-  addTabToGroup(tab.id);
+  await addTabToGroup(tab.id);
   return {
     tab_id: tab.id,
     url: tab.url || url,
