@@ -52,6 +52,18 @@ async function getSettings() {
 }
 
 /**
+ * Read saved WebPilot window bounds from chrome.storage.local.
+ * @returns {Promise<Object|null>}
+ */
+async function getSavedWindowBounds() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['webPilotWindowBounds'], (result) => {
+      resolve(result.webPilotWindowBounds || null);
+    });
+  });
+}
+
+/**
  * Ensure the WebPilot window exists, returning its ID or null.
  * @returns {Promise<number|null>}
  */
@@ -156,7 +168,15 @@ export async function createTab(params) {
 
     if (windowId === null) {
       // Create new WebPilot window with this URL
-      const win = await chrome.windows.create({ url, focused: true });
+      const bounds = await getSavedWindowBounds();
+      const createOpts = { url, focused: true };
+      if (bounds) {
+        createOpts.width = bounds.width;
+        createOpts.height = bounds.height;
+        createOpts.top = bounds.top;
+        createOpts.left = bounds.left;
+      }
+      const win = await chrome.windows.create(createOpts);
       webPilotWindowId = win.id;
       const tab = win.tabs[0];
       await addTabToGroup(tab.id);
@@ -225,4 +245,12 @@ export async function getTabs() {
     windowId: tab.windowId,
     groupId: tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE ? tab.groupId : null
   }));
+}
+
+/**
+ * Get the WebPilot window ID for external use.
+ * @returns {number|null}
+ */
+export function getWebPilotWindowId() {
+  return webPilotWindowId;
 }

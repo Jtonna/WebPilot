@@ -6,7 +6,7 @@
 import { clearRefs } from './accessibility-storage.js';
 import { clearPosition } from './utils/mouse-state.js';
 import { cleanup as cleanupDebugger } from './utils/debugger.js';
-import { createTab, closeTab, getTabs, organizeTab } from './handlers/tabs.js';
+import { createTab, closeTab, getTabs, organizeTab, getWebPilotWindowId } from './handlers/tabs.js';
 import { getAccessibilityTree } from './handlers/accessibility.js';
 import { injectScript, executeJs, handleNavigationComplete, handleTabClosed } from './handlers/scripts.js';
 import { click } from './handlers/click.js';
@@ -405,5 +405,20 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.whitelistedDomains) {
       restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
+  }
+});
+
+// Save WebPilot window bounds when resized or moved
+chrome.windows.onBoundsChanged.addListener((window) => {
+  const wpWindowId = getWebPilotWindowId();
+  if (wpWindowId !== null && window.id === wpWindowId) {
+    chrome.storage.local.set({
+      webPilotWindowBounds: {
+        width: window.width,
+        height: window.height,
+        top: window.top,
+        left: window.left
+      }
+    });
   }
 });
