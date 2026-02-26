@@ -26,6 +26,18 @@ let config = {
   serverUrl: null
 };
 
+// Restricted mode whitelist cache
+let restrictedModeCache = {
+  enabled: true,  // default ON
+  domains: []     // default empty = block all
+};
+
+// Initialize cache from storage
+chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
+  restrictedModeCache.enabled = result.restrictedModeEnabled !== false; // default true
+  restrictedModeCache.domains = result.whitelistedDomains || [];
+});
+
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
@@ -265,6 +277,8 @@ async function handleServerCommand(message) {
   const { id, type, params } = message;
 
   try {
+    await checkWhitelist(type, params);
+
     let result;
 
     switch (type) {
@@ -324,6 +338,46 @@ function sendResult(id, success, result, error = null) {
   }
 }
 
+// Whitelist helper functions
+function isDomainWhitelisted(url) {
+  if (!restrictedModeCache.enabled) return true;
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return restrictedModeCache.domains.some(entry =>
+      hostname === entry || hostname.endsWith('.' + entry)
+    );
+  } catch {
+    return false; // fail-closed: invalid URLs are blocked
+  }
+}
+
+async function checkWhitelist(type, params) {
+  if (!restrictedModeCache.enabled) return; // restricted mode off, allow all
+  if (type === 'get_tabs') return; // get_tabs is always allowed
+
+  let url;
+  if (type === 'create_tab') {
+    url = params.url;
+  } else if (params.tab_id) {
+    try {
+      const tab = await chrome.tabs.get(params.tab_id);
+      url = tab.url;
+    } catch {
+      // Tab doesn't exist or can't be accessed — fail-closed
+      throw new Error('Blocked: Unable to verify tab domain. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.');
+    }
+  } else {
+    return; // no tab context to check
+  }
+
+  if (!url || !isDomainWhitelisted(url)) {
+    let domain = 'unknown';
+    try { domain = new URL(url).hostname; } catch {}
+    throw new Error(`Blocked: ${domain} is not whitelisted. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
+  }
+}
+
 // Event listeners for cleanup
 chrome.webNavigation.onCompleted.addListener(handleNavigationComplete);
 
@@ -344,6 +398,12 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
     if (changes.serverUrl) {
       config.serverUrl = changes.serverUrl.newValue;
+    }
+    if (changes.restrictedModeEnabled) {
+      restrictedModeCache.enabled = changes.restrictedModeEnabled.newValue !== false;
+    }
+    if (changes.whitelistedDomains) {
+      restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
   }
 });
