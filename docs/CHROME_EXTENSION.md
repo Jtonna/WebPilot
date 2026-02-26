@@ -68,10 +68,12 @@ Connection configuration (server URL, API key) is stored in `chrome.storage.loca
 
 Tab lifecycle management.
 
-- `createTab(params)` -- Opens a new tab with the given URL. Automatically adds the tab to a cyan "WebPilot" tab group for visual organization.
+- `createTab(params)` -- Opens a new tab with the given URL. The tab's `active` state is controlled by the `focusNewTabs` setting (defaults to false, meaning tabs open in the background). Automatically organizes the tab via `organizeTab`.
 - `closeTab(params)` -- Closes a tab by ID.
 - `getTabs()` -- Returns all open tabs with their ID, URL, title, active state, window ID, and group ID.
-- `addTabToGroup(tabId)` -- Adds a tab to the WebPilot tab group, creating the group if it does not exist. Called automatically when any command interacts with a tab.
+- `organizeTab(tabId)` -- Reads the `tabMode` setting from `chrome.storage.local` and routes to either `addTabToGroup(tabId)` (group mode, default) or `addTabToWindow(tabId)` (window mode). Called automatically when any command interacts with a tab.
+- `addTabToGroup(tabId)` -- Adds a tab to a cyan "WebPilot" tab group, creating the group if it does not exist.
+- `addTabToWindow(tabId)` -- Moves a tab to the dedicated WebPilot Chrome window if one already exists. Returns a failure if no WebPilot window has been created yet. Window creation happens exclusively in `createTab` when `tabMode` is set to `'window'` and no WebPilot window exists.
 
 ### `handlers/click.js`
 
@@ -81,7 +83,7 @@ CDP mouse simulation with human-like cursor movement.
 - Uses the WindMouse algorithm (`utils/windmouse.js`) to generate a curved path from the last cursor position to the target
 - Dispatches `Input.dispatchMouseEvent` (mouseMoved, mousePressed, mouseReleased) along the path
 - Shows a visual SVG cursor with RGB glow animation and particle burst on click
-- Auto-scrolls off-screen elements into view before clicking
+- Auto-scrolls off-screen elements into view before clicking, checking for scrollable containers first (using a temporary `data-webpilot-scroll-target` attribute to bridge CDP node resolution and in-page JavaScript), then falling back to window scrolling
 - Re-identifies elements after scroll using ancestry context (handles virtualized DOM recycling)
 - Tracks last cursor position per tab so subsequent clicks start from where the previous one ended
 
@@ -90,8 +92,9 @@ CDP mouse simulation with human-like cursor movement.
 Smooth animated scrolling.
 
 - Scrolls to an element (by ref or CSS selector) or by a pixel amount
+- Detects scrollable parent containers (elements with `overflow-y: auto|scroll` and `scrollHeight > clientHeight`) before falling back to window scrolling
 - Uses `requestAnimationFrame` with cubic ease-in-out for 60fps animation
-- Duration auto-calculated: 50ms per 50px of scroll distance
+- Duration auto-calculated: 50ms per 50px for window scrolls, 75ms per 50px for container scrolls
 - Centers the target element in the viewport when scrolling to a ref/selector
 - Skips scrolling if the element is already visible (returns `scrolled: false`)
 
@@ -183,7 +186,9 @@ Scroll animation utilities.
 - `animateScroll(target, scrollDelta, duration)` -- Runs an in-page `requestAnimationFrame` animation with cubic ease-in-out easing. Includes a hard timeout to prevent hangs on background tabs.
 - `calculateScrollDelta(target, elementAbsoluteY)` -- Calculates how far to scroll to center an element in the viewport.
 - `generateViewportCheckCode(x, y)` -- Generates JavaScript to check if coordinates are within the viewport.
-- `calculateScrollDuration(scrollDelta)` -- Returns animation duration based on distance (50ms per 50px).
+- `calculateScrollDuration(scrollDelta)` -- Returns animation duration based on distance (50ms per 50px for window scrolls).
+- `scrollElementIntoView(target, elementExpression)` -- Walks up the DOM from the target element looking for scrollable ancestor containers (`overflow-y: auto|scroll` with `scrollHeight > clientHeight`). If found, scrolls within that container at 75ms per 50px. Used by both click.js and the scroll handler for container scrolling.
+- `generateScrollIntoViewCode(selector)` -- Generates JavaScript code to scroll an element into view within its scrollable container.
 
 ### `utils/timing.js`
 
@@ -206,8 +211,19 @@ The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) pr
 |------|-----------|---------|
 | Setup | No stored config | Paste connection string, click Connect |
 | Connecting | Connecting to server | Shows server URL, displays errors if server unreachable |
-| Connected | WebSocket open | Shows server URL, Disconnect button |
-| Disconnected | Has stored config but not connected | Reconnect button, Forget button (clears config) |
+| Connected | WebSocket open | Shows server URL, Disconnect button, Settings |
+| Disconnected | Has stored config but not connected | Reconnect button, Forget button (clears config), Settings |
+
+The popup header displays the extension version (from `chrome.runtime.getManifest()`).
+
+### Settings
+
+When connected or disconnected, the popup shows a settings section with:
+
+- **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
+- **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window).
+
+These settings are stored in `chrome.storage.local` as `focusNewTabs` and `tabMode`.
 
 The connection string format is `vf://<base64url>` encoding `{"v":1,"s":"<ws_url>","k":"<api_key>"}`.
 
@@ -249,7 +265,7 @@ Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds w
 
 ## Permissions
 
-From `packages/extension/manifest.json`:
+From `packages/chrome-extension-unpacked/manifest.json`:
 
 | Permission | Purpose |
 |-----------|---------|

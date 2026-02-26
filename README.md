@@ -15,14 +15,11 @@ packages/
 
 ## Documentation
 
-- [docs/BUILD_ARCHITECTURE.md](docs/BUILD_ARCHITECTURE.md) — Build system and release pipeline
-- [docs/CHROME_EXTENSION.md](docs/CHROME_EXTENSION.md) — Chrome extension architecture
-- [docs/MCP_SERVER.md](docs/MCP_SERVER.md) — MCP server architecture
-- [docs/ELECTRON_APP.md](docs/ELECTRON_APP.md) — Electron app architecture (Phase 2)
+See [Documentation Index](docs/INDEX.md) for system architecture, development guides, and API reference.
 
 ## Issue Tracking
 
-WebPilot uses [beads](https://github.com/steveyegge/beads) for git-backed issue tracking. Issues live in `.beads/issues.jsonl` and sync to the GitHub Projects kanban board when merged to `main`. See [docs/BEADS_SYNC.md](docs/BEADS_SYNC.md) for details.
+WebPilot uses [beads](https://github.com/steveyegge/beads) for git-backed issue tracking. Issues live in `.beads/issues.jsonl` and sync to the GitHub Projects kanban board when merged to `main`.
 
 ## Quick Start
 
