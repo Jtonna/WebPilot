@@ -57,7 +57,7 @@ The doc describes a detailed 4-step onboarding flow (Check via native messaging,
 There is no "Open Chrome Extensions" button, no "Copy Path" button, no native messaging check, no screenshot-based guide, and no verification step. The described flow appears to be a design spec that was never implemented.
 
 ### 6. Native messaging claim is incorrect
-The doc states the app "attempts to communicate with extension via native messaging" (step 1 of onboarding). The extension uses `chrome.debugger` API (Chrome DevTools Protocol), not native messaging. The `manifest.json` has no `nativeMessaging` permission. The server communicates with the extension via HTTP/WebSocket, not native messaging.
+The doc states the app "attempts to communicate with extension via native messaging" (step 1 of onboarding). There is no native messaging anywhere in the project. The `manifest.json` has no `nativeMessaging` permission. The server communicates with the extension via WebSocket (see `packages/chrome-extension-unpacked/background.js`), not native messaging. The Electron UI polls the server's `/health` HTTP endpoint for status, but does not communicate with the extension directly at all.
 
 ### 7. Extension version in manifest.json is 0.2.0 but all package.json files are at 0.3.0
 The doc states version `0.2.0` which matches the current `manifest.json`, but this is out of sync with the rest of the project (root, server, and electron packages are all at `0.3.0`). The `release.sh` script bumps all `package.json` files but does not update `manifest.json`, indicating a version drift bug.
@@ -79,7 +79,10 @@ The doc references `build-windows.bat` and `build-mac.sh` for testing. Neither e
 The doc references `electron/build/installer.nsh` as a "NSIS script that extracts extension folder." No custom `.nsh` file exists in the project. The extension deployment is handled entirely by electron-builder's `extraResources` mechanism, not a custom NSIS script.
 
 ### 11. Chrome Web Store rejection reason is vague
-The doc states the extension was "rejected (uses CDT)" without elaboration. The extension uses the `chrome.debugger` permission (Chrome DevTools Protocol), which is restricted. The claim that the extension was actually submitted and rejected is unverified from the codebase alone, but the use of `debugger` permission would indeed be problematic for Chrome Web Store approval.
+The doc states the extension was "rejected (uses CDT)" without elaboration. The extension uses the `chrome.debugger` permission (Chrome DevTools Protocol), which is restricted. The claim that the extension was actually submitted and rejected is unverified from the codebase alone, but the use of `debugger` permission would indeed be problematic for Chrome Web Store approval. This is a documentation clarity issue rather than a factual error.
+
+### 12. "Persistent across app updates" claim is misleading
+The doc states the Windows extension path is "Persistent across app updates." Since the extension lives inside the app's `resources/chrome-extension/` directory, the files are replaced on every reinstall or update. The directory path stays the same so Chrome continues to find the extension, but the claim implies the files survive updates untouched, which is not the case.
 
 ---
 
@@ -100,8 +103,8 @@ The server stores PID files, port files, config, and logs in a data directory. F
 ### 5. The release/versioning process
 The project has a `release.sh` script that bumps versions across all `package.json` files and creates git tags. The doc's version management section describes a manual process but misses this automation. Notably, `release.sh` does not bump `manifest.json`, which is a gap.
 
-### 6. Extension communicates via HTTP/WebSocket, not native messaging
-The actual communication architecture between the server and extension (HTTP polling + WebSocket) is not described. The doc incorrectly implies native messaging.
+### 6. Extension communicates via WebSocket, not native messaging
+The actual communication architecture between the server and extension is WebSocket (see `packages/chrome-extension-unpacked/background.js`). The extension connects to the server's WebSocket endpoint, authenticates with an API key, and receives commands over this persistent connection. The doc incorrectly implies native messaging. Note: the Electron UI separately polls the server's `/health` HTTP endpoint for status display, but this is Electron-to-server, not extension-to-server.
 
 ### 7. pkg binary compilation
 The server is compiled to a standalone `.exe` using `@yao-pkg/pkg`. This is a key deployment detail not covered in the doc.
@@ -122,17 +125,14 @@ The `packages/chrome-extension-unpacked/manifest.json` does contain `"version": 
 ### 4. Developer Mode considerations
 The claims about the Developer Mode warning banner, extension persistence, and lack of auto-update are all accurate for Chrome sideloaded extensions.
 
-### 5. Electron + Next.js architecture
-The electron package uses Next.js for the UI (confirmed by `next.config.js`, `app/` directory, and `package.json` dependencies) with Electron as the shell, matching the doc's general architectural description.
-
-### 6. Extension uses Manifest V3
+### 5. Extension uses Manifest V3
 The `manifest.json` confirms `"manifest_version": 3` with a service worker background script.
 
 ---
 
 ## Verified By
 
-- **Date**: 2026-02-25
+### Initial audit: 2026-02-25
 - **Method**: Manual audit of codebase at `C:\Users\J\Documents\Github\WebPilot\` on branch `main` (commit `2463b8c`)
 - **Files examined**:
   - `packages/chrome-extension-unpacked/manifest.json` - extension metadata and permissions
@@ -149,3 +149,17 @@ The `manifest.json` confirms `"manifest_version": 3` with a service worker backg
   - `package.json` (root) - workspace config and build scripts
   - `release.sh` - version bump automation
 - **Summary**: The DEPLOYMENT.md document contains significant inaccuracies in file paths, folder names, installation paths, and the onboarding flow description. The onboarding flow described was never implemented (the UI is a placeholder). Multiple referenced files do not exist. The doc is missing coverage of the server binary deployment, Linux support, auto-start service, and the actual communication architecture. The general claims about why sideloading is necessary and Developer Mode behavior remain accurate.
+
+### Re-verification: 2026-02-25
+- **Method**: Code-level verification of every audit claim against the codebase on branch `main` (commit `2463b8c`)
+- **Additional files examined**:
+  - `packages/chrome-extension-unpacked/background.js` - WebSocket communication (confirms no native messaging)
+  - `packages/server-for-chrome-extension/src/service/windows.js` - Windows Registry Run key auto-start
+  - `packages/electron/next.config.js` - Next.js static export config
+- **Changes made to this audit**:
+  - **Inaccuracy #6 (native messaging)**: Refined to clarify that server-to-extension communication is WebSocket only, and that Electron-to-server is a separate HTTP health poll. Removed imprecise mention of `chrome.debugger` being the alternative to native messaging (those are different concerns).
+  - **Inaccuracy #11 (CWS rejection)**: Kept but reframed as a documentation clarity issue rather than a factual error, since the `debugger` permission genuinely would prevent CWS approval.
+  - **Inaccuracy #12 (NEW)**: Added. The doc claims the extension path is "Persistent across app updates" but the files live inside `resources/` and are replaced on every update.
+  - **Missing #6**: Corrected "HTTP polling + WebSocket" to just "WebSocket" for extension-to-server communication. Added detail about the WebSocket authentication flow.
+  - **Verified Correct #5 (Electron + Next.js)**: Removed. DEPLOYMENT.md does not make claims about the Electron/Next.js architecture, so there was nothing to verify. This was a tangential observation.
+  - **All other claims (Inaccuracies 1-5, 7-10; Missing 1-5, 7; Verified 1-4, 5-6)**: Confirmed correct against the codebase with no changes needed.

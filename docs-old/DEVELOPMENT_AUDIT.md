@@ -40,15 +40,7 @@ import { click } from './handlers/click.js';
 
 New handlers should be created as separate files in `packages/chrome-extension-unpacked/handlers/`, not added inline to `background.js`.
 
-### 4. Doc's "6-step" process is actually 8 steps in its own checklist
-
-The narrative describes a 4-step process (Steps 1-4), but the checklist section at line 159 lists 8 items (tool array, handleToolCall, permissions, handleServerCommand case, handler function, README, MCP_INTEGRATION, test). The introduction calls it a "6-step process" but neither count matches.
-
-### 5. `handleToolCall` uses if/else-if, not a switch statement
-
-The doc says to "Add case to `handleToolCall` switch" (line 61). Looking at the actual code, `handleToolCall` does use a `switch` statement on `name` (line 363). This is correct. However, `processMessage` uses `if`/`else if` chains (lines 305-350), not a switch. The doc does not mention `processMessage` directly so this is minor, but worth noting for completeness.
-
-### 6. Formatter function naming convention is wrong
+### 4. Formatter function naming convention is wrong
 
 The doc says to create a function called `formatSiteTree(nodes)`. The actual convention in the codebase is:
 
@@ -57,7 +49,7 @@ The doc says to create a function called `formatSiteTree(nodes)`. The actual con
 
 The naming pattern is `format<Platform>Tree`, not `formatSiteTree`.
 
-### 7. Doc's site-specific formatter example does not match actual architecture
+### 5. Doc's site-specific formatter section describes the opposite of actual architecture
 
 The doc (line 457-495) shows a standalone handler function `getSiteFeed` that fetches the accessibility tree, detects the URL, calls `getSession()`, and calls the formatter directly. This is not how it works.
 
@@ -65,30 +57,30 @@ In reality, platform detection and formatter routing happen inside `handlers/acc
 
 The doc's claim that "Each formatter gets its own dedicated MCP tool rather than auto-routing by URL" (line 373) is the **opposite** of what the code does. The code auto-routes by URL within a single tool.
 
-### 8. Formatter return format is incomplete
+### 6. Formatter return format is incomplete
 
 The doc says formatters return `{ tree, elementCount }`. The actual formatters return additional fields:
 
-- `refs` (required): A map of `ref -> backendDOMNodeId` used by `accessibility-storage.js` for click/scroll targeting
-- `postCount`, `listingCount`, `activityCount`, `ghostCount` (platform-specific counts)
+- `refs` (required): A map of `ref -> backendDOMNodeId` consumed by `handlers/accessibility.js` and stored via `accessibility-storage.js` for click/scroll targeting. This field is not returned to the MCP client but is critical internally.
+- `postCount`, `listingCount`, `activityCount`, `ghostCount` (platform-specific counts): Some of these are forwarded to the MCP client by `handlers/accessibility.js`, but only `postCount` and `listingCount` are explicitly passed through. Other counts (e.g., `ghostCount`, `activityCount`, `savedSearchCount`) are dropped by the handler.
 
-The `refs` field is critical and omitting it would break click/scroll functionality.
+Omitting `refs` from a new formatter would break click/scroll-by-ref functionality.
 
-### 9. Doc's formatter template uses `getRef(nodeId)` but actual code uses `getRef(node)`
+### 7. Doc's formatter template uses `getRef(nodeId)` but actual code uses `getRef(node)`
 
-The doc shows `getRef(nodeId)` taking a node ID. The actual implementations pass the full node object: `getRef(node)` which accesses `node.nodeId` and `node.backendDOMNodeId` internally.
+The doc shows `getRef(nodeId)` taking a node ID. The actual implementations pass the full node object: `getRef(node)` which accesses `node.nodeId` and `node.backendDOMNodeId` internally. The `backendDOMNodeId` access is critical for populating the `refs` map.
 
-### 10. Manifest permissions list is incomplete
+### 8. Manifest permissions list is incomplete
 
 The doc lists `storage`, `activeTab`, `tabs` as the base permissions (line 75). The actual `manifest.json` also includes `tabGroups`, `debugger`, `scripting`, and `webNavigation` in the base set. The doc mentions `debugger` and `scripting` only as "common permissions to add" rather than acknowledging they are already present.
 
-### 11. Focus tab example would not work as-is
+### 9. Focus tab example would not work as-is
 
-The example adds handler code directly in `background.js`. Given the modular architecture (handlers in separate files under `handlers/`), the handler should be in `handlers/tabs.js` or a new handler file, then imported in `background.js`. Also, `background.js` calls `organizeTab(params.tab_id)` after most commands -- the example omits this pattern.
+The example adds handler code directly in `background.js`. Given the modular architecture (handlers in separate files under `handlers/`), the handler should be in `handlers/tabs.js` or a new handler file, then imported in `background.js`. The example also omits the `organizeTab(params.tab_id)` call that follows most commands in `background.js`.
 
-### 12. Doc says `handleToolCall` is a "switch" -- this is technically correct
+### 10. Doc omits MCP response wrapping
 
-The doc's description of adding a case to the `handleToolCall` switch matches the actual code structure (it is a switch on `name`). However, the doc omits the fact that `handleToolCall` wraps results in `{ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }` before returning, which is the MCP protocol's required response format.
+The doc's description of adding a case to the `handleToolCall` switch is structurally correct (it is a switch on `name`). However, the doc omits the fact that `handleToolCall` wraps results in `{ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }` before returning, which is the MCP protocol's required response format. A developer following the doc would not know about this wrapping.
 
 ---
 
@@ -107,7 +99,7 @@ The doc does not mention the `handlers/` directory or the modular pattern. Actua
 ### 2. Utility modules
 
 The doc does not mention these utility modules:
-- `utils/debugger.js` - Persistent debugger session management (mentioned but path is wrong)
+- `utils/debugger.js` - Persistent debugger session management (mentioned in the doc's error handling section with correct relative paths, but not listed as a module)
 - `utils/mouse-state.js` - Mouse position tracking
 - `utils/cursor.js` - Visual cursor rendering
 - `utils/timing.js` - Timing utilities
@@ -116,11 +108,11 @@ The doc does not mention these utility modules:
 
 ### 3. `accessibility-storage.js` module
 
-Not mentioned. This module stores ref-to-backendDOMNodeId mappings and ancestry context, critical for click/scroll-by-ref functionality.
+Not mentioned. This module stores ref-to-backendDOMNodeId mappings and ancestry context, critical for click/scroll-by-ref functionality. Also provides `findRefByAncestry()` for re-identifying elements after scroll.
 
 ### 4. `organizeTab()` pattern
 
-After most commands, `background.js` calls `organizeTab(params.tab_id)`. This is not documented but is a consistent pattern a new tool author should follow.
+After most commands (6 of 9: `get_accessibility_tree`, `inject_script`, `execute_js`, `click`, `scroll`, `type`), `background.js` calls `organizeTab(params.tab_id)`. This is not documented but is a consistent pattern a new tool author should follow. The three commands that skip it are `create_tab`, `close_tab`, and `get_tabs`.
 
 ### 5. Tab cleanup lifecycle
 
@@ -141,7 +133,7 @@ The doc does not list the 9 actual tools: `browser_create_tab`, `browser_close_t
 
 ### 7. `browser_inject_script` server-side fetch pattern
 
-The MCP server fetches script content from URLs before sending to the extension (via `fetchScriptFromUrl`). This is a non-obvious architectural choice where the server acts as a fetch proxy. Not documented.
+The MCP server fetches script content from URLs before sending to the extension (via `fetchScriptFromUrl` in `mcp-handler.js`). This is a non-obvious architectural choice where the server acts as a fetch proxy. Not documented.
 
 ### 8. MCP protocol details
 
@@ -151,9 +143,13 @@ The doc does not mention:
 - The `processMessage` function handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call` methods
 - Error responses use JSON-RPC error format with `code` and `message` fields
 
-### 9. Zillow formatter exists
+### 9. Additional formatters and sub-formatters exist
 
-The doc only references the Threads formatter. A Zillow formatter also exists with multiple sub-formatters (`zillow_home.js`, `zillow_search.js`, `zillow_detail.js`, `zillow_detail_page.js`).
+The doc only references the Threads formatter. Additional formatters exist:
+- **Zillow**: `zillow.js` (router), `zillow_home.js`, `zillow_search.js`, `zillow_detail.js`, `zillow_detail_page.js`
+- **Threads sub-formatters**: `threads.js` (router), `threads_activity.js`, `threads_home.js`, `threads_search.js`
+
+Both top-level formatters (`threads.js`, `zillow.js`) follow a router pattern that detects page type from the URL and delegates to page-specific sub-formatters.
 
 ### 10. `host_permissions` in manifest
 
@@ -162,6 +158,10 @@ The manifest includes `"host_permissions": ["<all_urls>"]` which is not mentione
 ### 11. Background script is an ES module
 
 The manifest specifies `"type": "module"` for the background service worker. The doc's example code uses CommonJS-style patterns but the extension code uses ES module imports/exports.
+
+### 12. Protected page handling not mentioned
+
+The `utils/debugger.js` module exports `isProtectedPage(url)` which checks for `chrome://`, `chrome-extension://`, and `about:` URLs. The doc's debugger example does not mention that `getSession()` will fail on protected pages. New tools that use the debugger should validate the tab URL first.
 
 ---
 
@@ -208,24 +208,44 @@ The testing instructions for reloading the extension at `chrome://extensions` an
 
 ### 10. `findChildrenByRole` utility recommendation
 
-The doc recommends using `findChildrenByRole(nodeId, role)` in formatters. This function exists in `formatters/threads.js` (line 98) with that exact signature.
+The doc recommends using `findChildrenByRole(nodeId, role)` in formatters. This function exists in both `formatters/threads.js` (line 98) and `formatters/zillow.js` (line 56) with that exact signature.
 
 ---
 
 ## Verified By
 
-- **Date:** 2026-02-25
-- **Method:** Manual line-by-line comparison of DEVELOPMENT.md claims against source files in `packages/server-for-chrome-extension/` and `packages/chrome-extension-unpacked/`. Each file path, function signature, message format, switch statement, and architectural claim was checked against the actual code.
-- **Files examined:**
-  - `packages/server-for-chrome-extension/src/mcp-handler.js`
-  - `packages/server-for-chrome-extension/src/extension-bridge.js`
-  - `packages/chrome-extension-unpacked/background.js`
-  - `packages/chrome-extension-unpacked/manifest.json`
-  - `packages/chrome-extension-unpacked/accessibility-tree.js`
-  - `packages/chrome-extension-unpacked/accessibility-storage.js`
-  - `packages/chrome-extension-unpacked/handlers/accessibility.js`
-  - `packages/chrome-extension-unpacked/handlers/tabs.js`
-  - `packages/chrome-extension-unpacked/formatters/threads.js`
-  - `packages/chrome-extension-unpacked/formatters/zillow.js`
-  - `packages/chrome-extension-unpacked/utils/debugger.js`
-- **Summary:** The doc has significant structural inaccuracies. The most critical issue is the site-specific formatter section, which describes an architecture (dedicated MCP tools per site) that is the opposite of what exists (auto-routing within a single tool). File paths all use outdated/incorrect package names. The modular handler architecture is not documented at all. The core request flow and message formats are accurate.
+### Initial audit: 2026-02-25
+
+Manual line-by-line comparison of DEVELOPMENT.md claims against source files in `packages/server-for-chrome-extension/` and `packages/chrome-extension-unpacked/`. Each file path, function signature, message format, switch statement, and architectural claim was checked against the actual code.
+
+### Verification pass: 2026-02-25
+
+Every audit claim re-verified against the actual codebase. Changes made:
+
+**Deleted (wrong or exaggerated):**
+- Old #4 ("Doc's 6-step process is actually 8 steps"): The doc never says "6-step process." It has 4 narrative steps and an 8-item checklist. The audit fabricated the "6-step" reference.
+- Old #5 ("`handleToolCall` uses if/else-if, not a switch"): The audit's own body contradicted its title, confirming `handleToolCall` does use a switch. The note about `processMessage` using if/else-if is irrelevant since the doc never mentions `processMessage`.
+
+**Updated (needed nuance):**
+- #6 (formatter return format): Clarified that `refs` is consumed internally by `handlers/accessibility.js` and stored via `accessibility-storage.js`, not returned to the MCP client. Added detail about which platform-specific counts are forwarded vs dropped by the handler.
+- #7 (getRef signature): Added explanation of why passing the full node matters (backendDOMNodeId access).
+- Missing #2 (utility modules): Corrected the claim that `utils/debugger.js` path was "wrong" in the doc. The doc's relative paths (`../utils/debugger.js` from handlers, `./utils/debugger.js` from background.js level) are correct.
+- Missing #4 (organizeTab): Specified exactly which 6 commands call it and which 3 do not.
+- Missing #9 (formatters): Added Threads sub-formatters (`threads_activity.js`, `threads_home.js`, `threads_search.js`) which were omitted. Noted the shared router pattern.
+- Verified Correct #10 (findChildrenByRole): Added that the function also exists in `zillow.js` with the same signature.
+
+**Added (missed by initial audit):**
+- Missing #12: Protected page handling (`isProtectedPage()` in `utils/debugger.js`) not documented. New tools using the debugger should validate tab URLs.
+
+**Files examined during verification:**
+- `packages/server-for-chrome-extension/src/mcp-handler.js`
+- `packages/server-for-chrome-extension/src/extension-bridge.js`
+- `packages/chrome-extension-unpacked/background.js`
+- `packages/chrome-extension-unpacked/manifest.json`
+- `packages/chrome-extension-unpacked/accessibility-tree.js`
+- `packages/chrome-extension-unpacked/accessibility-storage.js`
+- `packages/chrome-extension-unpacked/handlers/accessibility.js`
+- `packages/chrome-extension-unpacked/handlers/tabs.js`
+- `packages/chrome-extension-unpacked/formatters/threads.js`
+- `packages/chrome-extension-unpacked/formatters/zillow.js`
+- `packages/chrome-extension-unpacked/utils/debugger.js`
