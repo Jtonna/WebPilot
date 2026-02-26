@@ -123,6 +123,30 @@
           <option value="window">New window</option>
         </select>
       </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <span class="setting-label">Restricted mode</span>
+          <span class="setting-desc">Only allow whitelisted sites</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="restrictedMode">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div id="whitelistPanel" class="whitelist-panel hidden">
+        <button class="whitelist-current-btn" id="whitelistCurrentBtn">Whitelist this site</button>
+
+        <div class="whitelist-input-row">
+          <input type="text" id="domainInput" class="domain-input" placeholder="example.com">
+          <button class="add-domain-btn" id="addDomainBtn">Add</button>
+        </div>
+
+        <div class="domain-list-container">
+          <div id="domainList" class="domain-list"></div>
+        </div>
+      </div>
     </div>
 
     <footer class="footer">

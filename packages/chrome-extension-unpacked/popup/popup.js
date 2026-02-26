@@ -20,6 +20,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsSection = document.getElementById('settingsSection');
   const focusNewTabsToggle = document.getElementById('focusNewTabs');
   const tabModeSelect = document.getElementById('tabMode');
+  const restrictedModeToggle = document.getElementById('restrictedMode');
+  const whitelistPanel = document.getElementById('whitelistPanel');
+  const whitelistCurrentBtn = document.getElementById('whitelistCurrentBtn');
+  const domainInput = document.getElementById('domainInput');
+  const addDomainBtn = document.getElementById('addDomainBtn');
+  const domainList = document.getElementById('domainList');
 
   loadStateAndShow();
 
@@ -38,6 +44,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   tabModeSelect.addEventListener('change', () => {
     chrome.storage.local.set({ tabMode: tabModeSelect.value });
+  });
+
+  restrictedModeToggle.addEventListener('change', () => {
+    const enabled = restrictedModeToggle.checked;
+    chrome.storage.local.set({ restrictedModeEnabled: enabled });
+    if (enabled) {
+      whitelistPanel.classList.remove('hidden');
+      updateWhitelistUI();
+    } else {
+      whitelistPanel.classList.add('hidden');
+    }
+  });
+
+  whitelistCurrentBtn.addEventListener('click', handleWhitelistCurrentSite);
+  addDomainBtn.addEventListener('click', handleAddDomain);
+  domainInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      handleAddDomain();
+    }
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -224,9 +249,157 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadSettings() {
-    chrome.storage.local.get(['focusNewTabs', 'tabMode'], (result) => {
+    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'restrictedModeEnabled', 'whitelistedDomains'], (result) => {
       focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
       tabModeSelect.value = result.tabMode || 'group'; // default 'group'
+
+      // Default restrictedModeEnabled to true if undefined
+      const restrictedEnabled = result.restrictedModeEnabled !== undefined ? result.restrictedModeEnabled : true;
+      restrictedModeToggle.checked = restrictedEnabled;
+
+      if (restrictedEnabled) {
+        whitelistPanel.classList.remove('hidden');
+        updateWhitelistUI();
+      } else {
+        whitelistPanel.classList.add('hidden');
+      }
+    });
+  }
+
+  function normalizeDomain(input) {
+    let domain = input.trim().toLowerCase();
+    // Strip protocol
+    domain = domain.replace(/^https?:\/\//, '');
+    // Strip www.
+    domain = domain.replace(/^www\./, '');
+    // Strip path/query/hash
+    domain = domain.split('/')[0].split('?')[0].split('#')[0];
+    return domain;
+  }
+
+  async function getCurrentTabDomain() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs && tabs[0] && tabs[0].url) {
+          try {
+            const url = new URL(tabs[0].url);
+            const domain = normalizeDomain(url.hostname);
+            resolve(domain);
+          } catch (e) {
+            resolve(null);
+          }
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  async function handleWhitelistCurrentSite() {
+    const domain = await getCurrentTabDomain();
+    if (!domain) {
+      return;
+    }
+
+    chrome.storage.local.get(['whitelistedDomains'], (result) => {
+      let domains = result.whitelistedDomains || [];
+      const index = domains.indexOf(domain);
+
+      if (index >= 0) {
+        // Remove domain
+        domains.splice(index, 1);
+      } else {
+        // Add domain
+        domains.push(domain);
+      }
+
+      chrome.storage.local.set({ whitelistedDomains: domains }, () => {
+        updateWhitelistUI();
+      });
+    });
+  }
+
+  function handleAddDomain() {
+    const input = domainInput.value.trim();
+    if (!input) {
+      return;
+    }
+
+    const domain = normalizeDomain(input);
+    if (!domain) {
+      return;
+    }
+
+    chrome.storage.local.get(['whitelistedDomains'], (result) => {
+      let domains = result.whitelistedDomains || [];
+
+      // Reject duplicates silently
+      if (domains.includes(domain)) {
+        domainInput.value = '';
+        return;
+      }
+
+      domains.push(domain);
+      chrome.storage.local.set({ whitelistedDomains: domains }, () => {
+        domainInput.value = '';
+        updateWhitelistUI();
+      });
+    });
+  }
+
+  function removeDomain(domain) {
+    chrome.storage.local.get(['whitelistedDomains'], (result) => {
+      let domains = result.whitelistedDomains || [];
+      const index = domains.indexOf(domain);
+
+      if (index >= 0) {
+        domains.splice(index, 1);
+        chrome.storage.local.set({ whitelistedDomains: domains }, () => {
+          updateWhitelistUI();
+        });
+      }
+    });
+  }
+
+  async function updateWhitelistUI() {
+    const currentDomain = await getCurrentTabDomain();
+
+    chrome.storage.local.get(['whitelistedDomains'], (result) => {
+      const domains = result.whitelistedDomains || [];
+
+      // Update current site button
+      if (currentDomain) {
+        const isWhitelisted = domains.includes(currentDomain);
+        whitelistCurrentBtn.textContent = isWhitelisted ? 'Remove this site' : 'Whitelist this site';
+        if (isWhitelisted) {
+          whitelistCurrentBtn.classList.add('remove');
+        } else {
+          whitelistCurrentBtn.classList.remove('remove');
+        }
+        whitelistCurrentBtn.style.display = 'block';
+      } else {
+        whitelistCurrentBtn.style.display = 'none';
+      }
+
+      // Render domain list
+      domainList.innerHTML = '';
+      domains.forEach((domain) => {
+        const item = document.createElement('div');
+        item.className = 'domain-item';
+
+        const name = document.createElement('span');
+        name.className = 'domain-name';
+        name.textContent = domain;
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-domain-btn';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => removeDomain(domain));
+
+        item.appendChild(name);
+        item.appendChild(removeBtn);
+        domainList.appendChild(item);
+      });
     });
   }
 
