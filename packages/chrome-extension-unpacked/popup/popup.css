@@ -414,6 +414,145 @@ body {
   box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.1);
 }
 
+/* Whitelist Panel */
+.whitelist-panel {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.whitelist-panel.hidden {
+  display: none;
+}
+
+.whitelist-current-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: #ffffff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 10px;
+}
+
+.whitelist-current-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.whitelist-current-btn.remove {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.whitelist-current-btn.remove:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.whitelist-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.domain-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #374151;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.domain-input:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.1);
+}
+
+.domain-input::placeholder {
+  color: #9ca3af;
+}
+
+.add-domain-btn {
+  padding: 6px 14px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.add-domain-btn:hover {
+  background: #15803d;
+}
+
+.add-domain-btn:active {
+  background: #166534;
+}
+
+.domain-list-container {
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.domain-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.domain-name {
+  flex: 1;
+  font-family: 'SF Mono', Monaco, 'Consolas', monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-domain-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 8px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.remove-domain-btn:hover {
+  color: #dc2626;
+}
+
 .footer {
   margin-top: 16px;
   padding-top: 12px;

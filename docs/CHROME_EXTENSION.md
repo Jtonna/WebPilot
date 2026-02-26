@@ -222,8 +222,19 @@ When connected or disconnected, the popup shows a settings section with:
 
 - **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
 - **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window).
+- **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
 
-These settings are stored in `chrome.storage.local` as `focusNewTabs` and `tabMode`.
+#### Whitelist Management
+
+When restricted mode is enabled, the popup displays whitelist controls:
+
+- **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Shows "Remove this site" for whitelisted domains. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
+- **Manual domain input** (text field + Add button) -- Enter a domain manually (e.g., `example.com`, `https://example.com`). Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
+- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (×) buttons.
+
+Domain matching is domain-level and covers all subdomains (e.g., whitelisting `yahoo.com` allows `www.yahoo.com`, `mail.yahoo.com`, etc.).
+
+These settings are stored in `chrome.storage.local` as `focusNewTabs`, `tabMode`, `restrictedModeEnabled` (boolean, default true), and `whitelistedDomains` (string array).
 
 The connection string format is `vf://<base64url>` encoding `{"v":1,"s":"<ws_url>","k":"<api_key>"}`.
 

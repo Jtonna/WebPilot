@@ -6,6 +6,32 @@ Reference documentation for AI agents integrating with the WebPilot browser cont
 
 The WebPilot MCP server provides browser tab control capabilities to AI agents via the Model Context Protocol (MCP). Agents can list, open, and close browser tabs in the user's Chrome browser.
 
+## Security: Restricted Mode
+
+**Restricted mode is ON by default.** All MCP commands that interact with web pages are blocked until the domain is explicitly whitelisted by the user. This prevents automated actions on sensitive sites without user consent.
+
+**Affected commands:**
+- `browser_create_tab`
+- `browser_close_tab`
+- `browser_get_accessibility_tree`
+- `browser_inject_script`
+- `browser_execute_js`
+- `browser_click`
+- `browser_scroll`
+- `browser_type`
+
+**Unaffected commands:**
+- `browser_get_tabs` (read-only, no interaction)
+
+**Blocked command error:**
+When a command is blocked, the MCP server returns:
+```
+Blocked: [domain] is not whitelisted. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.
+```
+
+**Managing the whitelist:**
+Users can add domains to the whitelist via the WebPilot extension popup UI. Domain matching is domain-level (e.g., whitelisting `example.com` allows both `example.com` and `subdomain.example.com`).
+
 ## Available Tools
 
 ### browser_get_tabs
