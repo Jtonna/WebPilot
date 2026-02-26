@@ -42,7 +42,9 @@ Lists all open browser tabs.
 - Tab IDs are stable for the lifetime of the tab
 - Navigating to a new URL within the same tab keeps the same ID
 - Tab IDs only change when the tab is closed and a new one is opened
-- Tabs interacted with via WebPilot are automatically grouped into a cyan "WebPilot" tab group
+- Tabs interacted with via WebPilot are organized based on the `tabMode` setting (stored in `chrome.storage.local`):
+  - `"group"` (default): Tabs are grouped into a cyan "WebPilot" tab group in the current window
+  - `"window"`: Tabs are opened in a dedicated separate WebPilot window
 
 ---
 
@@ -66,7 +68,7 @@ Opens a new browser tab with the specified URL.
 
 **Notes:**
 - Title may be empty if the page hasn't finished loading
-- The new tab becomes the active tab
+- The new tab is **not** active by default (`focusNewTabs` defaults to `false`). This is a user-configurable setting stored in `chrome.storage.local`.
 - Returns the new tab's ID for future reference
 
 ---
@@ -120,7 +122,6 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
   "tree": "{\"source\":{\"title\":\"Home • Threads\",\"url\":\"https://www.threads.com/\"},\"nav\":[[\"Home\",\"e1\",\"https://www.threads.com/\"],...],\"_postSchema\":[\"url\",\"content\",\"time\",\"likes\",\"replies\",\"likeRef\",\"replyRef\"],\"posts\":[[\"https://www.threads.com/@user/post/xyz\",\"Post content...\",1768800840000,16,10,\"e6\",\"e7\"],...],\"_ghostSchema\":[\"authorUrl\",\"content\",\"expires\",\"likeRef\"],\"ghosts\":[[\"https://www.threads.com/@user\",\"Ghost content...\",1768846806591,\"e22\"]]}",
   "elementCount": 69,
   "postCount": 32,
-  "ghostCount": 1,
   "platform": "threads"
 }
 ```
@@ -130,7 +131,6 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
 {
   "tree": "{\"source\":{\"title\":\"Activity • Threads\",\"url\":\"https://www.threads.com/activity\"},\"nav\":[...],\"activity\":{\"_followSchema\":[\"user\",\"others\",\"time\",\"ref\"],\"follows\":[],\"_likeSchema\":[\"user\",\"others\",\"time\",\"postUrl\",\"postPreview\",\"ref\"],\"likes\":[[\"zryork\",2,1768772938224,\"https://...\",\"post preview\",\"e10\"]],...}}",
   "elementCount": 37,
-  "activityCount": 17,
   "platform": "threads"
 }
 ```
@@ -149,9 +149,6 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
 {
   "tree": "{\"source\":{\"title\":\"Search • Threads\",\"url\":\"https://www.threads.com/search\"},\"nav\":[...],\"searchRef\":\"e6\",\"_threadsSchema\":[\"name\",\"members\",\"recentPosts\",\"url\",\"ref\"],\"threads\":[],\"_searchTermsSchema\":[\"query\",\"url\",\"ref\"],\"searchTerms\":[[\"buildinpublic\",\"https://www.threads.com/search?q=buildinpublic&serp_type=default\",\"e7\"]],\"_profileSchema\":[\"username\",\"displayName\",\"verified\",\"following\",\"url\",\"ref\",\"followRef\"],\"profiles\":[[\"buildforpublic\",\"#buildinpublic\",false,false,\"https://www.threads.com/@buildforpublic\",\"e9\",\"e8\"],...]}",
   "elementCount": 27,
-  "threadCount": 0,
-  "termCount": 1,
-  "profileCount": 10,
   "platform": "threads"
 }
 ```
@@ -162,7 +159,6 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
   "tree": "{\"source\":{\"title\":\"Search • Threads\",\"url\":\"https://www.threads.com/search?q=AI&serp_type=default\"},\"nav\":[...],\"filter\":\"Top\",\"_postSchema\":[\"url\",\"content\",\"time\",\"likes\",\"replies\",\"reposts\",\"shares\",\"likeRef\",\"replyRef\",\"tags\"],\"posts\":[[\"https://www.threads.com/@user/post/xyz\",\"Post content about AI...\",1737295920000,47,34,0,0,\"e20\",\"e21\",[\"AI Threads\"]],...]}",
   "elementCount": 120,
   "postCount": 15,
-  "filter": "Top",
   "platform": "threads"
 }
 ```
@@ -173,15 +169,10 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured re
 | `tree` | JSON string representation of page content (format depends on platform/page type) |
 | `elementCount` | Total number of interactive elements with refs |
 | `postCount` | (Threads home/profile/search results) Number of posts extracted |
-| `ghostCount` | (Threads home/profile) Number of ghost posts extracted |
-| `activityCount` | (Threads activity) Total activity items extracted |
-| `trendCount` | (Threads search landing) Number of trending topics extracted |
-| `suggestionCount` | (Threads search landing) Number of follow suggestions extracted |
-| `threadCount` | (Threads search autocomplete) Number of thread/community suggestions |
-| `termCount` | (Threads search autocomplete) Number of search term suggestions |
-| `profileCount` | (Threads search autocomplete) Number of profile suggestions |
-| `filter` | (Threads search results) Active filter: "Top", "Recent", or "Profiles" |
+| `listingCount` | (Zillow search/detail) Number of property listings extracted |
 | `platform` | (When optimizer used) Detected platform name |
+
+> **Note:** The Threads formatters internally compute additional count fields (`ghostCount`, `activityCount`, `trendCount`, `suggestionCount`, `threadCount`, `termCount`, `profileCount`, `filter`) but the handler currently only passes through `tree`, `elementCount`, `postCount`, `listingCount`, and `platform`. The additional counts can be found inside the `tree` JSON string itself.
 
 **Tree Format (default):**
 Each line represents an element with:
@@ -201,6 +192,10 @@ When `usePlatformOptimizer=true`, the tool auto-detects the platform and applies
 | Threads | Search Landing | `threads.com/search` (no query) | JSON with nav, searchRef, filterRef, trends array (description, posts, ref), suggestions array (profileUrl, bio, followers, followRef, profileRef) |
 | Threads | Search Autocomplete | `threads.com/search` (typing) | JSON with nav, searchRef, threads array (community suggestions), searchTerms array (query suggestions), profiles array (profile suggestions with follow refs) |
 | Threads | Search Results | `threads.com/search?q=...` | JSON with nav, filter (Top/Recent/Profiles), filters array (with refs), posts array (url, content, time, likes, replies, reposts, shares, refs, tags) |
+| Zillow | Home | `zillow.com` (homepage) | JSON with structured home page content |
+| Zillow | Search | `zillow.com` (search results) | JSON with listings array (property details, prices, refs) |
+| Zillow | Detail | `zillow.com` (property page) | JSON with structured property detail information |
+| Zillow | Detail Overlay | `zillow.com` (overlay on search) | JSON with property detail overlay information |
 
 **Ghost Posts:**
 Ghost posts are ephemeral content on Threads that appear inline but don't have permanent `/post/` URLs. They have an expiration time (e.g., "9h left") and are captured separately from regular posts:
@@ -257,7 +252,7 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
-- `script_content is required` - Script fetch returned empty content
+- `Fetched script is empty` - Script fetch returned empty content
 - `Cannot inject scripts into protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Unsupported protocol: ...` - Script URL uses non-HTTP(S) protocol
 - `HTTP 404 Not Found` - Script URL returned error
@@ -315,6 +310,10 @@ browser_execute_js(tab_id, 'window.MY_VAR')
 // Return object
 browser_execute_js(tab_id, '({ foo: "bar", count: 42 })')
 → { "success": true, "result": { "foo": "bar", "count": 42 } }
+
+// Async/await (Promises are automatically awaited)
+browser_execute_js(tab_id, 'fetch("/api/data").then(r => r.json())')
+→ { "success": true, "result": { "items": [...] } }
 ```
 
 **Errors:**
@@ -327,6 +326,7 @@ browser_execute_js(tab_id, '({ foo: "bar", count: 42 })')
 **Notes:**
 - Uses Chrome Debugger Protocol (Runtime.evaluate) - works like DevTools console
 - Code is evaluated as an expression, not a function body (no `return` needed)
+- **Supports async/await:** The evaluation uses `awaitPromise: true`, so the code can return a Promise and it will be automatically awaited before returning the result
 - Works on all sites including those with strict CSP/Trusted Types
 - Return value must be JSON-serializable (no functions, DOM elements, etc.)
 - Chrome shows a yellow "started debugging" banner; suppress with `--silent-debugger-extension-api` flag
@@ -439,6 +439,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 - **Distance-based Hz caps** for realistic speed:
   - < 300px: max 250Hz
   - < 800px: max 500Hz
+  - 800-1200px: linearly interpolates between 500Hz and 1000Hz
   - ≥ 1200px: max 1000Hz
 - **Acceleration curve**: slow start → peak speed at 50-80% → slow end
 - Both visual cursor and CDP `mouseMoved` events are dispatched for each path point
@@ -465,6 +466,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 - `Element not found: <selector>` - CSS selector matched nothing
 - `Element has no dimensions` - Matched element is hidden or zero-size
 - `button must be left, right, or middle` - Invalid button value
+- `Element no longer exists after scroll. Re-fetch accessibility tree and try again.` - Element could not be re-identified after auto-scroll
 - `Another debugger is already attached to this tab` - Close DevTools first
 - `Failed to attach debugger: ...` - Tab may not exist or be protected
 
@@ -501,7 +503,7 @@ This happens automatically - agents just call `browser_click(ref="e16")` and the
 
 ### browser_scroll
 
-Scroll to element OR by pixel amount. Uses smooth easing (50ms per 50px).
+Scroll to element OR by pixel amount. Uses smooth easing (50ms per 50px for window scrolls, 75ms per 50px for container scrolls).
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -535,7 +537,9 @@ Scroll to element OR by pixel amount. Uses smooth easing (50ms per 50px).
 | `ref` | string | The ref that was scrolled to (if provided) |
 | `selector` | string | The selector that was scrolled to (if provided) |
 | `scrollDelta` | number | Pixels scrolled (positive = down, negative = up) |
+| `pixels` | number | Echoed back when `pixels` was used as input |
 | `duration` | number | Animation duration used (ms) |
+| `containerScrolled` | boolean | Whether a scrollable container was scrolled instead of the window |
 
 **Example Usage:**
 ```
@@ -557,20 +561,27 @@ browser_scroll(tab_id, ref="e5")
 
 **Scroll Animation:**
 - Uses `requestAnimationFrame` for native-smooth 60fps animation
-- Duration auto-calculated: 50ms per 50px of scroll distance
+- Duration auto-calculated: 50ms per 50px of scroll distance for window scrolls, 75ms per 50px for container scrolls
 - Cubic ease-in-out for natural feel (slow start → fast middle → slow end)
 - Centers element in viewport when using ref/selector
 
+**Container Scroll Handling:**
+- When a target element is inside a scrollable container (dropdown, modal, sidebar, etc.), the scroll handler automatically detects and scrolls the container instead of the window
+- The response includes `containerScrolled: true` when a container was scrolled
+- Container scrolls use a slightly slower timing (75ms per 50px) compared to window scrolls (50ms per 50px)
+
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
-- `Either ref or selector is required` - No scroll target provided
+- `Either ref/selector OR pixels is required` - No scroll target provided
+- `Cannot specify both element target and pixels - use one or the other` - Both ref/selector and pixels provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
 - `Element for ref "eX" no longer exists` - Page changed since tree fetch
 - `Could not determine element position` - Element couldn't be located
 
 **Notes:**
-- Uses incremental `window.scrollTo()` for smooth animation
+- Uses incremental `window.scrollTo()` for smooth window animation, or `element.scrollTo()` for container scrolls
 - Element is centered in viewport after scroll
+- Automatically detects scrollable containers and scrolls the appropriate element
 - Does not show a visual cursor (use browser_click for that)
 - Works on all sites including those with strict CSP
 - `browser_click` automatically scrolls if target is off-screen; use this tool for scroll-only operations
@@ -637,9 +648,10 @@ browser_type(tab_id, text="test", delay=100)
 **Keyboard Simulation:**
 - Uses Chrome DevTools Protocol `Input.dispatchKeyEvent`
 - Dispatches `keyDown` and `keyUp` events for each character
-- Supports special keys: Enter, Tab, Backspace, Escape, Arrow keys
+- Only Enter is exposed as a special key via the `pressEnter` parameter. Other special keys (Tab, Backspace, Escape, Arrow keys) exist in the internal `typeKey()` function but are not accessible to MCP clients.
 - Works with React, Vue, and other SPA frameworks (unlike setting `input.value` directly)
 - Human-like timing with slight random variance on delay
+- When `ref` or `selector` is provided, a click with cursor animation (`showCursor: true`) is performed first to focus the element
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
@@ -781,7 +793,7 @@ claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
 
 ### Prerequisites
 
-1. MCP server running (`npm run dev` in `mcp-server/`)
+1. MCP server running (`npm run dev` in `packages/server-for-chrome-extension/`)
 2. Chrome extension loaded and connected
 3. Extension shows "Connected" status
 
@@ -790,6 +802,7 @@ claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
 ## Limitations
 
 - **Accessibility tree only** - Content access via accessibility tree, not raw HTML/DOM
+- **Persistent debugger sessions** - Debugger sessions are kept alive until the tab is closed, with focus emulation enabled so CDP commands work on background (non-active) tabs
 - **No navigation control** - Cannot go back/forward or refresh tabs
 - **Chrome only** - Extension only works in Chrome/Chromium browsers
 - **Single browser** - Controls the browser where extension is installed

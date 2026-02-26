@@ -2,7 +2,7 @@
 
 ## Overview
 
-WebPilot produces a single distributable artifact: an Electron application packaged with NSIS (on Windows). The Electron app bundles the compiled MCP server binary and the unpacked Chrome extension as extra resources. On first launch (and on updates), the Electron app deploys the server binary and extension files to the user's local app data directory. The Electron app itself serves as the management UI (onboarding wizard, status dashboard).
+WebPilot produces a single distributable artifact: an Electron application packaged with NSIS (on Windows). The Electron app bundles the compiled MCP server binary and the unpacked Chrome extension as extra resources. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory -- no file copying to app data occurs. The Electron app itself serves as the management UI (onboarding wizard, status dashboard).
 
 ## Build Pipeline
 
@@ -11,7 +11,7 @@ The build is a two-step process:
 1. **Build the server binary** -- `@yao-pkg/pkg` compiles the MCP server into a standalone executable with Node.js baked in.
 2. **Build the Electron app** -- `electron-builder` packages the Electron app, bundling the server binary and extension as `extraResources`, and produces an NSIS installer on Windows.
 
-The NSIS installer is not a separate build step. It is the output format configured in `electron-builder`. The installer places the Electron app into the user's programs directory; the Electron app itself handles deploying the server and extension to app data on launch.
+The NSIS installer is not a separate build step. It is the output format configured in `electron-builder`. The installer places the Electron app into the user's programs directory; the server and extension run directly from the bundled `resources/` directory within the install location.
 
 ## pkg Configuration
 
@@ -20,11 +20,6 @@ Defined in `packages/server-for-chrome-extension/package.json`:
 ```json
 {
   "pkg": {
-    "targets": [
-      "node18-win-x64",
-      "node18-macos-x64",
-      "node18-linux-x64"
-    ],
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
@@ -34,11 +29,13 @@ Defined in `packages/server-for-chrome-extension/package.json`:
 }
 ```
 
-Build command:
+Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux":
 
 ```bash
 cd packages/server-for-chrome-extension
-npm run build
+npm run build:win    # pkg . --target node18-win-x64 --out-path dist
+npm run build:mac    # pkg . --target node18-macos-x64 --out-path dist
+npm run build:linux  # pkg . --target node18-linux-x64 --out-path dist
 ```
 
 Output goes to `packages/server-for-chrome-extension/dist/`:
@@ -63,7 +60,7 @@ What gets bundled into the Electron app:
 resources/
   server/
     webpilot-server-for-chrome-extension[.exe]    Compiled server binary
-  chrome-extension-unpacked/
+  chrome-extension/
     manifest.json
     background.js
     popup/
@@ -78,14 +75,13 @@ The Electron app (Next.js inside Electron) provides:
 
 ## What the App Does on Launch
 
-When the Electron app starts, it runs a deployment check:
+When the Electron app starts, it performs these steps:
 
-1. Checks whether the server binary exists at the expected app data path.
-2. Checks whether the extension files exist at the expected app data path.
-3. If either is missing or outdated, copies them from the Electron app's bundled `resources/` directory to the app data directory.
-4. Generates a secure API key and persists it to the config directory (if one does not already exist).
+1. Ensures the data directory exists (creates it if necessary).
+2. Spawns the server binary from its bundled location (`process.resourcesPath/server/`).
+3. Opens the management UI window.
 
-The Electron app does **not** register the server as a background service at this time. Service registration is planned but not yet implemented. Currently, the app only deploys the files.
+No file copying or deployment occurs. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory. The data directory (for config, logs, PID files) is at `<installDir>/data/`, a sibling of the `resources/` directory.
 
 ## Deployment Paths
 
@@ -97,30 +93,32 @@ The Electron app does **not** register the server as a background service at thi
 | macOS    | `/Applications/WebPilot.app/` |
 | Linux    | `/opt/WebPilot/` or AppImage |
 
-### App Data (deployed by Electron app on launch)
+### Bundled Resources (inside install directory)
 
-| Platform | App Data Directory | Config Location |
-|----------|-------------------|-----------------|
-| Windows  | `%LOCALAPPDATA%\WebPilot\` | `%LOCALAPPDATA%\WebPilot\config\` |
-| macOS    | `~/Library/Application Support/WebPilot/` | Same |
-| Linux    | `~/.config/WebPilot/` | Same |
-
-Within the app data directory:
+The server binary and extension files remain in the Electron app's `resources/` directory. They are not copied elsewhere.
 
 ```
-WebPilot/
-  webpilot-server-for-chrome-extension[.exe]    Server binary
-  chrome extension/
-    unpacked-extension/                          Unpacked Chrome extension files
+<installDir>/
+  resources/
+    server/
+      webpilot-server-for-chrome-extension[.exe]    Compiled server binary
+    chrome-extension/                                Unpacked Chrome extension files
       manifest.json
       background.js
       popup/
       handlers/
       ...
-  config/                                        API key and server configuration
+  data/                                              Created at runtime
+    config/
+      server.json                                    API key and port configuration
+    server.pid                                       PID of running daemon
+    server.port                                      Port of running daemon
+    logs/                                            Daemon log files
 ```
 
-The extension is deployed specifically to `chrome extension/unpacked-extension/` within the app data directory. This is the path users point Chrome to when loading the unpacked extension.
+The data directory is at `<installDir>/data/`, computed as a sibling of `resources/` via `path.resolve(path.dirname(process.execPath), '..', '..', 'data')`. In dev mode (when `app.isPackaged` is false), the data directory falls back to `%LOCALAPPDATA%\WebPilot\` (Windows) or platform equivalent.
+
+The extension directory users point Chrome to is `<installDir>/resources/chrome-extension/`.
 
 ## CLI Flags
 
@@ -131,27 +129,68 @@ The server binary (`cli.js` / compiled binary) supports these flags:
 | `--install` | Register the server as a background service |
 | `--uninstall` | Remove the background service registration |
 | `--status` | Check whether the background service is running |
+| `--stop` | Kill the running server by PID file |
+| `--foreground` | Run the server in this process (not as a detached daemon) |
 | `--help` | Show usage information |
 | `--version` | Print version number |
 | `--network` | Start in network mode (listen on `0.0.0.0` instead of `127.0.0.1`) |
 
-Running with no flags starts the server in the foreground.
+Running with no flags starts the server as a **background daemon** (spawns a detached child process with `WEBPILOT_FOREGROUND=1` and exits). Use `--foreground` to run the server in the current process.
 
 ## Service Registration
 
-Service registration is currently stubbed in `cli.js`. It is **not yet implemented**. When implemented, `--install` will register the server as a background service that starts on login.
+Service registration is fully implemented across all three platforms. The `cli.js` entry point calls `require('./src/service')` which delegates to `service/index.js`, routing by `process.platform` to the platform-specific module. Each module provides working `install()`, `uninstall()`, and `status()` methods.
 
-| Platform | Mechanism | Status |
-|----------|-----------|--------|
-| Windows  | Task Scheduler | Planned |
-| macOS    | launchd (LaunchAgent) | Planned |
-| Linux    | systemd (user service) | Planned |
+| Platform | Mechanism | Implementation |
+|----------|-----------|----------------|
+| Windows  | Registry Run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) | `service/windows.js` |
+| macOS    | launchd (LaunchAgent) | `service/macos.js` |
+| Linux    | systemd (user service) | `service/linux.js` |
 
-Planned behavior per platform:
+Behavior per platform:
 
-- **Windows**: Create a Task Scheduler task that runs the binary at user login, hidden
-- **macOS**: Write a LaunchAgent plist to `~/Library/LaunchAgents/`
-- **Linux**: Write a systemd user service to `~/.config/systemd/user/`
+- **Windows**: Writes a Registry Run key under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` to launch the binary at user login (no admin elevation required)
+- **macOS**: Writes a LaunchAgent plist to `~/Library/LaunchAgents/`
+- **Linux**: Writes a systemd user service to `~/.config/systemd/user/`
+
+### Auto-Registration on First Run
+
+The server automatically registers itself as a background service on first startup via `autoRegister()` in `cli.js`. This function checks `service.status().registered` and calls `service.install()` if not already registered. Auto-registration runs from both the foreground and background code paths.
+
+## Server Runtime Behavior
+
+### Health Check Polling
+
+After spawning the background daemon, the CLI polls `http://127.0.0.1:<port>/health` to verify startup: 6 attempts at 500ms intervals (up to 3 seconds). If the health check fails after all attempts, the CLI reports a startup failure.
+
+### Config File
+
+Server configuration is stored at `<dataDir>/config/server.json` with two fields:
+
+| Field | Env Var Fallback | Default |
+|-------|-----------------|---------|
+| `apiKey` | `API_KEY` | `'dev-123-test'` |
+| `port` | `PORT` | `3456` |
+
+The server reads from the config file first, then falls back to environment variables, then to the hardcoded defaults. See `paths.js` for the resolution logic.
+
+### Daemon Logging
+
+The daemon uses `SizeManagedWriter` (implemented in `service/logger.js`) which manages log file output:
+
+- Maximum file size: 1 GB
+- Rotation: discards the oldest 25% of the file when the limit is reached
+- Strips ANSI escape codes from output
+- Log file is truncated fresh on each daemon start
+- Logging is set up by intercepting `process.stdout.write` and `process.stderr.write`
+
+### PID and Port File Management
+
+The server writes `server.pid` and `server.port` to the data directory on startup. The CLI uses these files for:
+
+- **Already-running detection**: `isAlreadyRunning()` checks if the PID in `server.pid` corresponds to a live process
+- **Stale file cleanup**: If the referenced process is dead, the PID and port files are removed
+- **`--stop` flag**: Kills the process by PID and removes both files
 
 ## Extension Sideloading
 
@@ -160,14 +199,14 @@ The Chrome extension cannot be distributed via the Chrome Web Store (it uses the
 1. Open `chrome://extensions` in Chrome
 2. Enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked**
-4. Select the extension directory deployed by the Electron app:
-   - Windows: `%LOCALAPPDATA%\WebPilot\chrome extension\unpacked-extension\`
-   - macOS: `~/Library/Application Support/WebPilot/chrome extension/unpacked-extension/`
-   - Linux: `~/.config/WebPilot/chrome extension/unpacked-extension/`
+4. Select the extension directory bundled with the Electron app:
+   - Windows: `%LOCALAPPDATA%\Programs\WebPilot\resources\chrome-extension\`
+   - macOS: `/Applications/WebPilot.app/Contents/Resources/chrome-extension/`
+   - Linux: `<install-path>/resources/chrome-extension/`
 
 Chrome will show a "Developer mode extensions" warning on each browser launch. This is expected and cannot be suppressed for sideloaded extensions.
 
-The extension files must remain at the deployed location. If deleted, re-launching the Electron app will re-deploy them.
+The extension files live inside the Electron app's install directory and must remain there. Uninstalling the Electron app removes the extension files.
 
 ## Root npm Scripts
 
@@ -178,11 +217,12 @@ Defined in the root `package.json`:
 | `dev` | `npm run dev` | Prints available dev commands and exits |
 | `dev:server` | `npm run dev:server` | Starts the MCP server in watch mode (`node --watch`) |
 | `dev:onboarding` | `npm run dev:onboarding` | Starts the Electron/Next.js onboarding UI in dev mode |
-| `build:server` | `npm run build` | Builds the MCP server binary via pkg |
-| `build:electron` | *(to be added)* | Builds the Electron app via electron-builder |
-| `build:all` | *(to be added)* | Runs `build:server` then `build:electron` in sequence |
+| `start` | `npm run start` | Starts the MCP server |
+| `dist:win` | `npm run dist:win` | Builds the server binary (Windows) then the Electron installer |
+| `dist:mac` | `npm run dist:mac` | Builds the server binary (macOS) then the Electron installer |
+| `dist:linux` | `npm run dist:linux` | Builds the server binary (Linux) then the Electron installer |
 
-Currently defined scripts in root `package.json`:
+Each `dist:*` script chains the server build and the Electron build in sequence. For example, `dist:win` runs `npm run build:win --workspace=packages/server-for-chrome-extension && npm run dist:win --workspace=packages/electron`.
 
 ```json
 {
@@ -191,12 +231,12 @@ Currently defined scripts in root `package.json`:
     "dev:server": "npm run dev --workspace=packages/server-for-chrome-extension",
     "dev:onboarding": "npm run dev --workspace=packages/electron",
     "start": "npm run start --workspace=packages/server-for-chrome-extension",
-    "build": "npm run build --workspace=packages/server-for-chrome-extension"
+    "dist:win": "npm run build:win --workspace=packages/server-for-chrome-extension && npm run dist:win --workspace=packages/electron",
+    "dist:mac": "npm run build:mac --workspace=packages/server-for-chrome-extension && npm run dist:mac --workspace=packages/electron",
+    "dist:linux": "npm run build:linux --workspace=packages/server-for-chrome-extension && npm run dist:linux --workspace=packages/electron"
   }
 }
 ```
-
-The `build:electron` and `build:all` scripts will be added when the electron-builder configuration is finalized.
 
 ## Architecture Diagram
 
@@ -208,15 +248,17 @@ The `build:electron` and `build:all` scripts will be added when the electron-bui
 [Electron App]  ──────────────────────────────────────┐
   %LOCALAPPDATA%\Programs\WebPilot\                   |
        |                                              |
-       | on launch, deploys to AppData                |
-       v                                              |
-%LOCALAPPDATA%\WebPilot\                              |
-  ├── server binary                                   |
-  ├── chrome extension/unpacked-extension/            |
-  └── config/                                         |
+       | resources/ (bundled, no copying)             |
+       ├── server/                                    |
+       │     webpilot-server-for-chrome-extension.exe |
+       ├── chrome-extension/                          |
+       └── data/ (created at runtime)                 |
+             ├── config/server.json                   |
+             ├── server.pid / server.port             |
+             └── logs/                                |
        |                                              |
-       | server binary runs                           |
-       | (service registration planned)               |
+       | on launch, spawns server from resources/     |
+       | (auto-registers as background service)       |
        v                                              |
 [MCP Server]  (port 3456)                             |
        |                                              |

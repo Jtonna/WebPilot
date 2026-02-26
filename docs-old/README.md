@@ -7,23 +7,28 @@ Self-contained Chrome extension and MCP server for AI agent browser control.
 ### 1. Start the MCP Server
 
 ```bash
-cd mcp-server
+cd packages/server-for-chrome-extension
 npm install
 npm run dev    # Auto-reloads on changes
 ```
 
+Or from the workspace root:
+```bash
+npm run dev:server
+```
+
 You should see:
 ```
-MCP Server running on :3456
-  SSE endpoint: http://localhost:3456/sse
-  WebSocket: ws://localhost:3456
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Connection String (paste in extension):
-
-  vf://eyJ2IjoxLCJzIjoid3M6Ly9sb2NhbGhvc3Q6MzQ1NiIsImsiOiJkZXYtMTIzLXRlc3QifQ
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+server:
+  host: 127.0.0.1
+  port: 3456
+  local:
+    sse: http://localhost:3456/sse
+    ws: ws://localhost:3456
+  network:
+    sse: disabled
+    ws: disabled
+connection_string: vf://eyJ2IjoxLCJzIjoid3M6Ly9sb2NhbGhvc3Q6MzQ1NiIsImsiOiJkZXYtMTIzLXRlc3QifQ
 ```
 
 ### 2. Load the Chrome Extension
@@ -31,7 +36,7 @@ MCP Server running on :3456
 1. Open Chrome and go to `chrome://extensions`
 2. Enable **Developer mode** (top right toggle)
 3. Click **Load unpacked**
-4. Select the `unpacked-extension/` folder
+4. Select the `packages/chrome-extension-unpacked/` folder
 
 ### 3. Configure the Extension
 
@@ -77,12 +82,18 @@ In Claude Code, try:
 ┌─────────────────────────────────────────────────────────────┐
 │                         webpilot                            │
 │                                                             │
-│  ┌─────────────────────┐       ┌─────────────────────┐     │
-│  │  unpacked-extension │       │     mcp-server      │     │
-│  │                     │◄─WS──►│                     │     │
-│  │  Chrome Extension   │ (key) │  Express + WS       │     │
-│  │  (background.js)    │       │  :3456              │     │
-│  └─────────────────────┘       └──────────┬──────────┘     │
+│  ┌──────────────────────────┐  ┌─────────────────────┐     │
+│  │ chrome-extension-unpacked│  │  server-for-chrome-  │     │
+│  │                          │◄─WS──►  extension      │     │
+│  │  Chrome Extension        │ (key) │  Express + WS   │     │
+│  │  (background.js)         │       │  :3456           │     │
+│  └──────────────────────────┘  └──────────┬──────────┘     │
+│                                           │                 │
+│  ┌─────────────────────┐                  │                 │
+│  │     electron         │                 │                 │
+│  │  Deployment, auto-   │                 │                 │
+│  │  start, packaging    │                 │                 │
+│  └─────────────────────┘                  │                 │
 │                                           │                 │
 └───────────────────────────────────────────│─────────────────┘
                                             │
@@ -93,8 +104,8 @@ In Claude Code, try:
 ```
 
 **Authentication:**
-- Extension ↔ Server: API key required (via connection string)
-- Claude Code ↔ Server: No auth (open endpoints)
+- Extension <-> Server: API key required (via connection string)
+- Claude Code <-> Server: No auth (open endpoints)
 
 ## MCP Tools
 
@@ -106,56 +117,79 @@ In Claude Code, try:
 | `browser_get_accessibility_tree` | Get accessibility tree of a tab | `tab_id: number`, `usePlatformOptimizer?: boolean` |
 | `browser_inject_script` | Inject script from URL into page | `tab_id: number`, `script_url: string`, `keep_injected?: boolean` |
 | `browser_execute_js` | Execute JS in page context, return result | `tab_id: number`, `code: string` |
-| `browser_click` | Click at coordinates, CSS selector, or accessibility tree ref | `tab_id`, `ref?`, `selector?`, `x?`, `y?`, `button?`, `clickCount?`, `showCursor?` |
-| `browser_scroll` | Scroll to element OR by pixel amount (50ms per 50px) | `tab_id`, `ref?`, `selector?`, `pixels?` |
+| `browser_click` | Click at coordinates, CSS selector, or accessibility tree ref | `tab_id`, `ref?`, `selector?`, `x?`, `y?`, `button?`, `clickCount?`, `delay?`, `showCursor?` |
+| `browser_scroll` | Scroll to element OR by pixel amount (75ms per 50px) | `tab_id`, `ref?`, `selector?`, `pixels?` |
+| `browser_type` | Type text into focused element or element by ref/selector | `tab_id: number`, `text: string`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
 
 ## Folder Structure
 
 ```
 webpilot/
-├── unpacked-extension/           # Chrome extension (load in chrome://extensions)
-│   ├── manifest.json
-│   ├── background.js             # Thin orchestrator (~330 lines)
-│   ├── accessibility-storage.js  # Ref→backendNodeId mapping
-│   ├── accessibility-tree.js     # A11y tree formatter
-│   ├── handlers/                 # Command handlers
-│   │   ├── click.js              # Mouse click with cursor animation
-│   │   ├── scroll.js             # Smooth scroll with easing
-│   │   ├── tabs.js               # Tab create/close/list
-│   │   ├── accessibility.js      # Tree and Threads feed
-│   │   └── scripts.js            # Inject/execute JS
-│   ├── utils/                    # Shared utilities
-│   │   ├── windmouse.js          # WindMouse human-like path algorithm
-│   │   ├── mouse-state.js        # Per-tab virtual position tracking
-│   │   ├── cursor.js             # Cursor animation (RGB glow, particle burst)
-│   │   ├── scroll.js             # Scroll animation and viewport helpers
-│   │   ├── timing.js             # Random delays
-│   │   └── debugger.js           # CDP attach/detach helpers
-│   ├── formatters/
-│   │   ├── threads.js            # Threads router (detects page type, delegates)
-│   │   ├── threads_home.js       # Threads home/profile page (posts extraction)
-│   │   ├── threads_activity.js   # Threads activity page (follows, likes, milestones, replies, polls)
-│   │   └── threads_search.js     # Threads search (landing, autocomplete, results)
-│   ├── popup/
-│   │   ├── popup.html
-│   │   ├── popup.css
-│   │   └── popup.js
-│   └── icons/
+├── packages/
+│   ├── chrome-extension-unpacked/   # Chrome extension (load in chrome://extensions)
+│   │   ├── manifest.json
+│   │   ├── background.js            # Thin orchestrator (~350 lines)
+│   │   ├── accessibility-storage.js # Ref->backendNodeId mapping
+│   │   ├── accessibility-tree.js    # A11y tree formatter
+│   │   ├── handlers/                # Command handlers
+│   │   │   ├── click.js             # Mouse click with cursor animation
+│   │   │   ├── keyboard.js          # CDP keyboard simulation (browser_type)
+│   │   │   ├── scroll.js            # Smooth scroll with easing
+│   │   │   ├── tabs.js              # Tab create/close/list
+│   │   │   ├── accessibility.js     # Tree and Threads feed
+│   │   │   └── scripts.js           # Inject/execute JS
+│   │   ├── utils/                   # Shared utilities
+│   │   │   ├── windmouse.js         # WindMouse human-like path algorithm
+│   │   │   ├── mouse-state.js       # Per-tab virtual position tracking
+│   │   │   ├── cursor.js            # Cursor animation (RGB glow, particle burst)
+│   │   │   ├── scroll.js            # Scroll animation and viewport helpers
+│   │   │   ├── timing.js            # Random delays
+│   │   │   └── debugger.js          # CDP attach/detach helpers
+│   │   ├── formatters/
+│   │   │   ├── threads.js           # Threads router (detects page type, delegates)
+│   │   │   ├── threads_home.js      # Threads home/profile page (posts extraction)
+│   │   │   ├── threads_activity.js  # Threads activity page (follows, likes, milestones, replies, polls)
+│   │   │   ├── threads_search.js    # Threads search (landing, autocomplete, results)
+│   │   │   ├── zillow.js            # Zillow router (detects page type, delegates)
+│   │   │   ├── zillow_detail.js     # Zillow property detail
+│   │   │   ├── zillow_detail_page.js # Zillow detail page variant
+│   │   │   ├── zillow_home.js       # Zillow home page
+│   │   │   └── zillow_search.js     # Zillow search results
+│   │   ├── popup/
+│   │   │   ├── popup.html
+│   │   │   ├── popup.css
+│   │   │   └── popup.js
+│   │   └── icons/
+│   │
+│   ├── server-for-chrome-extension/ # Node.js MCP server
+│   │   ├── package.json
+│   │   ├── cli.js                   # CLI entry point (pkg binary entry)
+│   │   ├── index.js
+│   │   └── src/
+│   │       ├── server.js
+│   │       ├── mcp-handler.js
+│   │       ├── extension-bridge.js
+│   │       └── service/             # Platform-specific service management
+│   │           ├── index.js
+│   │           ├── paths.js         # Config loading, defaults, data paths
+│   │           ├── logger.js        # Daemon log writer
+│   │           ├── windows.js       # Windows Registry auto-start
+│   │           ├── macos.js         # macOS launchd service
+│   │           └── linux.js         # Linux systemd service
+│   │
+│   └── electron/                    # Electron app for deployment
+│       └── ...                      # Packaging, auto-start, onboarding UI
 │
-├── mcp-server/                   # Node.js MCP server
-│   ├── package.json
-│   ├── index.js
-│   └── src/
-│       ├── server.js
-│       ├── mcp-handler.js
-│       └── extension-bridge.js
-│
-├── README.md
-├── MCP_INTEGRATION.md            # MCP tools reference
-└── EXTENSION.md                  # Detailed technical docs
+├── package.json                     # Workspace root (monorepo scripts)
+├── release.sh
+├── release.ps1
+├── docs/
+└── docs-old/
 ```
 
-## Environment Variables
+## Configuration
+
+### Environment Variables
 
 The MCP server supports these environment variables:
 
@@ -163,21 +197,101 @@ The MCP server supports these environment variables:
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port |
 | `API_KEY` | `dev-123-test` | API key for extension auth |
+| `NETWORK` | _(unset)_ | Set to `1` to enable network/LAN access |
+
+### Config File
+
+The server also supports a JSON config file at `{dataDir}/config/server.json`:
+
+```json
+{
+  "port": 3456,
+  "apiKey": "your-custom-key"
+}
+```
+
+**Priority order:** config file > environment variable > hardcoded default.
+
+The data directory location depends on the platform:
+- **Windows:** `%LOCALAPPDATA%\WebPilot`
+- **macOS:** `~/Library/Application Support/WebPilot`
+- **Linux:** `$XDG_CONFIG_HOME/WebPilot` (or `~/.config/WebPilot`)
+
+## CLI and Standalone Binary
+
+The server has a CLI entry point (`cli.js`) designed to be compiled into a standalone `.exe` via `@yao-pkg/pkg`.
+
+```
+Usage: webpilot-mcp [options]
+
+Options:
+  --foreground   Run server in the foreground (for development/testing)
+  --install      Register as a background service
+  --uninstall    Remove the background service
+  --stop         Stop the running server
+  --status       Check service status
+  --network      Bind to 0.0.0.0 for LAN access (instead of 127.0.0.1)
+  --help         Show help message
+  --version      Show version number
+```
+
+Running with no options starts the server as a background daemon.
+
+### Building the binary
+
+```bash
+cd packages/server-for-chrome-extension
+pkg . --target node18-win-x64 --out-path dist
+```
+
+### Network Mode
+
+To expose the server on your local network (bind to `0.0.0.0` instead of `127.0.0.1`):
+
+```bash
+npm run dev:network     # Dev mode with network access
+npm run start:network   # Production mode with network access
+```
+
+Or use the `--network` flag or `NETWORK=1` environment variable.
+
+### Service Management
+
+The `src/service/` directory contains platform-specific service management:
+- **Windows:** Registry Run key (`HKCU`) for auto-start on login
+- **macOS:** launchd plist for auto-start
+- **Linux:** systemd user service for auto-start
+
+The server writes `server.pid` and `server.port` files to the data directory for process management, and cleans them up on shutdown.
 
 ## Extension Behavior
 
-The extension uses **manual connect** - it does NOT auto-connect on browser startup.
+Initial setup requires a manual connection string paste. After first connect, the extension **auto-reconnects on browser restart** (via `chrome.runtime.onStartup` listener). On non-auth connection failures, it retries every 5 seconds while enabled. On auth failures, it clears stored credentials and stops retrying.
 
 **Views:**
 - **Setup View**: First-time setup, paste connection string
+- **Connecting View**: Shows server URL and spinner while WebSocket connection is being established
 - **Connected View**: Shows status, disconnect button, settings
 - **Disconnected View**: Reconnect or Forget buttons, settings
 
 **Settings:**
 - **Focus new tabs** (default: off): When disabled, new tabs open in the background without stealing focus
-- **Tab organization** (default: Existing window): Choose between opening tabs in the current window or a dedicated WebPilot window. Both modes use a cyan "WebPilot" tab group
+- **Tab organization** (default: Existing window): Choose between opening tabs in the current window or a new window. Both modes use a cyan "WebPilot" tab group
 
-**After browser restart:** Extension shows Disconnected view. Click Reconnect to connect.
+**After browser restart:** Extension auto-reconnects if previously connected. If the server is unreachable, it shows the Disconnected view with a Reconnect button.
+
+## Workspace Scripts
+
+The root `package.json` defines these workspace scripts:
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev:server` | Start MCP server in watch mode |
+| `npm run dev:onboarding` | Start the Electron onboarding UI |
+| `npm run start` | Start MCP server (production) |
+| `npm run dist:win` | Build Windows installer (server binary + Electron) |
+| `npm run dist:mac` | Build macOS installer |
+| `npm run dist:linux` | Build Linux installer |
 
 ## Troubleshooting
 
@@ -219,15 +333,13 @@ The extension uses **manual connect** - it does NOT auto-connect on browser star
 
 Use `npm run dev` for auto-reload on server changes:
 ```bash
-cd mcp-server
+cd packages/server-for-chrome-extension
 npm run dev
 ```
 
 ### Manual Reload
 
 For extension changes:
-1. Edit files in `unpacked-extension/`
+1. Edit files in `packages/chrome-extension-unpacked/`
 2. Go to `chrome://extensions/`
 3. Click the refresh icon on the WebPilot extension
-
-See [EXTENSION.md](./EXTENSION.md) for detailed technical documentation.

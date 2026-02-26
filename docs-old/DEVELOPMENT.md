@@ -23,20 +23,89 @@ Guide for adding new features to the WebPilot browser control extension.
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+The MCP server uses JSON-RPC 2.0 over SSE (protocol version `2024-11-05`). The `processMessage` function handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call` methods. Error responses use the JSON-RPC error format with `code` and `message` fields. The `handleToolCall` function wraps results in `{ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }` before returning, which is the MCP protocol's required response format.
+
 **Key Components:**
 
 | Component | File | Role |
 |-----------|------|------|
-| MCP Handler | `mcp-server/src/mcp-handler.js` | Tool definitions, request routing |
-| Extension Bridge | `mcp-server/src/extension-bridge.js` | WebSocket communication (generic) |
-| Background Script | `unpacked-extension/background.js` | Command handlers, Chrome API calls |
-| Manifest | `unpacked-extension/manifest.json` | Extension permissions |
+| MCP Handler | `packages/server-for-chrome-extension/src/mcp-handler.js` | Tool definitions, request routing |
+| Extension Bridge | `packages/server-for-chrome-extension/src/extension-bridge.js` | WebSocket communication (generic) |
+| Background Script | `packages/chrome-extension-unpacked/background.js` | Command routing, imports handler modules |
+| Manifest | `packages/chrome-extension-unpacked/manifest.json` | Extension permissions (ES module service worker) |
+
+**Existing Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `browser_create_tab` | Create a new browser tab |
+| `browser_close_tab` | Close a browser tab |
+| `browser_get_tabs` | Get list of open tabs |
+| `browser_get_accessibility_tree` | Get page accessibility tree (with auto platform formatting) |
+| `browser_inject_script` | Inject a script from a URL into a tab |
+| `browser_execute_js` | Execute JavaScript in page context |
+| `browser_click` | Click at coordinates, selector, or accessibility ref |
+| `browser_scroll` | Scroll to element or by pixel amount |
+| `browser_type` | Type text into focused or specified element |
+
+### Handler Module Architecture
+
+The extension uses a modular architecture. `background.js` is a thin orchestrator that imports handler functions from separate modules under `handlers/`:
+
+```javascript
+import { createTab, closeTab, getTabs, organizeTab } from './handlers/tabs.js';
+import { getAccessibilityTree } from './handlers/accessibility.js';
+import { click } from './handlers/click.js';
+import { scroll } from './handlers/scroll.js';
+import { type } from './handlers/keyboard.js';
+import { injectScript, executeJs, handleNavigationComplete, handleTabClosed } from './handlers/scripts.js';
+```
+
+Handler files:
+- `handlers/tabs.js` - createTab, closeTab, getTabs, organizeTab
+- `handlers/accessibility.js` - getAccessibilityTree (includes platform detection and formatter routing)
+- `handlers/click.js` - click
+- `handlers/scroll.js` - scroll
+- `handlers/keyboard.js` - type
+- `handlers/scripts.js` - injectScript, executeJs, handleNavigationComplete, handleTabClosed
+
+### Utility Modules
+
+- `utils/debugger.js` - Persistent debugger session management (`getSession`, `cleanupDebugger`, `isProtectedPage`)
+- `utils/mouse-state.js` - Mouse position tracking per tab
+- `utils/cursor.js` - Visual cursor rendering
+- `utils/timing.js` - Timing utilities
+- `utils/windmouse.js` - Natural mouse movement simulation
+- `utils/scroll.js` - Scroll utilities
+
+### Storage Modules
+
+- `accessibility-storage.js` - Stores ref-to-backendDOMNodeId mappings and ancestry context for click/scroll-by-ref functionality. Provides `findRefByAncestry()` for re-identifying elements after scroll.
+
+### Tab Cleanup Lifecycle
+
+When a tab is closed, `background.js` runs cleanup for all per-tab state:
+
+```javascript
+chrome.tabs.onRemoved.addListener((tabId) => {
+  cleanupDebugger(tabId);
+  handleTabClosed(tabId);
+  clearRefs(tabId);
+  clearPosition(tabId);
+});
+```
+
+New features that store per-tab state must add cleanup here.
+
+### The `organizeTab()` Pattern
+
+After most commands, `background.js` calls `organizeTab(params.tab_id)`. This is a consistent pattern: 6 of 9 commands call it (`get_accessibility_tree`, `inject_script`, `execute_js`, `click`, `scroll`, `type`). The three commands that skip it are `create_tab`, `close_tab`, and `get_tabs`. New tool authors should follow this pattern unless the tool manages tabs itself.
 
 ## Adding a New MCP Tool
 
 ### Step 1: Define the Tool (MCP Server)
 
-Edit `mcp-server/src/mcp-handler.js`:
+Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
 
 **Add to the `tools` array:**
 
@@ -66,9 +135,15 @@ case 'browser_your_tool_name':
   break;
 ```
 
+Note: `handleToolCall` wraps the extension's response in the MCP protocol format automatically. You do not need to handle that wrapping yourself.
+
 ### Step 2: Add Permissions (If Needed)
 
-Edit `unpacked-extension/manifest.json`:
+Edit `packages/chrome-extension-unpacked/manifest.json`:
+
+The manifest already includes these base permissions: `storage`, `activeTab`, `tabs`, `tabGroups`, `debugger`, `scripting`, `webNavigation`. It also includes `"host_permissions": ["<all_urls>"]`.
+
+If your tool needs additional permissions, add them:
 
 ```json
 {
@@ -76,36 +151,28 @@ Edit `unpacked-extension/manifest.json`:
     "storage",
     "activeTab",
     "tabs",
-    "your_new_permission"  // add here
+    "tabGroups",
+    "debugger",
+    "scripting",
+    "webNavigation",
+    "your_new_permission"
   ]
 }
 ```
 
-Common permissions:
-- `debugger` - Chrome DevTools Protocol access
-- `scripting` - Execute scripts in pages
+Common additional permissions:
 - `downloads` - Download files
 - `history` - Browser history access
 - `bookmarks` - Bookmark access
 
 See: https://developer.chrome.com/docs/extensions/reference/permissions-list
 
-### Step 3: Handle the Command (Extension)
+### Step 3: Create the Handler (Extension)
 
-Edit `unpacked-extension/background.js`:
-
-**Add case to `handleServerCommand` switch:**
+Create a new handler file at `packages/chrome-extension-unpacked/handlers/your_handler.js` (or add to an existing handler file if it fits):
 
 ```javascript
-case 'your_command_type':
-  result = await yourHandlerFunction(params);
-  break;
-```
-
-**Implement the handler function:**
-
-```javascript
-async function yourHandlerFunction(params) {
+export async function yourHandlerFunction(params) {
   const { param_name } = params;
 
   if (!param_name) {
@@ -122,7 +189,28 @@ async function yourHandlerFunction(params) {
 }
 ```
 
-### Step 4: Update Documentation
+The background script is an ES module (`"type": "module"` in manifest.json), so use `export`/`import` syntax.
+
+### Step 4: Wire Up the Command (Extension)
+
+Edit `packages/chrome-extension-unpacked/background.js`:
+
+**Add import:**
+```javascript
+import { yourHandlerFunction } from './handlers/your_handler.js';
+```
+
+**Add case to `handleServerCommand` switch:**
+
+```javascript
+case 'your_command_type':
+  result = await yourHandlerFunction(params);
+  // Call organizeTab unless your tool manages tabs itself
+  await organizeTab(params.tab_id);
+  break;
+```
+
+### Step 5: Update Documentation
 
 **README.md** - Add to tools table:
 
@@ -164,11 +252,13 @@ Use this checklist when adding a new tool:
 [ ] 1. mcp-handler.js - Add tool to `tools` array
 [ ] 2. mcp-handler.js - Add case to `handleToolCall`
 [ ] 3. manifest.json - Add permissions (if needed)
-[ ] 4. background.js - Add case to `handleServerCommand`
-[ ] 5. background.js - Implement handler function
-[ ] 6. README.md - Update tools table
-[ ] 7. MCP_INTEGRATION.md - Add full documentation
-[ ] 8. Test the tool end-to-end
+[ ] 4. handlers/<file>.js - Create or update handler module
+[ ] 5. background.js - Import handler and add case to `handleServerCommand`
+[ ] 6. background.js - Add organizeTab() call if tool takes a tab_id
+[ ] 7. background.js - Add tab cleanup in onRemoved listener if storing per-tab state
+[ ] 8. README.md - Update tools table
+[ ] 9. MCP_INTEGRATION.md - Add full documentation
+[ ] 10. Test the tool end-to-end
 ```
 
 ## Testing New Tools
@@ -280,10 +370,16 @@ async function yourHandler(params) {
 The extension uses persistent debugger sessions - the debugger stays attached to a tab until the tab is closed. Use `getSession()` from `utils/debugger.js`:
 
 ```javascript
-import { getSession } from '../utils/debugger.js';
+import { getSession, isProtectedPage } from '../utils/debugger.js';
 
 async function handlerWithDebugger(params) {
   const { tab_id } = params;
+
+  // Check for protected pages before attaching debugger
+  const tab = await chrome.tabs.get(tab_id);
+  if (isProtectedPage(tab.url)) {
+    throw new Error('Cannot attach debugger to protected page (chrome://, chrome-extension://, about:)');
+  }
 
   // Get persistent session (stays attached until tab closes)
   const target = await getSession(tab_id);
@@ -340,18 +436,10 @@ case 'browser_focus_tab':
   break;
 ```
 
-### 3. background.js - handleServerCommand
+### 3. handlers/tabs.js - Handler Function
 
 ```javascript
-case 'focus_tab':
-  result = await focusTab(params);
-  break;
-```
-
-### 4. background.js - Handler Function
-
-```javascript
-async function focusTab(params) {
+export async function focusTab(params) {
   const { tab_id } = params;
 
   if (!tab_id) {
@@ -366,30 +454,62 @@ async function focusTab(params) {
 }
 ```
 
+### 4. background.js - Import and Wire Up
+
+```javascript
+import { createTab, closeTab, getTabs, organizeTab, focusTab } from './handlers/tabs.js';
+
+// In handleServerCommand switch:
+case 'focus_tab':
+  result = await focusTab(params);
+  await organizeTab(params.tab_id);
+  break;
+```
+
 No new permissions needed - uses existing `tabs` permission.
 
-## Adding Site-Specific MCP Tools
+## Adding Site-Specific Formatters
 
-Site-specific formatters extract structured data (posts, feeds, etc.) from accessibility trees. Each formatter gets its own dedicated MCP tool rather than auto-routing by URL.
+Site-specific formatters extract structured data (posts, feeds, listings, etc.) from accessibility trees. Formatters auto-route by URL via `detectPlatform()` inside the existing `browser_get_accessibility_tree` tool - there are no separate MCP tools per formatter.
 
 ### Architecture
 
 ```
-webpilot/
-├── mcp-server/src/mcp-handler.js  # Tool definitions
-├── unpacked-extension/
-│   ├── background.js              # Command handlers
-│   ├── accessibility-tree.js      # Default YAML formatter
-│   └── formatters/
-│       └── threads.js             # Threads-specific formatter
+packages/chrome-extension-unpacked/
+├── background.js                      # Command routing (imports handlers)
+├── accessibility-tree.js              # Default plaintext tree formatter
+├── accessibility-storage.js           # Ref-to-backendDOMNodeId storage
+├── handlers/
+│   └── accessibility.js               # getAccessibilityTree + detectPlatform()
+├── formatters/
+│   ├── threads.js                     # Threads router (delegates by page type)
+│   │   ├── threads_home.js
+│   │   ├── threads_search.js
+│   │   └── threads_activity.js
+│   └── zillow.js                      # Zillow router (delegates by page type)
+│       ├── zillow_home.js
+│       ├── zillow_search.js
+│       ├── zillow_detail.js
+│       └── zillow_detail_page.js
+└── utils/
+    ├── debugger.js                    # Persistent debugger sessions
+    ├── mouse-state.js                 # Mouse position tracking
+    ├── cursor.js                      # Visual cursor rendering
+    ├── timing.js                      # Timing utilities
+    ├── windmouse.js                   # Natural mouse movement simulation
+    └── scroll.js                      # Scroll utilities
 ```
+
+### How Platform Detection Works
+
+When `browser_get_accessibility_tree` is called with `usePlatformOptimizer: true` (the default), `handlers/accessibility.js` calls `detectPlatform()` which checks the tab URL and routes to the appropriate formatter automatically. No new MCP tools or command types are needed.
 
 ### Step 1: Create the Formatter
 
-Create `unpacked-extension/formatters/<site>.js`:
+Create `packages/chrome-extension-unpacked/formatters/<site>.js`:
 
 ```javascript
-export function formatSiteTree(nodes) {
+export function formatPlatformTree(nodes) {
   const nodeMap = new Map();
   const refMap = new Map();
   let refCounter = 1;
@@ -398,11 +518,14 @@ export function formatSiteTree(nodes) {
     nodeMap.set(node.nodeId, node);
   }
 
-  function getRef(nodeId) {
-    if (!refMap.has(nodeId)) {
-      refMap.set(nodeId, `e${refCounter++}`);
+  function getRef(node) {
+    if (!refMap.has(node.nodeId)) {
+      refMap.set(node.nodeId, {
+        ref: `e${refCounter++}`,
+        backendDOMNodeId: node.backendDOMNodeId
+      });
     }
-    return refMap.get(nodeId);
+    return refMap.get(node.nodeId).ref;
   }
 
   function getNodeRole(node) {
@@ -415,89 +538,42 @@ export function formatSiteTree(nodes) {
 
   // Your custom parsing logic here
 
+  // Build refs map: ref string -> backendDOMNodeId
+  const refs = {};
+  for (const [nodeId, entry] of refMap) {
+    refs[entry.ref] = entry.backendDOMNodeId;
+  }
+
   return {
     tree: 'Your formatted output string',
     elementCount: refCounter - 1,
-    // Add any custom fields
+    refs: refs,  // REQUIRED: consumed by handlers/accessibility.js for click/scroll targeting
+    // Optional platform-specific counts: postCount, listingCount, etc.
   };
 }
 ```
 
-### Step 2: Add MCP Tool Definition
+### Step 2: Add Platform Detection
 
-Edit `mcp-server/src/mcp-handler.js`:
+Edit `packages/chrome-extension-unpacked/handlers/accessibility.js`:
 
-**Add to tools array:**
+Add your platform to the `detectPlatform()` function:
+
 ```javascript
-{
-  name: 'browser_get_<site>_feed',
-  description: 'Get <site> content in enriched format',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      tab_id: {
-        type: 'number',
-        description: 'The ID of the tab to get content from'
-      }
-    },
-    required: ['tab_id']
-  }
+function detectPlatform(url) {
+  const hostname = new URL(url).hostname;
+  if (hostname.includes('threads.net')) return 'threads';
+  if (hostname.includes('zillow.com')) return 'zillow';
+  if (hostname.includes('yoursite.com')) return 'yoursite';  // Add here
+  return null;
 }
 ```
 
-**Add to handleToolCall switch:**
-```javascript
-case 'browser_get_<site>_feed':
-  commandType = 'get_<site>_feed';
-  commandParams = { tab_id: args.tab_id };
-  break;
-```
+Add the import and routing for your formatter in the same file.
 
-### Step 3: Add Command Handler
+### Step 3: Update Documentation
 
-Edit `unpacked-extension/background.js`:
-
-**Add import:**
-```javascript
-import { formatSiteTree } from './formatters/<site>.js';
-```
-
-**Add to handleServerCommand switch:**
-```javascript
-case 'get_<site>_feed':
-  result = await getSiteFeed(params);
-  break;
-```
-
-**Add handler function:**
-```javascript
-import { getSession } from './utils/debugger.js';
-
-async function getSiteFeed(params) {
-  const { tab_id } = params;
-
-  if (!tab_id) {
-    throw new Error('tab_id is required');
-  }
-
-  const tab = await chrome.tabs.get(tab_id);
-  const hostname = new URL(tab.url || '').hostname;
-  if (!hostname.includes('<site>.com')) {
-    throw new Error('Tab is not a <site> page');
-  }
-
-  // Get persistent debugger session (stays attached until tab closes)
-  const target = await getSession(tab_id);
-
-  await chrome.debugger.sendCommand(target, 'Accessibility.enable');
-  const result = await chrome.debugger.sendCommand(target, 'Accessibility.getFullAXTree');
-  return formatSiteTree(result.nodes);
-}
-```
-
-### Step 4: Update Documentation
-
-Update README.md tools table and MCP_INTEGRATION.md with new tool details.
+Update README.md tools table and MCP_INTEGRATION.md with the new platform support for `browser_get_accessibility_tree`.
 
 ### Formatter Guidelines
 
@@ -506,9 +582,18 @@ Update README.md tools table and MCP_INTEGRATION.md with new tool details.
 {
   tree: string,         // Required: formatted text output
   elementCount: number, // Required: count of elements with refs
-  // Optional: additional fields for your use case
+  refs: object,         // Required: map of ref string -> backendDOMNodeId
+                        //   (consumed internally by handlers/accessibility.js,
+                        //    stored via accessibility-storage.js, NOT sent to MCP client)
+  // Optional platform-specific counts (e.g., postCount, listingCount)
 }
 ```
+
+Omitting `refs` from a new formatter will break click/scroll-by-ref functionality.
+
+**Router Pattern:**
+
+Both existing top-level formatters (`threads.js`, `zillow.js`) follow a router pattern: they detect the page type from the URL and delegate to page-specific sub-formatters (e.g., `threads_home.js`, `zillow_search.js`). Follow this pattern if your site has multiple distinct page layouts.
 
 **Tips:**
 - Use `findChildrenByRole(nodeId, role)` to search for elements recursively
@@ -517,4 +602,8 @@ Update README.md tools table and MCP_INTEGRATION.md with new tool details.
 - Extract timestamps from `time` elements for enriched data
 - Handle nested generic containers - content may not be direct children
 
-**See `formatters/threads.js` for a complete example.**
+**See `formatters/threads.js` and `formatters/zillow.js` for complete examples.**
+
+## `browser_inject_script` Server-Side Fetch
+
+The MCP server fetches script content from URLs before sending it to the extension (via `fetchScriptFromUrl` in `mcp-handler.js`). The server acts as a fetch proxy - the extension receives the script content, not the URL. This is a non-obvious architectural choice to be aware of when working with script injection.
