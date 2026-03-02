@@ -127,6 +127,7 @@ export function formatSearchPage(context) {
   let prevDisabled = false;
   let nextRef = null;
   let nextUrl = null;
+  const pages = [];
 
   for (const [, node] of nodeMap) {
     const role = getNodeRole(node);
@@ -139,6 +140,14 @@ export function formatSearchPage(context) {
     if (role === 'link' && name === 'Next page') {
       nextRef = getRef(node);
       nextUrl = getNodeUrl(node);
+    }
+    // Page number links: "Page 1, current page" or "Page 2"
+    if (role === 'link' && name && name.startsWith('Page ')) {
+      const isCurrent = name.includes('current page');
+      const numMatch = name.match(/Page (\d+)/);
+      if (numMatch) {
+        pages.push([parseInt(numMatch[1], 10), getRef(node), getNodeUrl(node), isCurrent]);
+      }
     }
   }
 
@@ -161,7 +170,9 @@ export function formatSearchPage(context) {
     pagination: {
       prevRef: prevDisabled ? null : prevRef,
       nextRef,
-      nextUrl
+      nextUrl,
+      _pageSchema: ['page', 'ref', 'url', 'current'],
+      pages
     }
   };
 }
