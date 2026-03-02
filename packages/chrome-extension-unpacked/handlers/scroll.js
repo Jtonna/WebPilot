@@ -5,7 +5,7 @@
 
 import { getSession } from '../utils/debugger.js';
 import { getBackendNodeId } from '../accessibility-storage.js';
-import { animateScroll, calculateScrollDuration, scrollElementIntoView } from '../utils/scroll.js';
+import { animateScroll, animateContainerScroll, calculateScrollDuration, scrollElementIntoView } from '../utils/scroll.js';
 
 /**
  * Scroll to bring an element into view OR scroll by pixel amount.
@@ -37,6 +37,57 @@ export async function scroll(params) {
   let scrollDelta;
 
   if (hasPixels) {
+    // Check if the window is actually scrollable, or if the page uses a
+    // scrollable container (e.g. Zillow's listing sidebar panel)
+    const scrollCheck = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression: `
+        (function() {
+          const docEl = document.documentElement;
+          const body = document.body;
+          const windowScrollable = docEl.scrollHeight > docEl.clientHeight ||
+                                   body.scrollHeight > body.clientHeight;
+          if (windowScrollable) return { type: 'window' };
+
+          // Window not scrollable — find the largest scrollable container
+          const candidates = document.querySelectorAll('*');
+          let best = null;
+          let bestArea = 0;
+          for (const el of candidates) {
+            const style = window.getComputedStyle(el);
+            const ov = style.overflowY;
+            if ((ov === 'auto' || ov === 'scroll') && el.scrollHeight > el.clientHeight) {
+              const area = el.clientWidth * el.clientHeight;
+              if (area > bestArea) {
+                bestArea = area;
+                best = el;
+              }
+            }
+          }
+          if (best) {
+            best.setAttribute('data-webpilot-scroll-container', '1');
+            return { type: 'container' };
+          }
+          return { type: 'window' };
+        })()
+      `,
+      returnByValue: true
+    });
+
+    const scrollType = scrollCheck.result?.value?.type || 'window';
+
+    if (scrollType === 'container') {
+      const result = await animateContainerScroll(target, pixels);
+      return {
+        success: true,
+        scrolled: true,
+        tab_id,
+        pixels,
+        scrollDelta: pixels,
+        duration: result.duration,
+        containerScrolled: true
+      };
+    }
+
     scrollDelta = pixels;
   } else {
     // First, check if element is inside a scrollable container (e.g., dropdown, modal)

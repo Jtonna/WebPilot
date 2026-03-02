@@ -90,6 +90,43 @@ export async function animateScroll(target, scrollDelta, duration) {
 }
 
 /**
+ * Perform smooth scroll animation on the primary scrollable container.
+ * Used when the page itself isn't scrollable but a container div is
+ * (e.g. Zillow's listing sidebar panel).
+ *
+ * Expects the container to be tagged with data-webpilot-scroll-container="1".
+ *
+ * @param {Object} target - Chrome debugger target
+ * @param {number} scrollDelta - Pixels to scroll (positive = down, negative = up)
+ * @param {number} [duration] - Animation duration in ms (auto-calculated if not provided)
+ * @returns {Promise<{duration: number}>}
+ */
+export async function animateContainerScroll(target, scrollDelta, duration) {
+  const actualDuration = duration ?? calculateScrollDuration(scrollDelta);
+
+  await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+    expression: `
+      new Promise(resolve => {
+        const container = document.querySelector('[data-webpilot-scroll-container]');
+        if (!container) { resolve(); return; }
+        container.removeAttribute('data-webpilot-scroll-container');
+        const startPos = container.scrollTop;
+        const delta = ${scrollDelta};
+        const duration = ${actualDuration};
+        ${generateScrollAnimationCode(
+          'container.scrollTop = scrollPos',
+          'resolve()'
+        )}
+      })
+    `,
+    awaitPromise: true,
+    returnByValue: true
+  });
+
+  return { duration: actualDuration };
+}
+
+/**
  * Calculate scroll delta needed to center element in viewport.
  *
  * @param {Object} target - Chrome debugger target
