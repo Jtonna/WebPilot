@@ -172,11 +172,16 @@ export function formatSearchPage(context) {
 function extractSearchListing(listitemNode, context) {
   const { nodeMap, getRef, getNodeName, getNodeRole, getNodeUrl, findChildrenByRole } = context;
 
-  // Find the main property link (contains /homedetails/)
+  // Find the main property link — accept any Zillow listing URL rather than
+  // allowlisting specific path patterns (homedetails, community, etc.)
   const links = findChildrenByRole(listitemNode.nodeId, 'link');
   const propertyLink = links.find(l => {
     const url = getNodeUrl(l);
-    return url && url.includes('/homedetails/');
+    if (!url) return false;
+    // Skip links that are clearly not property listings
+    if (url.includes('/profile/') || url.includes('/reviews/') || url.includes('/myzillow/')) return false;
+    // Must be a Zillow property path (relative or absolute)
+    return url.includes('zillow.com/') || url.startsWith('/');
   });
   if (!propertyLink) return null;
 
@@ -268,6 +273,9 @@ function extractSearchListing(listitemNode, context) {
       break;
     }
   }
+
+  // Skip non-listing items (e.g. pagination links) that matched broadly
+  if (!price) return null;
 
   return [url, price, beds, baths, sqft, status, address, agent, saveRef, listingRef];
 }
