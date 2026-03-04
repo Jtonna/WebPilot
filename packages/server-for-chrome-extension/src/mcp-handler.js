@@ -384,6 +384,48 @@ function createMcpHandler(extensionBridge, apiKey) {
     };
   }
 
+  function resolveReferences(args, previousResults) {
+    if (args === null || args === undefined) return args;
+    if (typeof args === 'string') {
+      const refMatch = args.match(/^\$(\d+)\.(.*)/);
+      if (!refMatch) return args;
+      const stepIndex = parseInt(refMatch[1], 10);
+      const path = refMatch[2];
+      if (stepIndex >= previousResults.length) {
+        throw new Error(`Reference $${stepIndex}: step ${stepIndex} has not executed yet (only ${previousResults.length} steps completed)`);
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(previousResults[stepIndex].content[0].text);
+      } catch (e) {
+        throw new Error(`Reference $${stepIndex}: could not parse result from step ${stepIndex}`);
+      }
+      const segments = path.split('.');
+      let value = parsed;
+      for (const segment of segments) {
+        if (value === null || value === undefined || typeof value !== 'object') {
+          throw new Error(`Reference $${stepIndex}.${path}: could not resolve '${segment}' in step ${stepIndex} result`);
+        }
+        value = value[segment];
+      }
+      if (value === undefined) {
+        throw new Error(`Reference $${stepIndex}.${path}: could not resolve '${segments[segments.length - 1]}' in step ${stepIndex} result`);
+      }
+      return value;
+    }
+    if (Array.isArray(args)) {
+      return args.map(item => resolveReferences(item, previousResults));
+    }
+    if (typeof args === 'object') {
+      const resolved = {};
+      for (const [key, val] of Object.entries(args)) {
+        resolved[key] = resolveReferences(val, previousResults);
+      }
+      return resolved;
+    }
+    return args; // numbers, booleans, etc. pass through
+  }
+
   async function handleToolCall(params) {
     const { name, arguments: args } = params;
 
