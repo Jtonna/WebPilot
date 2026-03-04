@@ -22,6 +22,7 @@ The WebPilot MCP server provides browser tab control capabilities to AI agents v
 
 **Unaffected commands:**
 - `browser_get_tabs` (read-only, no interaction)
+- `browser_request_chain` (orchestrator only -- individual steps are still subject to domain restrictions)
 
 **Blocked command error:**
 When a command is blocked, the MCP server returns:
@@ -695,6 +696,84 @@ browser_type(tab_id, text="test", delay=100)
 
 ---
 
+### browser_request_chain
+
+Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using `$N.path.to.value` syntax. Validates all tool names before execution begins.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `steps` | array | Yes | Array of tool calls to execute in order |
+| `steps[].tool` | string | Yes | The name of the tool to call. Cannot be `browser_request_chain`. |
+| `steps[].arguments` | object | Yes | Arguments to pass to the tool. String values matching `$N.path.to.value` pattern will be resolved from prior step results. |
+| `return_mode` | string | No | `"all"` returns results from every step (default), `"last"` returns only the final step result. |
+
+**Returns (return_mode="all"):**
+```json
+{
+  "results": [
+    { "tab_id": 1062346731, "url": "https://example.com", "title": "" },
+    { "tree": "...", "elementCount": 42 }
+  ]
+}
+```
+
+**Returns (return_mode="last"):**
+Returns the raw result of the final step only, in the same format as calling that tool directly.
+
+**Returns (on step failure):**
+```json
+{
+  "results": [
+    { "tab_id": 1062346731, "url": "https://example.com", "title": "" }
+  ],
+  "error": {
+    "step": 1,
+    "tool": "browser_get_accessibility_tree",
+    "message": "Another debugger is already attached to this tab"
+  }
+}
+```
+
+**Result Referencing:**
+String argument values matching the pattern `$N.path.to.value` are resolved from prior step results before execution:
+- `$0.tab_id` -- resolves `tab_id` from step 0's result
+- `$1.results.0.id` -- resolves the first element's `id` from step 1's result
+- References work in nested objects and arrays
+- Non-string values (numbers, booleans) pass through unchanged
+
+**Pre-validation:**
+Before executing any steps, the chain validates:
+1. All tool names exist and are not `browser_request_chain` (no recursion)
+2. All `$N` reference indices point to earlier steps (no forward or self references)
+
+If pre-validation fails, no steps execute and an error is thrown.
+
+**Example Usage:**
+```
+// Open a tab and immediately get its accessibility tree
+browser_request_chain(
+  steps=[
+    { "tool": "browser_create_tab", "arguments": { "url": "https://example.com" } },
+    { "tool": "browser_get_accessibility_tree", "arguments": { "tab_id": "$0.tab_id" } }
+  ]
+)
+```
+
+**Errors:**
+- `Unknown tool(s) in chain: step 0: "nonexistent_tool"` -- invalid tool name
+- `Step 2 references $2 which has not executed yet` -- forward or self reference
+- `Cannot use return_mode "last" with an empty steps array` -- empty steps with last mode
+- `Reference $0.foo.bar: could not resolve 'bar' in step 0 result` -- unresolvable path
+
+**Notes:**
+- Steps execute sequentially; there is no parallel step execution
+- On step failure, execution stops and returns all prior successful results plus the error
+- Domain restriction rules still apply to each individual step
+- `browser_request_chain` cannot be used as a step tool (no recursive chaining)
+
+---
+
 ## Common Patterns
 
 ### Find and Close a Tab by URL
@@ -719,6 +798,18 @@ browser_type(tab_id, text="test", delay=100)
 1. Call browser_get_tabs
 2. Check if any tab.url matches your target URL
 3. If found, you may want to focus it instead of opening a duplicate
+```
+
+### Open a Page and Read It (Chained)
+
+```
+browser_request_chain(
+  steps=[
+    { "tool": "browser_create_tab", "arguments": { "url": "https://example.com" } },
+    { "tool": "browser_get_accessibility_tree", "arguments": { "tab_id": "$0.tab_id" } }
+  ]
+)
+// Returns both results in one call
 ```
 
 ---
