@@ -12,6 +12,7 @@
                     "start":  "npm run start --workspace=packages/server-for-chrome-extension",
                     "dist:win":  "npm run build:win --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:win --workspace=packages/electron",
                     "dist:mac":  "npm run build:mac --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:mac --workspace=packages/electron",
-                    "dist:linux":  "npm run build:linux --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:linux --workspace=packages/electron"
+                    "dist:linux":  "npm run build:linux --workspace=packages/server-for-chrome-extension \u0026\u0026 npm run dist:linux --workspace=packages/electron",
+                    "version:sync":  "node scripts/bump-version.js"
                 }
 }
