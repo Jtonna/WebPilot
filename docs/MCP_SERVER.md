@@ -76,7 +76,6 @@ Implements the MCP protocol:
 - **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
-- **Known issue** -- `serverInfo.version` is hardcoded as `0.2.0` in `mcp-handler.js`, but `package.json` declares version `0.3.0`. These are out of sync.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
 - **Chain execution** -- `browser_request_chain` is handled entirely server-side. It calls `handleToolCall()` internally for each step and never sends a command directly to the extension bridge.
 

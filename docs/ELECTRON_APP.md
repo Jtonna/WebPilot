@@ -97,11 +97,11 @@ Electron-builder output directory is `../../dist`, placing built installers in t
 
 ## Current Status
 
-The package (`@webpilot/onboarding`, version `0.3.0`) contains a working foundation:
+The package (`@webpilot/onboarding`, version `0.4.0`) contains a working foundation:
 
 ```
 packages/electron/
-  package.json          # Name: @webpilot/onboarding, version 0.3.0
+  package.json          # Name: @webpilot/onboarding, version 0.4.0
   app/layout.js         # Next.js layout with metadata
   app/page.js           # Status dashboard with health polling
   electron/main.js      # Electron main process with server launching
