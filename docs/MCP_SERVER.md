@@ -78,6 +78,7 @@ Implements the MCP protocol:
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
 - **Known issue** -- `serverInfo.version` is hardcoded as `0.2.0` in `mcp-handler.js`, but `package.json` declares version `0.3.0`. These are out of sync.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
+- **Chain execution** -- `browser_request_chain` is handled entirely server-side. It calls `handleToolCall()` internally for each step and never sends a command directly to the extension bridge.
 
 ### `src/extension-bridge.js`
 
@@ -90,7 +91,7 @@ WebSocket bridge to the Chrome extension:
 
 ## MCP Tools
 
-Nine tools are exposed to AI agents. All tools require the Chrome extension to be connected.
+Ten tools are exposed to AI agents. All tools require the Chrome extension to be connected.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -103,6 +104,15 @@ Nine tools are exposed to AI agents. All tools require the Chrome extension to b
 | `browser_click` | Click by ref, selector, or coordinates | `tab_id`, `ref?`, `selector?`, `x?`, `y?`, `button?`, `clickCount?`, `delay?`, `showCursor?` |
 | `browser_scroll` | Scroll to element or by pixel amount | `tab_id`, `ref?`, `selector?`, `pixels?` |
 | `browser_type` | Type text with CDP keyboard simulation | `tab_id`, `text`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
+| `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
+
+### `browser_request_chain`
+
+Executes an array of tool calls sequentially within a single MCP request. Each step specifies a `tool` name and `arguments` object. String argument values can reference prior step results using `$N.path.to.value` syntax (e.g., `$0.tab_id` resolves to the `tab_id` field from step 0's result).
+
+Pre-validation runs before any step executes: all tool names must be valid (and cannot be `browser_request_chain` itself), and all `$N` references must point to earlier steps. If any step fails during execution, the response includes partial results from completed steps plus an error object identifying the failed step.
+
+The `return_mode` parameter controls the response shape: `"all"` (default) returns an array of all step results, `"last"` returns only the final step's raw result.
 
 ## Communication Flow
 

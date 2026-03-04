@@ -236,6 +236,40 @@ function createMcpHandler(extensionBridge, apiKey) {
         },
         required: ['tab_id', 'text']
       }
+    },
+    {
+      name: 'browser_request_chain',
+      description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            description: 'Array of tool calls to execute in order. Each step specifies a tool name and its arguments.',
+            items: {
+              type: 'object',
+              properties: {
+                tool: {
+                  type: 'string',
+                  description: 'The name of the tool to call (e.g., browser_create_tab). Cannot be browser_request_chain.'
+                },
+                arguments: {
+                  type: 'object',
+                  description: 'Arguments to pass to the tool. String values matching $N.path.to.value pattern will be resolved from prior step results.'
+                }
+              },
+              required: ['tool', 'arguments']
+            }
+          },
+          return_mode: {
+            type: 'string',
+            enum: ['all', 'last'],
+            description: 'What to return: "all" returns results from every step (default), "last" returns only the final step result.',
+            default: 'all'
+          }
+        },
+        required: ['steps']
+      }
     }
   ];
 
@@ -350,6 +384,48 @@ function createMcpHandler(extensionBridge, apiKey) {
     };
   }
 
+  function resolveReferences(args, previousResults) {
+    if (args === null || args === undefined) return args;
+    if (typeof args === 'string') {
+      const refMatch = args.match(/^\$(\d+)\.(.*)/);
+      if (!refMatch) return args;
+      const stepIndex = parseInt(refMatch[1], 10);
+      const path = refMatch[2];
+      if (stepIndex >= previousResults.length) {
+        throw new Error(`Reference $${stepIndex}: step ${stepIndex} has not executed yet (only ${previousResults.length} steps completed)`);
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(previousResults[stepIndex].content[0].text);
+      } catch (e) {
+        throw new Error(`Reference $${stepIndex}: could not parse result from step ${stepIndex}`);
+      }
+      const segments = path.split('.');
+      let value = parsed;
+      for (const segment of segments) {
+        if (value === null || value === undefined || typeof value !== 'object') {
+          throw new Error(`Reference $${stepIndex}.${path}: could not resolve '${segment}' in step ${stepIndex} result`);
+        }
+        value = value[segment];
+      }
+      if (value === undefined) {
+        throw new Error(`Reference $${stepIndex}.${path}: could not resolve '${segments[segments.length - 1]}' in step ${stepIndex} result`);
+      }
+      return value;
+    }
+    if (Array.isArray(args)) {
+      return args.map(item => resolveReferences(item, previousResults));
+    }
+    if (typeof args === 'object') {
+      const resolved = {};
+      for (const [key, val] of Object.entries(args)) {
+        resolved[key] = resolveReferences(val, previousResults);
+      }
+      return resolved;
+    }
+    return args; // numbers, booleans, etc. pass through
+  }
+
   async function handleToolCall(params) {
     const { name, arguments: args } = params;
 
@@ -435,6 +511,72 @@ function createMcpHandler(extensionBridge, apiKey) {
           pressEnter: args.pressEnter || false
         };
         break;
+
+      case 'browser_request_chain': {
+        const steps = args.steps;
+        const returnMode = args.return_mode || 'all';
+
+        // Pre-validate: empty steps
+        if (!steps || steps.length === 0) {
+          if (returnMode === 'last') {
+            throw new Error('Cannot use return_mode "last" with an empty steps array');
+          }
+          return { content: [{ type: 'text', text: JSON.stringify({ results: [] }) }] };
+        }
+
+        // Pre-validate: all tool names exist and none is browser_request_chain
+        const validToolNames = new Set(tools.map(t => t.name).filter(n => n !== 'browser_request_chain'));
+        const invalidTools = steps
+          .map((step, i) => ({ index: i, tool: step.tool }))
+          .filter(s => !validToolNames.has(s.tool));
+        if (invalidTools.length > 0) {
+          const details = invalidTools.map(s => `step ${s.index}: "${s.tool}"`).join(', ');
+          throw new Error(`Unknown tool(s) in chain: ${details}`);
+        }
+
+        // Pre-validate: all reference indices are backward-pointing
+        for (let i = 0; i < steps.length; i++) {
+          const stepArgs = JSON.stringify(steps[i].arguments);
+          const refPattern = /"\$(\d+)\./g;
+          let match;
+          while ((match = refPattern.exec(stepArgs)) !== null) {
+            const refIndex = parseInt(match[1], 10);
+            if (refIndex >= i) {
+              throw new Error(`Step ${i} references $${refIndex} which has not executed yet (forward or self reference)`);
+            }
+          }
+        }
+
+        // Execute steps sequentially
+        const previousResults = [];
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          try {
+            const resolvedArgs = resolveReferences(step.arguments, previousResults);
+            const result = await handleToolCall({ name: step.tool, arguments: resolvedArgs });
+            previousResults.push(result);
+          } catch (error) {
+            // Parse previous results for the error response
+            const parsedResults = previousResults.map(r => JSON.parse(r.content[0].text));
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  results: parsedResults,
+                  error: { step: i, tool: step.tool, message: error.message }
+                })
+              }]
+            };
+          }
+        }
+
+        // All steps succeeded
+        if (returnMode === 'last') {
+          return previousResults[previousResults.length - 1];
+        }
+        const parsedResults = previousResults.map(r => JSON.parse(r.content[0].text));
+        return { content: [{ type: 'text', text: JSON.stringify({ results: parsedResults }) }] };
+      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);
