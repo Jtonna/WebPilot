@@ -512,6 +512,72 @@ function createMcpHandler(extensionBridge, apiKey) {
         };
         break;
 
+      case 'browser_request_chain': {
+        const steps = args.steps;
+        const returnMode = args.return_mode || 'all';
+
+        // Pre-validate: empty steps
+        if (!steps || steps.length === 0) {
+          if (returnMode === 'last') {
+            throw new Error('Cannot use return_mode "last" with an empty steps array');
+          }
+          return { content: [{ type: 'text', text: JSON.stringify({ results: [] }) }] };
+        }
+
+        // Pre-validate: all tool names exist and none is browser_request_chain
+        const validToolNames = new Set(tools.map(t => t.name).filter(n => n !== 'browser_request_chain'));
+        const invalidTools = steps
+          .map((step, i) => ({ index: i, tool: step.tool }))
+          .filter(s => !validToolNames.has(s.tool));
+        if (invalidTools.length > 0) {
+          const details = invalidTools.map(s => `step ${s.index}: "${s.tool}"`).join(', ');
+          throw new Error(`Unknown tool(s) in chain: ${details}`);
+        }
+
+        // Pre-validate: all reference indices are backward-pointing
+        for (let i = 0; i < steps.length; i++) {
+          const stepArgs = JSON.stringify(steps[i].arguments);
+          const refPattern = /"\$(\d+)\./g;
+          let match;
+          while ((match = refPattern.exec(stepArgs)) !== null) {
+            const refIndex = parseInt(match[1], 10);
+            if (refIndex >= i) {
+              throw new Error(`Step ${i} references $${refIndex} which has not executed yet (forward or self reference)`);
+            }
+          }
+        }
+
+        // Execute steps sequentially
+        const previousResults = [];
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          try {
+            const resolvedArgs = resolveReferences(step.arguments, previousResults);
+            const result = await handleToolCall({ name: step.tool, arguments: resolvedArgs });
+            previousResults.push(result);
+          } catch (error) {
+            // Parse previous results for the error response
+            const parsedResults = previousResults.map(r => JSON.parse(r.content[0].text));
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  results: parsedResults,
+                  error: { step: i, tool: step.tool, message: error.message }
+                })
+              }]
+            };
+          }
+        }
+
+        // All steps succeeded
+        if (returnMode === 'last') {
+          return previousResults[previousResults.length - 1];
+        }
+        const parsedResults = previousResults.map(r => JSON.parse(r.content[0].text));
+        return { content: [{ type: 'text', text: JSON.stringify({ results: parsedResults }) }] };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
