@@ -36,7 +36,7 @@
   </phase>
 
   <phase name="IMPLEMENTATION" file="lifecycle/implementation.xml">
-    Ensures ticket branch exists. Spawns implementation teammates via Agent Teams. Monitors progress.
+    Ensures ticket branch exists. Dispatches implementation sub-tasks using the active dispatch mode. Monitors progress.
     Escalates failures (technical → Opus, requirements → human). Human approval gate.
     Pushes to remote after approval.
     Behaviors: git-with-beads, escalation, scope-enforcement, sub-task-tracking, human-gate, response-format
@@ -59,6 +59,13 @@
     with strict rules, then reviews for rule violations, then reviews for contradictions
     and redundancies.
     Behaviors: create-behavior, create-lifecycle
+  </phase>
+
+  <phase name="NIGHTLY_AUTONOMOUS_RUN" file="lifecycle/nightly-autonomous-run.xml" on-demand="true">
+    On-demand pre-flight gate for tickets labeled autonomously-nightly. Acts as an
+    alternative entry point that assesses ticket completeness, then either activates
+    autonomous mode on the standard workflow or posts clarifying questions and exits.
+    Behaviors: autonomous-nightly, response-format
   </phase>
 
 </lifecycle-manifest>
