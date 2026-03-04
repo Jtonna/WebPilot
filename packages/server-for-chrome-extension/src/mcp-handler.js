@@ -236,6 +236,40 @@ function createMcpHandler(extensionBridge, apiKey) {
         },
         required: ['tab_id', 'text']
       }
+    },
+    {
+      name: 'browser_request_chain',
+      description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            description: 'Array of tool calls to execute in order. Each step specifies a tool name and its arguments.',
+            items: {
+              type: 'object',
+              properties: {
+                tool: {
+                  type: 'string',
+                  description: 'The name of the tool to call (e.g., browser_create_tab). Cannot be browser_request_chain.'
+                },
+                arguments: {
+                  type: 'object',
+                  description: 'Arguments to pass to the tool. String values matching $N.path.to.value pattern will be resolved from prior step results.'
+                }
+              },
+              required: ['tool', 'arguments']
+            }
+          },
+          return_mode: {
+            type: 'string',
+            enum: ['all', 'last'],
+            description: 'What to return: "all" returns results from every step (default), "last" returns only the final step result.',
+            default: 'all'
+          }
+        },
+        required: ['steps']
+      }
     }
   ];
 
