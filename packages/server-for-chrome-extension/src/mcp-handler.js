@@ -343,7 +343,7 @@ function createMcpHandler(extensionBridge, apiKey) {
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'webpilot-browser', version: '0.2.0' }
+          serverInfo: { name: 'webpilot-browser', version: '0.4.0' }
         }
       };
     }
