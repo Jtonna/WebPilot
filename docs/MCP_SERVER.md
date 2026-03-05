@@ -142,7 +142,7 @@ AI Agent                MCP Server              Chrome Extension          Browse
 | GET | `/sse` | None | SSE stream for MCP communication |
 | POST | `/message?session_id=<id>` | None | JSON-RPC message endpoint |
 | GET | `/health` | None | Server status (`extensionConnected`, `sessions` count) |
-| GET | `/connect` | None | Connection string and server URL for extension setup |
+| GET | `/connect` | None | Connection string, server URL, SSE URL, and network mode for extension setup |
 | WS | `/` (upgrade) | `?apiKey=<key>` | WebSocket for extension connection |
 
 ## Configuration
