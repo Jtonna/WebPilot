@@ -1,10 +1,21 @@
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const { createServer } = require('./src/server');
-const { getPort, getApiKey } = require('./src/service/paths');
+const { getPort, getApiKey, getDataDir } = require('./src/service/paths');
 
 const PORT = getPort();
 const API_KEY = getApiKey();
-const NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+
+// Check persisted network mode preference (set via extension toggle), then fall back to CLI flag
+let NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+try {
+  const networkConfigPath = path.join(getDataDir(), 'network.enabled');
+  const val = fs.readFileSync(networkConfigPath, 'utf8').trim();
+  NETWORK = val === '1';
+} catch (e) {
+  // No config file, use CLI flag default
+}
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
