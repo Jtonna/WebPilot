@@ -39,3 +39,5 @@ Add to your MCP client (e.g., Claude Code):
 ```bash
 claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
 ```
+
+**Pairing on first use:** MCP access is authenticated via per-agent API keys. The first time an agent connects, it must call the `request_pairing` tool. A pairing request will appear in the Chrome extension popup — click **Approve** to grant access. The agent receives an API key that is stored and reused for subsequent sessions.
