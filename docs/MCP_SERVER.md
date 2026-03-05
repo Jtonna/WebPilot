@@ -59,7 +59,7 @@ Sets up the Express HTTP server and WebSocket server:
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and a `WebSocketServer` (noServer mode, manual upgrade handling)
 - Authenticates WebSocket connections via `?apiKey=` query parameter
-- On startup, calls `formatterManager.init()` to load the formatter manifest (copies bundled formatters on first run), then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub, followed by hourly recurring checks.
+- On startup, calls `formatterManager.init()` to load the formatter manifest from `<dataDir>/formatters/`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks.
 - Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'rename_agent' }` renames a paired agent; `{ type: 'list_paired_agents' }` returns all currently paired agents; `{ type: 'set_network_mode' }` toggles between local-only and LAN mode at runtime (see [Network Mode](#network-mode)); `{ type: 'check_formatter_updates' }` triggers an on-demand formatter update check and responds with `{ type: 'formatter_update_result' }`
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
@@ -108,7 +108,7 @@ CRUD module for managing paired agent API keys:
 
 Loads and runs accessibility tree formatters:
 
-- `init()` -- Reads the formatter manifest from the data directory's `formatters/` folder. On first run, copies bundled formatters into that folder before reading.
+- `init()` -- Reads the formatter manifest from the data directory's `formatters/` folder. If no local formatters exist (first run), defers to the updater to download them from GitHub.
 - `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the manifest and runs the matched formatter. Falls back to the default formatter if no platform matches.
 - `reload()` -- Clears the require cache for all loaded formatter modules and re-reads the manifest. Called after an update is applied.
 
@@ -268,7 +268,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys), `formatters/` (contains `manifest.json` and formatter JS files; seeded from bundled formatters on first run and kept up to date by the GitHub auto-updater)
+Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys), `formatters/` (contains `manifest.json` and formatter JS files; downloaded from GitHub on first run and kept up to date by the auto-updater)
 
 ## Build
 
@@ -282,7 +282,7 @@ npm run build:linux  # node18-linux-x64
 
 Output directory: `dist/`.
 
-The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The `cli.js` file is the `bin` entry point in `package.json`, so pkg uses it as the binary's main entry. The `assets` field in `package.json` includes `../../accessibility-tree-formatters/**/*` so that the bundled formatters are embedded in the binary and available for seeding on first run.
+The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The `cli.js` file is the `bin` entry point in `package.json`, so pkg uses it as the binary's main entry. Formatters are not bundled in the binary -- they are downloaded from GitHub on first run.
 
 ## Dependencies
 

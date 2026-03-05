@@ -23,8 +23,7 @@ Defined in `packages/server-for-chrome-extension/package.json`:
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
-      "index.js",
-      "../../accessibility-tree-formatters/**/*"
+      "index.js"
     ]
   }
 }
@@ -37,14 +36,12 @@ Defined in `packages/server-for-chrome-extension/package.json`:
 - `manifest.json` -- lists available formatters with metadata (name, version, entry point)
 - Formatter JS files -- one per formatter, written as CommonJS modules
 
-The entire directory is bundled into the server binary via the `../../accessibility-tree-formatters/**/*` pkg assets glob above.
+Formatters are **not bundled** into the server binary. Instead, the server downloads them from GitHub on first run and stores them in `<dataDir>/formatters/`. The auto-updater checks for new versions on startup and every hour.
 
-At runtime, the server copies the bundled formatters to `<dataDir>/formatters/` on first run so they can be updated independently of the binary.
-
-Two new server modules handle formatter lifecycle:
+Two server modules handle formatter lifecycle:
 
 - **`formatter-manager.js`** -- loads formatters from `<dataDir>/formatters/` and runs the appropriate one for each accessibility tree request
-- **`formatter-updater.js`** -- auto-updates formatters from GitHub by comparing the bundled `manifest.json` version against the latest published release
+- **`formatter-updater.js`** -- auto-updates formatters from GitHub by comparing the local `manifest.json` version against the remote version on the `main` branch
 
 Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux":
 
