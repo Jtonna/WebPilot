@@ -247,6 +247,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ requests: data.pendingPairingRequests || [] });
       });
       break;
+
+    case 'SET_NETWORK_MODE':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({
+          type: 'set_network_mode',
+          enabled: message.enabled
+        }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected' });
+      }
+      break;
   }
   return true;
 });

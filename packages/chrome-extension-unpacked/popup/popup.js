@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const networkModeDisplay = document.getElementById('networkModeDisplay');
   const focusNewTabsToggle = document.getElementById('focusNewTabs');
   const tabModeSelect = document.getElementById('tabMode');
+  const networkModeToggle = document.getElementById('networkModeToggle');
   const restrictedModeToggle = document.getElementById('restrictedMode');
   const whitelistPanel = document.getElementById('whitelistPanel');
   const whitelistCurrentBtn = document.getElementById('whitelistCurrentBtn');
@@ -78,6 +79,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   tabModeSelect.addEventListener('change', () => {
     chrome.storage.local.set({ tabMode: tabModeSelect.value });
+  });
+
+  networkModeToggle.addEventListener('change', () => {
+    const enabled = networkModeToggle.checked;
+    chrome.runtime.sendMessage({ type: 'SET_NETWORK_MODE', enabled }, (response) => {
+      if (response && response.success) {
+        chrome.storage.local.set({ networkMode: enabled });
+      } else {
+        // Revert toggle on failure
+        networkModeToggle.checked = !enabled;
+      }
+    });
   });
 
   restrictedModeToggle.addEventListener('change', () => {
@@ -239,9 +252,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadSettings() {
-    chrome.storage.local.get(['focusNewTabs', 'tabMode'], (result) => {
+    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'networkMode'], (result) => {
       focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
       tabModeSelect.value = result.tabMode || 'group'; // default 'group'
+      networkModeToggle.checked = result.networkMode === true;
     });
   }
 

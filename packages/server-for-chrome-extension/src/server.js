@@ -3,6 +3,7 @@ const cors = require('cors');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
@@ -27,7 +28,21 @@ function cleanupPidAndPortFiles() {
   try { fs.unlinkSync(path.join(dataDir, 'server.port')); } catch (e) { /* non-fatal */ }
 }
 
-function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhost' }) {
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
+  let host = initialHost;
+  let publicHost = initialPublicHost;
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -86,6 +101,19 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
           const agents = pairedKeys.listKeys();
           console.log(`[pairing] Listed ${agents.length} paired agent(s)`);
           ws.send(JSON.stringify({ type: 'paired_agents_list', agents }));
+          return;
+        }
+
+        if (message.type === 'set_network_mode') {
+          const networkEnabled = message.enabled;
+          host = networkEnabled ? '0.0.0.0' : '127.0.0.1';
+          publicHost = networkEnabled ? getLocalIP() : 'localhost';
+
+          server.close(() => {
+            server.listen(port, host, () => {
+              console.log(`Network mode ${networkEnabled ? 'enabled' : 'disabled'}: listening on ${host}:${port}`);
+            });
+          });
           return;
         }
 
