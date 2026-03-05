@@ -387,12 +387,14 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
       // Auth gate: exempt request_pairing, require valid API key for all other tools
       if (params.name !== 'request_pairing') {
         if (!session.mcpApiKey || !pairedKeys.validateKey(session.mcpApiKey)) {
+          console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
           return {
             jsonrpc: '2.0',
             id,
             error: { code: -32001, message: AUTH_ERROR_MESSAGE }
           };
         }
+        console.log(`[auth] Authorized tool call: ${params.name}`);
       }
 
       try {
@@ -465,10 +467,12 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
 
     if (name === 'request_pairing') {
       const agentName = params.arguments?.agent_name || 'Unknown Agent';
+      console.log(`[pairing] Pairing request from agent: "${agentName}"`);
       try {
         const response = await extensionBridge.sendCommand('pairing_request', { agentName }, { timeout: 120000 });
         if (response.approved) {
           const key = pairedKeys.addKey(agentName);
+          console.log(`[pairing] Approved agent "${agentName}", key: ${key.slice(0, 8)}...`);
           extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
           return {
             content: [{
@@ -477,6 +481,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
             }]
           };
         } else {
+          console.log(`[pairing] Denied agent "${agentName}"`);
           return {
             content: [{
               type: 'text',
@@ -485,6 +490,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           };
         }
       } catch (err) {
+        console.log(`[pairing] Failed for agent "${agentName}": ${err.message}`);
         return {
           content: [{
             type: 'text',

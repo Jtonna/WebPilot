@@ -68,14 +68,16 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
 
         if (message.type === 'revoke_key') {
           const { apiKey: keyToRevoke } = message;
-          pairedKeys.revokeKey(keyToRevoke);
-          console.log(`Revoked paired key: ${keyToRevoke}`);
+          const revoked = pairedKeys.revokeKey(keyToRevoke);
+          console.log(`[pairing] Revoke key ${keyToRevoke.slice(0, 8)}...: ${revoked ? 'removed' : 'not found'}`);
           ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
           return;
         }
 
         if (message.type === 'list_paired_agents') {
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          const agents = pairedKeys.listKeys();
+          console.log(`[pairing] Listed ${agents.length} paired agent(s)`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents }));
           return;
         }
 
