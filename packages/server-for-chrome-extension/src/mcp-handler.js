@@ -32,7 +32,7 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
+function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager) {
   const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
 
   const tools = [
@@ -567,13 +567,86 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
         commandParams = {};
         break;
 
-      case 'browser_get_accessibility_tree':
-        commandType = 'get_accessibility_tree';
-        commandParams = {
+      case 'browser_get_accessibility_tree': {
+        const a11yParams = {
           tab_id: args.tab_id,
           usePlatformOptimizer: args.usePlatformOptimizer ?? true
         };
-        break;
+        const rawResult = await extensionBridge.sendCommand('get_accessibility_tree', a11yParams);
+        const { nodes, url, tabId, usePlatformOptimizer } = rawResult;
+
+        // Determine URL for formatter: if usePlatformOptimizer is explicitly false, pass null to force default
+        const formatterUrl = usePlatformOptimizer === false ? null : url;
+
+        // Format the tree server-side
+        let formatted;
+        try {
+          formatted = formatterManager.formatTree(formatterUrl, nodes);
+        } catch (err) {
+          console.warn('[mcp-handler] Formatter error, falling back to default:', err.message);
+          formatted = formatterManager.formatTree(null, nodes);
+        }
+
+        const { tree, elementCount, refs, ...extras } = formatted;
+
+        // Build ancestry context for each ref using extractAncestryContext from default formatter
+        if (refs && Object.keys(refs).length > 0) {
+          try {
+            const { getBundledFormatterDir } = require('./service/paths');
+            const { extractAncestryContext } = require(require('path').join(getBundledFormatterDir(), 'default.js'));
+
+            // Build nodeMap from raw nodes
+            const nodeMap = new Map();
+            for (const node of nodes) {
+              nodeMap.set(node.nodeId, node);
+            }
+
+            // Build backendDOMNodeId -> node lookup for ref resolution
+            const backendNodeMap = new Map();
+            for (const node of nodes) {
+              if (node.backendDOMNodeId) {
+                backendNodeMap.set(node.backendDOMNodeId, node);
+              }
+            }
+
+            // Build refContexts: { ref: ancestryContext }
+            const refContexts = {};
+            for (const [ref, backendDOMNodeId] of Object.entries(refs)) {
+              const node = backendNodeMap.get(backendDOMNodeId);
+              if (node) {
+                refContexts[ref] = extractAncestryContext(node, nodeMap);
+              }
+            }
+
+            // Send ref mappings and contexts to extension
+            extensionBridge.notify({
+              type: 'store_refs',
+              tabId,
+              refs,
+              refContexts
+            });
+          } catch (err) {
+            console.warn('[mcp-handler] Failed to build ref contexts:', err.message);
+            // Still send refs without contexts
+            extensionBridge.notify({
+              type: 'store_refs',
+              tabId,
+              refs,
+              refContexts: null
+            });
+          }
+        }
+
+        // Build response with tree, elementCount, and any extras (postCount, listingCount, platform, etc.)
+        const responseData = { tree, elementCount, ...extras };
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(responseData, null, 2)
+          }]
+        };
+      }
 
       case 'browser_inject_script':
         const scriptContent = await fetchScriptFromUrl(args.script_url);
