@@ -1,6 +1,11 @@
 const os = require('os');
 const { createServer } = require('./src/server');
-const { getPort, getApiKey } = require('./src/service/paths');
+const { getPort, getApiKey, getLogPath } = require('./src/service/paths');
+const { setupLogging } = require('./src/service/logger');
+
+const logPath = getLogPath();
+setupLogging(logPath);
+console.log(`log: ${logPath}`);
 
 const PORT = getPort();
 const API_KEY = getApiKey();
