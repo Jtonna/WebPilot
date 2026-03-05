@@ -140,6 +140,9 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
     }
 
     console.log(`Server URL: ws://${publicHost}:${port}`);
+
+    // Heartbeat to verify runtime logging works (temporary diagnostic)
+    setInterval(() => console.log('[server] heartbeat'), 30000);
   });
 
   // Clean up PID/port files on shutdown

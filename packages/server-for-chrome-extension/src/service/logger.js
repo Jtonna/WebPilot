@@ -10,7 +10,6 @@ class SizeManagedWriter {
     this.logPath = logPath;
     // Truncate on startup (fresh each run)
     fs.writeFileSync(logPath, '', 'utf8');
-    this.stream = fs.createWriteStream(logPath, { flags: 'a' });
     this.bytesWritten = 0;
   }
 
@@ -19,7 +18,9 @@ class SizeManagedWriter {
     // Strip ANSI escape codes so the log file is plain text
     const clean = str.replace(/\x1b\[[0-9;]*m/g, '');
     const bytes = Buffer.byteLength(clean, 'utf8');
-    this.stream.write(clean);
+
+    // Use appendFileSync for guaranteed flush — no buffering issues on Windows
+    fs.appendFileSync(this.logPath, clean, 'utf8');
     this.bytesWritten += bytes;
 
     if (this.bytesWritten >= MAX_SIZE) {
@@ -29,9 +30,6 @@ class SizeManagedWriter {
 
   _rotate() {
     try {
-      // Close current stream
-      this.stream.end();
-
       // Read file, drop oldest 25%
       const content = fs.readFileSync(this.logPath, 'utf8');
       const quarter = Math.floor(content.length / 4);
@@ -48,8 +46,6 @@ class SizeManagedWriter {
       fs.writeFileSync(tmpPath, retained, 'utf8');
       fs.renameSync(tmpPath, this.logPath);
 
-      // Reopen stream
-      this.stream = fs.createWriteStream(this.logPath, { flags: 'a' });
       this.bytesWritten = Buffer.byteLength(retained, 'utf8');
     } catch (e) {
       // If rotation fails, just reset counter to avoid infinite loop
@@ -58,7 +54,7 @@ class SizeManagedWriter {
   }
 
   close() {
-    try { this.stream.end(); } catch (e) { /* non-fatal */ }
+    // No-op now that we use sync writes, kept for API compatibility
   }
 }
 
@@ -75,12 +71,12 @@ function setupLogging(logPath) {
   const origStderrWrite = process.stderr.write.bind(process.stderr);
 
   process.stdout.write = (chunk, encoding, callback) => {
-    writer.write(chunk);
+    try { writer.write(chunk); } catch (e) { /* never break terminal output */ }
     return origStdoutWrite(chunk, encoding, callback);
   };
 
   process.stderr.write = (chunk, encoding, callback) => {
-    writer.write(chunk);
+    try { writer.write(chunk); } catch (e) { /* never break terminal output */ }
     return origStderrWrite(chunk, encoding, callback);
   };
 
