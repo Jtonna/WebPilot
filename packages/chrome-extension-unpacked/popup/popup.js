@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (msg.type === 'CONNECTION_STATUS_CHANGED') {
       handleConnectionStatusChange(msg.status, msg.errorType, msg.error);
     } else if (msg.type === 'PAIRING_REQUEST') {
-      addPairingRequest(msg.request);
+      addPairingRequest({ commandId: msg.commandId, agentName: msg.agentName });
     } else if (msg.type === 'PAIRED_AGENTS_UPDATED') {
       renderPairedAgents(msg.agents || []);
     }
