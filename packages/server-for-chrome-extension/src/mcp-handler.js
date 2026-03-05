@@ -45,6 +45,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           url: {
             type: 'string',
             description: 'The URL to open in the new tab'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['url']
@@ -59,6 +63,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           tab_id: {
             type: 'number',
             description: 'The ID of the tab to close'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -69,7 +77,12 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
       description: 'Get a list of all open browser tabs',
       inputSchema: {
         type: 'object',
-        properties: {}
+        properties: {
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
+          }
+        }
       }
     },
     {
@@ -85,6 +98,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           usePlatformOptimizer: {
             type: 'boolean',
             description: 'Use platform-specific formatting if available (e.g., Threads feed parser). Default: true'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -107,6 +124,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           keep_injected: {
             type: 'boolean',
             description: 'If true, automatically re-inject script when page navigates (default: false)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'script_url']
@@ -125,6 +146,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           code: {
             type: 'string',
             description: 'JavaScript code to execute'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'code']
@@ -172,6 +197,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           showCursor: {
             type: 'boolean',
             description: 'Show visual cursor indicator on screen (default: true)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -198,6 +227,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           pixels: {
             type: 'number',
             description: 'Pixels to scroll, positive=down, negative=up (mutually exclusive with ref/selector)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -232,6 +265,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           pressEnter: {
             type: 'boolean',
             description: 'Press Enter key after typing (default: false)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'text']
@@ -280,6 +317,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
             enum: ['all', 'last'],
             description: 'What to return: "all" returns results from every step (default), "last" returns only the final step result.',
             default: 'all'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['steps']
@@ -386,7 +427,8 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
     if (method === 'tools/call') {
       // Auth gate: exempt request_pairing, require valid API key for all other tools
       if (params.name !== 'request_pairing') {
-        if (!session.mcpApiKey || !pairedKeys.validateKey(session.mcpApiKey)) {
+        const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
+        if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
           console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
           return {
             jsonrpc: '2.0',
@@ -399,12 +441,6 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
 
       try {
         const result = await handleToolCall(params);
-        // After successful pairing, set the session API key so subsequent calls are authenticated
-        if (result._pairedKey) {
-          session.mcpApiKey = result._pairedKey;
-          delete result._pairedKey;
-          console.log(`[auth] Session authenticated via pairing`);
-        }
         return {
           jsonrpc: '2.0',
           id,
@@ -480,14 +516,12 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           const key = pairedKeys.addKey(agentName);
           console.log(`[pairing] Approved agent "${agentName}", key: ${key.slice(0, 8)}...`);
           extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
-          const result = {
+          return {
             content: [{
               type: 'text',
-              text: `Pairing approved! Your API key: ${key}\n\nYour current session is already authenticated — you can make tool calls immediately.\n\nTo persist this key for future sessions, add it to your MCP server configuration. For Claude Code, update your .mcp.json file to include the key as a header in the WebPilot server config:\n\n{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:3456/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}\n\nAlternatively, you can pass the key per-request as the X-API-Key header or apiKey query parameter.`
+              text: `Pairing approved! Your API key: ${key}\n\nIMPORTANT: To use this key immediately in this session, include api_key: "${key}" as a parameter in your tool calls.\n\nTo persist this key for future sessions so you don't need to pass api_key every time, update your MCP server configuration. For Claude Code, update your .mcp.json file:\n\n{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:3456/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`
             }]
           };
-          result._pairedKey = key;
-          return result;
         } else {
           console.log(`[pairing] Denied agent "${agentName}"`);
           return {
