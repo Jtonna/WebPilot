@@ -399,6 +399,12 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
 
       try {
         const result = await handleToolCall(params);
+        // After successful pairing, set the session API key so subsequent calls are authenticated
+        if (result._pairedKey) {
+          session.mcpApiKey = result._pairedKey;
+          delete result._pairedKey;
+          console.log(`[auth] Session authenticated via pairing`);
+        }
         return {
           jsonrpc: '2.0',
           id,
@@ -474,12 +480,14 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           const key = pairedKeys.addKey(agentName);
           console.log(`[pairing] Approved agent "${agentName}", key: ${key.slice(0, 8)}...`);
           extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
-          return {
+          const result = {
             content: [{
               type: 'text',
               text: `Pairing approved! Your API key is:\n\n${key}\n\nSave this key to a file called "webpilot.key" in your working directory. Include it as the X-API-Key header or apiKey query parameter in all subsequent requests.`
             }]
           };
+          result._pairedKey = key;
+          return result;
         } else {
           console.log(`[pairing] Denied agent "${agentName}"`);
           return {
