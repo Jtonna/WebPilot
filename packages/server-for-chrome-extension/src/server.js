@@ -8,6 +8,8 @@ const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
 const pairedKeys = require('./paired-keys');
+const formatterManager = require('./formatter-manager');
+const formatterUpdater = require('./formatter-updater');
 
 const { getDataDir } = require('./service/paths');
 
@@ -104,6 +106,13 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           return;
         }
 
+        if (message.type === 'check_formatter_updates') {
+          formatterUpdater.checkForUpdates()
+            .then(result => ws.send(JSON.stringify({ type: 'formatter_update_result', ...result })))
+            .catch(err => ws.send(JSON.stringify({ type: 'formatter_update_result', updated: false, error: err.message })));
+          return;
+        }
+
         if (message.type === 'set_network_mode') {
           const networkEnabled = message.enabled;
           host = networkEnabled ? '0.0.0.0' : '127.0.0.1';
@@ -144,7 +153,16 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     });
   });
 
-  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys);
+  formatterManager.init();
+
+  formatterUpdater.init(formatterManager);
+  formatterUpdater.checkForUpdates().catch(err => console.error('[server] Formatter update check failed:', err));
+  setInterval(
+    () => formatterUpdater.checkForUpdates().catch(err => console.error('[server] Periodic formatter update check failed:', err)),
+    3600000
+  );
+
+  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager);
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
