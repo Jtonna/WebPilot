@@ -3,7 +3,7 @@
  * Handles WebSocket connection and routes commands to handlers.
  */
 
-import { clearRefs } from './accessibility-storage.js';
+import { clearRefs, storeRefs, storeRefContext } from './accessibility-storage.js';
 import { clearPosition } from './utils/mouse-state.js';
 import { cleanup as cleanupDebugger } from './utils/debugger.js';
 import { createTab, closeTab, getTabs, organizeTab, getWebPilotWindowId } from './handlers/tabs.js';
@@ -328,6 +328,20 @@ function connectWebSocket() {
           try {
             chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
           } catch (_) { /* popup may not be open */ }
+          return;
+        }
+
+        // When the server sends ref mappings after server-side formatting
+        if (message.type === 'store_refs') {
+          const { tabId, refs, refContexts } = message;
+          if (refs) {
+            storeRefs(tabId, refs);
+          }
+          if (refContexts) {
+            for (const [ref, context] of Object.entries(refContexts)) {
+              storeRefContext(tabId, ref, context);
+            }
+          }
           return;
         }
 
