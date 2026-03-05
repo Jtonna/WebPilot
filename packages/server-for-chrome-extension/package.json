@@ -18,7 +18,8 @@
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
-      "index.js"
+      "index.js",
+      "../../accessibility-tree-formatters/**/*"
     ]
   },
   "keywords": [
