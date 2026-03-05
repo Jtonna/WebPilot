@@ -167,6 +167,7 @@ function connectWebSocket() {
       console.log('WebSocket connected');
       updateConnectionStatus('connected', null, null);
       startKeepalive();
+      refreshConnectionMetadata();
     };
 
     wsConnection.onmessage = (event) => {
@@ -257,6 +258,25 @@ function stopKeepalive() {
   if (keepaliveInterval) {
     clearInterval(keepaliveInterval);
     keepaliveInterval = null;
+  }
+}
+
+async function refreshConnectionMetadata() {
+  try {
+    // Derive HTTP URL from stored WS URL (ws://host:port -> http://host:port)
+    const wsUrl = config.serverUrl;
+    if (!wsUrl) return;
+    const httpUrl = wsUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
+    const response = await fetch(`${httpUrl}/connect`);
+    if (!response.ok) return;
+    const data = await response.json();
+    await chrome.storage.local.set({
+      serverUrl: data.serverUrl,
+      sseUrl: data.sseUrl || `http://localhost:3456/sse`,
+      networkMode: data.networkMode || false
+    });
+  } catch (e) {
+    // Non-fatal — metadata refresh is best-effort
   }
 }
 
