@@ -27,13 +27,6 @@ function cleanupPidAndPortFiles() {
   try { fs.unlinkSync(path.join(dataDir, 'server.port')); } catch (e) { /* non-fatal */ }
 }
 
-function generateConnectionString(serverUrl, apiKey) {
-  const data = { v: 1, s: serverUrl, k: apiKey };
-  const json = JSON.stringify(data);
-  const base64 = Buffer.from(json).toString('base64url');
-  return `vf://${base64}`;
-}
-
 function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhost' }) {
   const app = express();
   app.use(cors());
@@ -42,8 +35,6 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
   const server = http.createServer(app);
 
   const extensionBridge = createExtensionBridge(apiKey);
-  const wsUrl = `ws://${publicHost}:${port}`;
-  const connectionString = generateConnectionString(wsUrl, apiKey);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -119,8 +110,8 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
 
   app.get('/connect', (req, res) => {
     res.json({
-      connectionString: connectionString,
-      serverUrl: wsUrl
+      apiKey,
+      serverUrl: `ws://${publicHost}:${port}`
     });
   });
 
@@ -146,8 +137,7 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
       console.log('    ws: disabled');
     }
 
-    // Connection string for pasting into the extension
-    console.log(`connection_string: ${connectionString}`);
+    console.log(`Server URL: ws://${publicHost}:${port}`);
   });
 
   // Clean up PID/port files on shutdown
