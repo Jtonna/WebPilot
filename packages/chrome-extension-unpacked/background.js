@@ -47,6 +47,12 @@ chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (resul
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
+  // Explicitly initialize restricted mode to ON if not already set by user
+  chrome.storage.local.get(['restrictedModeEnabled'], (result) => {
+    if (result.restrictedModeEnabled === undefined) {
+      chrome.storage.local.set({ restrictedModeEnabled: true });
+    }
+  });
   loadConfig();
 });
 
