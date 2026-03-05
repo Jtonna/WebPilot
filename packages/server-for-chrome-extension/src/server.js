@@ -109,9 +109,20 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           host = networkEnabled ? '0.0.0.0' : '127.0.0.1';
           publicHost = networkEnabled ? getLocalIP() : 'localhost';
 
+          // Persist preference so it survives server restarts
+          try {
+            fs.writeFileSync(path.join(getDataDir(), 'network.enabled'), networkEnabled ? '1' : '0', 'utf8');
+          } catch (e) {
+            console.error('Failed to save network mode:', e.message);
+          }
+
+          console.log(`[network] Switching to ${networkEnabled ? 'network' : 'local'} mode, restarting listener on ${host}:${port}`);
+
+          // Force-close all connections so server.close() completes immediately
+          server.closeAllConnections();
           server.close(() => {
             server.listen(port, host, () => {
-              console.log(`Network mode ${networkEnabled ? 'enabled' : 'disabled'}: listening on ${host}:${port}`);
+              console.log(`[network] Now listening on ${host}:${port}`);
             });
           });
           return;

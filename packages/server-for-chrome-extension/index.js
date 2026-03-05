@@ -1,6 +1,8 @@
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const { createServer } = require('./src/server');
-const { getPort, getApiKey, getLogPath } = require('./src/service/paths');
+const { getPort, getApiKey, getLogPath, getDataDir } = require('./src/service/paths');
 const { setupLogging } = require('./src/service/logger');
 
 const logPath = getLogPath();
@@ -9,7 +11,13 @@ console.log(`log: ${logPath}`);
 
 const PORT = getPort();
 const API_KEY = getApiKey();
-const NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+let NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+try {
+  const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
+  NETWORK = val === '1';
+} catch (e) {
+  // No config file, use CLI flag default
+}
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
