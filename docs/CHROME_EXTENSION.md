@@ -26,17 +26,6 @@ background.js (service worker)
     |     scripts.js       Script injection and execution
     |     accessibility.js Accessibility tree extraction
     |
-    +-- formatters/
-    |     threads.js       Threads platform router
-    |     threads_home.js  Threads home/profile page
-    |     threads_activity.js  Threads activity page
-    |     threads_search.js    Threads search pages
-    |     zillow.js        Zillow platform router
-    |     zillow_home.js   Zillow homepage
-    |     zillow_search.js Zillow search results
-    |     zillow_detail.js Zillow property detail overlay
-    |     zillow_detail_page.js  Zillow full detail page
-    |
     +-- utils/
     |     debugger.js      CDP session management
     |     windmouse.js     Human-like mouse path generation
@@ -45,7 +34,6 @@ background.js (service worker)
     |     scroll.js        Scroll animation and viewport helpers
     |     timing.js        Weighted random delays
     |
-    +-- accessibility-tree.js    Default a11y tree formatter
     +-- accessibility-storage.js Ref-to-backendNodeId mapping
     +-- popup/                   Extension popup UI
 ```
@@ -69,6 +57,7 @@ On startup, the extension auto-connects to `localhost:3456` by fetching `/connec
 | Message type | Action |
 |--------------|--------|
 | `pairing_request` | Stores the pending request and forwards it to the popup via `chrome.runtime.sendMessage` so the user can Approve or Deny. |
+| `store_refs` | Push | `tabId`, `refs`, `refContexts` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting |
 
 #### From popup (chrome.runtime.onMessage)
 
@@ -88,6 +77,7 @@ On startup, the extension auto-connects to `localhost:3456` by fetching `/connec
 | `SET_NETWORK_MODE` | Sends a `set_network_mode` message to the server over WebSocket with the `enabled` flag. The server switches listen address and persists the preference. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
+| `CHECK_FORMATTER_UPDATES` | Forwards `check_formatter_updates` to server via WebSocket. Relays `formatter_update_result` response back to popup (10s timeout). |
 
 ## Handlers
 
@@ -145,47 +135,15 @@ JavaScript injection and execution in page context.
 
 ### `handlers/accessibility.js`
 
-Accessibility tree extraction with platform-specific formatting.
+Accessibility tree extraction.
 
-- Fetches the full accessibility tree via `Accessibility.getFullAXTree` (CDP)
-- Detects the current platform (Threads, Zillow) from the tab URL and routes to the appropriate formatter
-- Falls back to the default generic formatter (`accessibility-tree.js`) for unrecognized sites
-- Assigns element refs (`e1`, `e2`, ...) mapped to CDP `backendDOMNodeId` values for later interaction
-- Builds ancestry context for each ref (role, name, parent info, ancestor content) to support re-identification after scrolling
+- Fetches the raw accessibility tree via CDP `Accessibility.getFullAXTree`
+- Returns `{ nodes, url, tabId, usePlatformOptimizer }` (raw data) to the server
+- Platform detection, formatting, and ref assignment happen server-side
 
-## Formatters
+## Formatting (Server-Side)
 
-Formatters transform raw accessibility tree nodes into structured JSON optimized for AI consumption. Each platform has a router file that detects the page type and delegates to a sub-formatter.
-
-### Router Pattern
-
-Each platform router (`threads.js`, `zillow.js`):
-
-1. Builds a node map for fast lookups
-2. Sets up shared ref tracking and helper functions
-3. Extracts common elements (navigation, source info)
-4. Detects the page type from the URL
-5. Delegates to the appropriate page formatter
-6. Returns the formatted tree as a JSON string with element refs
-
-### Threads Formatters
-
-| File | Page Type | Detection | Extracts |
-|------|-----------|-----------|----------|
-| `threads_home.js` | Home / profile | Default (no URL match) | Posts (url, content, timestamp, likes, replies, refs), ghost posts (ephemeral content with expiry) |
-| `threads_activity.js` | Activity | `/activity` in URL | Follows, likes, milestones, replies, polls |
-| `threads_search.js` | Search | `/search` in URL | Landing (trends, suggestions), autocomplete (threads, terms, profiles), results (posts with filter) |
-
-### Zillow Formatters
-
-| File | Page Type | Detection | Extracts |
-|------|-----------|-----------|----------|
-| `zillow_home.js` | Homepage | Default | Search box, listings, saved searches, autocomplete suggestions |
-| `zillow_search.js` | Search results | `searchQueryState` param or `/homes/` path | Property cards with price, address, beds, baths, sqft, refs |
-| `zillow_detail.js` | Detail overlay | Region with comma in name (address) | Property details from the slide-over overlay on search pages |
-| `zillow_detail_page.js` | Full detail page | `/homedetails/` in URL | Full property listing details |
-
-The Zillow router also checks for a property detail overlay on search pages and includes overlay data alongside search results when present.
+Accessibility tree formatting is performed by the MCP server, not the extension. The extension sends raw CDP nodes to the server. After formatting, the server sends ref mappings back via a `store_refs` WebSocket message, which the extension persists for interaction commands (click, scroll).
 
 ## Utils
 
@@ -294,6 +252,7 @@ The Settings tab provides:
 - **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
 - **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
 - **Network mode** (toggle, defaults to false) -- Switches the server between local-only (`127.0.0.1`) and LAN (`0.0.0.0`) mode. Sends a `SET_NETWORK_MODE` message to the background script, which relays it to the server via WebSocket. The server re-binds its listener, persists the preference to `network.enabled`, and the extension reconnects and refreshes its stored URLs via `refreshConnectionMetadata()`. The toggle state is synced from `chrome.storage.local` (`networkMode`) and also updates reactively when the storage value changes (e.g., after reconnect metadata refresh).
+- **Check for formatter updates** (button) -- Sends a `CHECK_FORMATTER_UPDATES` message to the background script, which forwards a `check_formatter_updates` message to the server via WebSocket and relays the `formatter_update_result` response back to the popup (10s timeout).
 
 ### Storage Keys
 
@@ -335,6 +294,8 @@ Standard command envelope:
 |------|----------|-----------------|-------------|
 | `pairing_request` | Command | `agentName` (string) | Server forwards a pairing request from an AI agent. The extension shows an Approve/Deny prompt in the popup. |
 | `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, key, keyDisplay }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
+| `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
+| `formatter_update_result` | Push (no `id`) | _(result payload)_ | Server responds to a `check_formatter_updates` request with the outcome of the update check. |
 
 ### Extension to Server (WebSocket)
 
@@ -364,6 +325,7 @@ Error:
 | `rename_agent` | `apiKey` (string), `newName` (string) | Extension requests the server to rename the agent associated with the given API key. Sent when the user renames an agent in the Paired Agents panel. |
 | `list_paired_agents` | _(none)_ | Extension requests the current list of paired agents from the server. The server responds with a `paired_agents_list` push message. |
 | `set_network_mode` | `enabled` (boolean) | Extension requests the server to switch between local-only and LAN mode. The server re-binds its listener, persists the preference, and the extension reconnects. |
+| `check_formatter_updates` | _(none)_ | Extension requests the server to check for available formatter updates. The server responds with a `formatter_update_result` push message. |
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
