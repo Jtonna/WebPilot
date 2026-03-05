@@ -524,16 +524,73 @@ document.addEventListener('DOMContentLoaded', () => {
       const info = document.createElement('div');
       info.className = 'paired-agent-info';
 
+      // Name row with rename support
+      const nameRow = document.createElement('div');
+      nameRow.className = 'paired-agent-name-row';
+
       const name = document.createElement('span');
       name.className = 'paired-agent-name';
       name.textContent = agent.agentName || 'Unknown Agent';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'rename-btn';
+      renameBtn.textContent = 'Rename';
+
+      renameBtn.addEventListener('click', () => {
+        // Switch to edit mode
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rename-input';
+        input.value = agent.agentName || '';
+
+        function commitRename() {
+          const newName = input.value.trim();
+          if (newName && newName !== agent.agentName) {
+            chrome.runtime.sendMessage({
+              type: 'RENAME_AGENT',
+              apiKey: agent.key,
+              newName: newName
+            });
+          }
+          // Switch back to display mode
+          name.textContent = newName || agent.agentName || 'Unknown Agent';
+          nameRow.replaceChild(name, input);
+          renameBtn.textContent = 'Rename';
+        }
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commitRename();
+          } else if (e.key === 'Escape') {
+            nameRow.replaceChild(name, input);
+            renameBtn.textContent = 'Rename';
+          }
+        });
+        input.addEventListener('blur', commitRename);
+
+        nameRow.replaceChild(input, name);
+        renameBtn.textContent = 'Save';
+        input.focus();
+        input.select();
+      });
+
+      nameRow.appendChild(name);
+      nameRow.appendChild(renameBtn);
 
       const date = document.createElement('span');
       date.className = 'paired-agent-date';
       date.textContent = agent.createdAt ? formatDate(agent.createdAt) : '';
 
-      info.appendChild(name);
+      info.appendChild(nameRow);
       info.appendChild(date);
+
+      if (agent.lastAccessed) {
+        const lastActive = document.createElement('span');
+        lastActive.className = 'paired-agent-last-accessed';
+        lastActive.textContent = 'Last active: ' + timeAgo(agent.lastAccessed);
+        info.appendChild(lastActive);
+      }
 
       const revokeBtn = document.createElement('button');
       revokeBtn.className = 'revoke-btn';
@@ -561,6 +618,24 @@ document.addEventListener('DOMContentLoaded', () => {
       return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     } catch (e) {
       return dateStr;
+    }
+  }
+
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const now = Date.now();
+      const then = new Date(dateStr).getTime();
+      const seconds = Math.floor((now - then) / 1000);
+      if (seconds < 60) return 'just now';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + 'm ago';
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + 'h ago';
+      const days = Math.floor(hours / 24);
+      return days + 'd ago';
+    } catch (e) {
+      return '';
     }
   }
 
