@@ -62,6 +62,23 @@ The service worker is the entry point and command router. It:
 
 Connection configuration (server URL, API key) is stored in `chrome.storage.local` and loaded on service worker startup. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and stop retrying.
 
+### Message handlers
+
+#### From server
+
+| Message type | Action |
+|--------------|--------|
+| `pairing_request` | Stores the pending request and forwards it to the popup via `chrome.runtime.sendMessage` so the user can Approve or Deny. |
+
+#### From popup (chrome.runtime.onMessage)
+
+| Message type | Action |
+|--------------|--------|
+| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID and, on approval, the newly generated API key. |
+| `REVOKE_KEY` | Sends a `revoke_key` message to the server with the specified `apiKey`, then refreshes the paired agents list. |
+| `GET_PAIRED_AGENTS` | Sends a `list_paired_agents` request to the server and returns the result to the popup. |
+| `GET_PENDING_PAIRING` | Returns the currently buffered pending pairing request (if any) to the popup so it can render the Approve/Deny UI on open. |
+
 ## Handlers
 
 ### `handlers/tabs.js`
@@ -216,6 +233,25 @@ The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) pr
 
 The popup header displays the extension version (from `chrome.runtime.getManifest()`).
 
+### Pairing Requests
+
+When connected, the popup displays a "Pairing Requests" panel listing any pending pairing requests from AI agents. Each entry shows the agent name and two action buttons:
+
+- **Approve** -- Approves the pairing request, generating an API key for the agent and sending it back to the server.
+- **Deny** -- Rejects the pairing request without granting access.
+
+The panel is hidden when there are no pending requests.
+
+### Paired Agents
+
+When connected, the popup displays a "Paired Agents" panel listing all agents that have been granted access. Each entry shows:
+
+- **Agent name** -- The display name provided by the agent during pairing.
+- **Paired date** -- The date the agent was approved.
+- **Revoke** button -- Immediately invalidates the agent's API key, removing its access.
+
+The panel is hidden when no agents are paired.
+
 ### Settings
 
 When connected or disconnected, the popup shows a settings section with:
@@ -244,6 +280,7 @@ Authentication failures (invalid API key) automatically clear stored config and 
 
 ### Server to Extension (WebSocket)
 
+Standard command envelope:
 ```json
 {
   "id": "uuid",
@@ -251,6 +288,13 @@ Authentication failures (invalid API key) automatically clear stored config and 
   "params": { ... }
 }
 ```
+
+#### Pairing message types (Server → Extension)
+
+| Type | Envelope | Params / Fields | Description |
+|------|----------|-----------------|-------------|
+| `pairing_request` | Command | `agentName` (string) | Server forwards a pairing request from an AI agent. The extension shows an Approve/Deny prompt in the popup. |
+| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, pairedAt, apiKey }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
 
 ### Extension to Server (WebSocket)
 
@@ -271,6 +315,13 @@ Error:
   "error": "Error message"
 }
 ```
+
+#### Pairing message types (Extension → Server)
+
+| Type | Params | Description |
+|------|--------|-------------|
+| `revoke_key` | `apiKey` (string) | Extension requests the server to invalidate the specified API key. Sent when the user clicks Revoke in the Paired Agents panel. |
+| `list_paired_agents` | _(none)_ | Extension requests the current list of paired agents from the server. The server responds with a `paired_agents_list` push message. |
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
