@@ -238,6 +238,20 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
       }
     },
     {
+      name: 'request_pairing',
+      description: 'Request pairing with the browser extension. A human will see an approve/deny prompt in the Chrome extension popup. If approved, you will receive an API key to use for all subsequent requests.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_name: {
+            type: 'string',
+            description: 'A human-readable name to identify this agent (e.g. "Claude Code", "Cursor", "My Script")'
+          }
+        },
+        required: ['agent_name']
+      }
+    },
+    {
       name: 'browser_request_chain',
       description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
@@ -448,6 +462,37 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
 
   async function handleToolCall(params) {
     const { name, arguments: args } = params;
+
+    if (name === 'request_pairing') {
+      const agentName = params.arguments?.agent_name || 'Unknown Agent';
+      try {
+        const response = await extensionBridge.sendCommand('pairing_request', { agentName }, { timeout: 120000 });
+        if (response.approved) {
+          const key = pairedKeys.addKey(agentName);
+          return {
+            content: [{
+              type: 'text',
+              text: `Pairing approved! Your API key is:\n\n${key}\n\nSave this key to a file called "webpilot.key" in your working directory. Include it as the X-API-Key header or apiKey query parameter in all subsequent requests.`
+            }]
+          };
+        } else {
+          return {
+            content: [{
+              type: 'text',
+              text: 'Pairing denied by the user. The human chose not to approve this agent for browser access.'
+            }]
+          };
+        }
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text',
+            text: `Pairing request failed: ${err.message}. The browser extension may not be connected, or the request timed out waiting for human approval.`
+          }],
+          isError: true
+        };
+      }
+    }
 
     if (!extensionBridge.isConnected()) {
       throw new Error('Browser extension not connected');
