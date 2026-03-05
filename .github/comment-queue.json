@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 20,
-    "body": "## Approved Implementation Plan\n\n### Architecture Decisions\n- **ES Modules → CommonJS**: All formatters converted to CommonJS for server-side `require()` loading\n- **Ref Storage Hybrid**: Server generates refs during formatting, sends mappings back to extension via WebSocket `store_refs` message. Extension stores in existing `accessibility-storage.js`. Click/scroll handlers unchanged.\n\n### Sub-tasks\n\n| # | Description | Complexity | Dependencies |\n|---|-------------|------------|--------------|\n| 1 | Create formatter directory, migrate & convert formatters to CommonJS | standard | none |\n| 2 | Server-side formatter manager (loading, execution, reload) | standard | 1 |\n| 3 | Update extension to send raw nodes (remove formatting) | standard | none |\n| 4 | Update MCP handler for server-side formatting + ref distribution | complex | 1, 2, 3 |\n| 5 | GitHub auto-update system (formatter-updater.js) | standard | 2 |\n| 6 | Extension UI -- check for updates button | light | 5 |\n| 7 | Cleanup old formatter files and verify end-to-end | light | 3, 4, 5, 6 |\n\n### Parallel Execution\n- Sub-tasks 1 and 3 run in parallel\n- Sub-task 5 can overlap with sub-task 4\n- Critical path: 1 → 2 → 4 → 7"
-  }
-]
+[]
