@@ -12,17 +12,21 @@ All MCP tool calls (except `request_pairing`) require a valid API key obtained b
 
 ### Providing the API Key
 
-Include the key with every request using either:
+Include the key with every request using any of these methods:
 
-- **HTTP header:** `X-API-Key: <your-key>` on the `/sse` and `/message` endpoints
+- **HTTP header:** `X-API-Key: <your-key>` on the `/sse` and `/message` endpoints (recommended for MCP client configuration)
 - **Query parameter:** `?apiKey=<your-key>` on the `/sse` and `/message` endpoints
+- **Tool parameter:** `api_key: "<your-key>"` as a parameter in each `tools/call` request (useful for immediate use after pairing, before the client is reconfigured)
+
+The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except `request_pairing` include an optional `api_key` parameter in their schema for this purpose.
 
 ### First-Time Setup
 
 1. Call the `request_pairing` tool with a human-readable `agent_name`.
-2. The user will see an approve/deny prompt in the WebPilot Chrome extension popup.
-3. On approval, the tool returns your API key.
-4. Save the key to a file named `webpilot.key` in your working directory for reuse across sessions.
+2. The user will see an approve/deny prompt in the WebPilot Chrome extension popup (Pairing tab).
+3. On approval, the tool returns your API key in a text response.
+4. To use the key immediately, pass it as the `api_key` parameter in each tool call.
+5. To persist the key, configure your MCP client to include it as the `X-API-Key` header (e.g., in `.mcp.json` for Claude Code).
 
 ### Auth Error
 
@@ -55,6 +59,8 @@ Blocked: [domain] is not whitelisted. The human must manually add this site to t
 **Managing the whitelist:**
 Users can add domains to the whitelist via the WebPilot extension popup UI. Domain matching is domain-level (e.g., whitelisting `example.com` allows both `example.com` and `subdomain.example.com`).
 
+**Note on `api_key` parameter:** All tools except `request_pairing` include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
+
 ## Available Tools
 
 ### request_pairing
@@ -67,21 +73,24 @@ Request pairing with the browser extension. A human will see an approve/deny pro
 | `agent_name` | string | Yes | Human-readable name for this agent, shown in the approval prompt |
 
 **Returns (approved):**
-```json
-{
-  "apiKey": "wp_abc123..."
-}
+A text response containing the API key and instructions for persisting it:
+```
+Pairing approved! Your API key: <uuid>
+
+IMPORTANT: To use this key immediately in this session, include api_key: "<uuid>" as a parameter in your tool calls.
+
+To persist this key for future sessions so you don't need to pass api_key every time, update your MCP server configuration. For Claude Code, update your .mcp.json file:
+{ "mcpServers": { "webpilot": { "url": "http://localhost:3456/sse", "headers": { "X-API-Key": "<uuid>" } } } }
 ```
 
 **Returns (denied):**
-```json
-{
-  "error": "Pairing request denied by user"
-}
+```
+Pairing denied by the user. The human chose not to approve this agent for browser access.
 ```
 
 **Notes:**
-- Save the returned `apiKey` to `webpilot.key` in your working directory to reuse it across sessions
+- To use the key immediately, pass it as the `api_key` parameter in each tool call
+- To persist the key, add it as the `X-API-Key` header in your MCP client configuration
 - This is the only MCP tool that does not require an API key
 
 ---
@@ -883,13 +892,13 @@ If a tool call is made without a valid API key (or with no key at all):
 ```json
 {
   "code": -32001,
-  "message": "Not authenticated"
+  "message": "Authentication required. Include your API key as the X-API-Key header or apiKey query parameter in requests. If you do not have a key, call the request_pairing tool to initiate pairing. If you have previously paired, check your working directory for a webpilot.key file."
 }
 ```
 
-**Cause:** Missing or invalid `X-API-Key` header / `apiKey` query parameter.
+**Cause:** Missing or invalid API key. The server checks `session.mcpApiKey` (from the `X-API-Key` header or `apiKey` query parameter on the SSE/message endpoints) and falls back to `params.arguments.api_key` (the per-tool-call parameter).
 
-**Solution:** Call `request_pairing` to obtain an API key, then include it with all subsequent requests.
+**Solution:** Call `request_pairing` to obtain an API key, then include it with all subsequent requests via the `X-API-Key` header or as the `api_key` parameter in tool call arguments.
 
 ### Tab Not Found
 
@@ -971,11 +980,22 @@ Agent:
 
 ### Adding to Claude Code
 
-```bash
-claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse?apiKey=<your-key>"
+Add the server to your `.mcp.json` file with the API key as a header:
+
+```json
+{
+  "mcpServers": {
+    "webpilot": {
+      "url": "http://localhost:3456/sse",
+      "headers": {
+        "X-API-Key": "<your-key>"
+      }
+    }
+  }
+}
 ```
 
-Replace `<your-key>` with the API key obtained from `request_pairing`. If you saved it to `webpilot.key`, retrieve it with `cat webpilot.key`.
+Replace `<your-key>` with the API key obtained from `request_pairing`.
 
 ### Prerequisites
 

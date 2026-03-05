@@ -119,9 +119,12 @@ The server binary and extension files remain in the Electron app's `resources/` 
   data/                                              Created at runtime
     config/
       server.json                                    API key and port configuration
+      paired-keys.json                               Paired agent API keys
+    daemon.log                                       Daemon log output
     server.pid                                       PID of running daemon
     server.port                                      Port of running daemon
-    logs/                                            Daemon log files
+    logs/
+      server.log                                     Server log output
 ```
 
 The data directory is at `<installDir>/data/`, computed as a sibling of `resources/` via `path.resolve(path.dirname(process.execPath), '..', '..', 'data')`. In dev mode (when `app.isPackaged` is false), the data directory falls back to `%LOCALAPPDATA%\WebPilot\` (Windows) or platform equivalent.
@@ -186,6 +189,7 @@ The server reads from the config file first, then falls back to environment vari
 
 The daemon uses `SizeManagedWriter` (implemented in `service/logger.js`) which manages log file output:
 
+- Uses synchronous `fs.appendFileSync` for guaranteed flush (avoids buffering issues on Windows)
 - Maximum file size: 1 GB
 - Rotation: discards the oldest 25% of the file when the limit is reached
 - Strips ANSI escape codes from output

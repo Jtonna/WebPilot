@@ -49,12 +49,18 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
       param_name: {
         type: 'string',  // or 'number', 'boolean', 'object', 'array'
         description: 'What this parameter does'
+      },
+      api_key: {
+        type: 'string',
+        description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
       }
     },
     required: ['param_name']  // list required params
   }
 }
 ```
+
+**Note:** All tools except `request_pairing` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
 
 **Add case to `handleToolCall` switch:**
 
@@ -273,6 +279,10 @@ Update README.md and MCP_INTEGRATION.md to list the new platform under `browser_
       tab_id: {
         type: 'number',
         description: 'The ID of the tab to focus'
+      },
+      api_key: {
+        type: 'string',
+        description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
       }
     },
     required: ['tab_id']

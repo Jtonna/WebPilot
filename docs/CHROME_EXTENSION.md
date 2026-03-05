@@ -60,7 +60,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key and server URL, then establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and stop retrying.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Message handlers
 
@@ -74,10 +74,18 @@ On startup, the extension auto-connects to `localhost:3456` by fetching `/connec
 
 | Message type | Action |
 |--------------|--------|
-| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID and, on approval, the newly generated API key. |
-| `REVOKE_KEY` | Sends a `revoke_key` message to the server with the specified `apiKey`, then refreshes the paired agents list. |
-| `GET_PAIRED_AGENTS` | Sends a `list_paired_agents` request to the server and returns the result to the popup. |
-| `GET_PENDING_PAIRING` | Returns the currently buffered pending pairing request (if any) to the popup so it can render the Approve/Deny UI on open. |
+| `GET_STATUS` | Returns current connection state: `enabled`, `connected`, `connectionStatus`, `connectionError`, `errorType`, `manuallyDisconnected`, and config info (`hasApiKey`, `serverUrl`). |
+| `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
+| `DISCONNECT` | Sets `manuallyDisconnected = true`, then calls `disconnectWebSocket()` which nulls `wsConnection.onclose` before closing to prevent the onclose handler from auto-reconnecting. |
+| `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
+| `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
+| `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
+| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID. Removes the request from the pending list in storage. |
+| `REVOKE_KEY` | Sends a `revoke_key` message to the server over WebSocket with the specified `apiKey`. |
+| `GET_PAIRED_AGENTS` | Reads `pairedAgents` from `chrome.storage.local` and returns the list to the popup. |
+| `GET_PENDING_PAIRING` | Reads `pendingPairingRequests` from `chrome.storage.local` and returns them to the popup. |
+| `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
+| `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
 ## Handlers
 
@@ -222,56 +230,87 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) provides connection management with three views:
+The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) uses a tabbed interface with three tabs: **Dashboard**, **Pairing**, and **Settings**. The popup header displays the extension version (from `chrome.runtime.getManifest()`).
 
-| View | When Shown | Actions |
+### Dashboard Tab
+
+The Dashboard tab shows connection status with three views:
+
+| View | When Shown | Content |
 |------|-----------|---------|
-| Connecting | Connecting to server (auto-connect on startup) | Shows server URL, displays errors if server unreachable |
-| Connected | WebSocket open | Shows server URL, Disconnect button, Settings |
-| Disconnected | Has stored config but not connected | Reconnect button, Forget button (clears config), Settings |
+| Connecting | Connecting to server or auto-connect polling | Shows server URL, error messages if server unreachable |
+| Connected | WebSocket open | Server URL, endpoint display (WS, SSE, network mode), Disconnect button, restricted mode controls with whitelist management |
+| Disconnected | User manually disconnected | Shows server URL, Retry button |
 
-The popup header displays the extension version (from `chrome.runtime.getManifest()`).
+#### Connected View Details
 
-### Pairing Requests
+When connected, the Dashboard displays:
 
-When connected, the popup displays a "Pairing Requests" panel listing any pending pairing requests from AI agents. Each entry shows the agent name and two action buttons:
+- **Server URL** -- The WebSocket URL the extension is connected to
+- **Endpoints section** -- Shows the WS URL, SSE URL, and network mode indicator ("Local only" or "Network (LAN)")
+- **Disconnect button** -- Sets `manuallyDisconnected = true` and closes the connection; the onclose handler is nulled before closing to prevent auto-reconnect
+- **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
+
+#### Whitelist Management
+
+When restricted mode is enabled, the Dashboard displays whitelist controls:
+
+- **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Shows "Remove this site" for whitelisted domains. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
+- **Manual domain input** (text field + Add button) -- Enter a domain manually (e.g., `example.com`, `https://example.com`). Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
+- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (x) buttons.
+
+Domain matching is domain-level and covers all subdomains (e.g., whitelisting `yahoo.com` allows `www.yahoo.com`, `mail.yahoo.com`, etc.).
+
+### Pairing Tab
+
+The Pairing tab has a badge count showing the number of pending pairing requests. It contains two sections:
+
+#### Pairing Requests
+
+Displays pending pairing requests from AI agents. Each entry shows the agent name and two action buttons:
 
 - **Approve** -- Approves the pairing request, generating an API key for the agent and sending it back to the server.
 - **Deny** -- Rejects the pairing request without granting access.
 
-The panel is hidden when there are no pending requests.
+The section is hidden when there are no pending requests.
 
-### Paired Agents
+#### Paired Agents
 
-When connected, the popup displays a "Paired Agents" panel listing all agents that have been granted access. Each entry shows:
+Lists all agents that have been granted access. Each entry shows:
 
 - **Agent name** -- The display name provided by the agent during pairing.
 - **Paired date** -- The date the agent was approved.
 - **Revoke** button -- Immediately invalidates the agent's API key, removing its access.
 
-The panel is hidden when no agents are paired.
+Shows "No paired agents" when the list is empty.
 
-### Settings
+### Settings Tab
 
-When connected or disconnected, the popup shows a settings section with:
+The Settings tab provides:
 
 - **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
 - **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
-- **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
 
-#### Whitelist Management
+### Storage Keys
 
-When restricted mode is enabled, the popup displays whitelist controls:
+Settings and state are stored in `chrome.storage.local`:
 
-- **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Shows "Remove this site" for whitelisted domains. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
-- **Manual domain input** (text field + Add button) -- Enter a domain manually (e.g., `example.com`, `https://example.com`). Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
-- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (×) buttons.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `focusNewTabs` | boolean | false | Whether new tabs receive focus |
+| `tabMode` | string | `'group'` | Tab organization mode (`'group'` or `'window'`) |
+| `restrictedModeEnabled` | boolean | true | Whether restricted mode is active |
+| `whitelistedDomains` | string[] | `[]` | Whitelisted domains for restricted mode |
+| `apiKey` | string | null | Server API key (from auto-connect) |
+| `serverUrl` | string | null | WebSocket server URL |
+| `sseUrl` | string | null | SSE endpoint URL |
+| `networkMode` | boolean | false | Whether server is in network mode |
+| `enabled` | boolean | false | Whether the extension is enabled |
+| `pairedAgents` | array | `[]` | Cached list of paired agents |
+| `pendingPairingRequests` | array | `[]` | Pending pairing requests |
+| `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 
-Domain matching is domain-level and covers all subdomains (e.g., whitelisting `yahoo.com` allows `www.yahoo.com`, `mail.yahoo.com`, etc.).
-
-These settings are stored in `chrome.storage.local` as `focusNewTabs`, `tabMode`, `restrictedModeEnabled` (boolean, default true), and `whitelistedDomains` (string array).
-
-Authentication failures (invalid API key) automatically clear stored config and stop reconnect attempts.
+Authentication failures (invalid API key) automatically clear stored config and restart auto-connect.
 
 ## Communication Protocol
 
@@ -291,7 +330,7 @@ Standard command envelope:
 | Type | Envelope | Params / Fields | Description |
 |------|----------|-----------------|-------------|
 | `pairing_request` | Command | `agentName` (string) | Server forwards a pairing request from an AI agent. The extension shows an Approve/Deny prompt in the popup. |
-| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, pairedAt, apiKey }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
+| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, key, keyDisplay }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
 
 ### Extension to Server (WebSocket)
 
