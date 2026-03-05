@@ -132,6 +132,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function handleDisconnect() {
+    chrome.runtime.sendMessage({ type: 'DISCONNECT' }, () => {
+      chrome.storage.local.get(['serverUrl'], (result) => {
+        showView('disconnected');
+        disconnectedUrlDisplay.textContent = result.serverUrl || 'unknown';
+      });
+    });
+  }
+
+  function handleReconnect() {
+    reconnectBtn.disabled = true;
+    reconnectBtn.textContent = 'Connecting...';
+
+    chrome.storage.local.get(['serverUrl'], (result) => {
+      showView('connecting');
+      connectingUrlDisplay.textContent = result.serverUrl || 'unknown';
+    });
+
+    chrome.runtime.sendMessage({ type: 'RECONNECT' }, (response) => {
+      reconnectBtn.disabled = false;
+      reconnectBtn.textContent = 'Reconnect';
+
+      if (!response || !response.success) {
+        showView('disconnected');
+        showError(setupError, response?.error || 'Failed to reconnect');
+      }
+    });
+  }
+
+  function handleForget() {
     chrome.runtime.sendMessage({ type: 'FORGET_CONFIG' }, () => {
       showView('connecting');
       connectingUrlDisplay.textContent = 'ws://localhost:3456';

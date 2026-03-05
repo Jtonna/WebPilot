@@ -24,6 +24,7 @@ let isEnabled = false;
 let connectionStatus = 'disconnected';
 let connectionError = null;
 let connectionErrorType = null;
+let manuallyDisconnected = false;
 let keepaliveInterval = null;
 let autoConnectInterval = null;
 const KEEPALIVE_INTERVAL_MS = 15000;
@@ -148,6 +149,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           connectionStatus: connectionStatus,
           connectionError: connectionError,
           errorType: connectionErrorType,
+          manuallyDisconnected: manuallyDisconnected,
           config: {
             hasApiKey: !!result.apiKey,
             serverUrl: result.serverUrl
@@ -171,7 +173,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
+    case 'DISCONNECT':
+      manuallyDisconnected = true;
+      disconnectWebSocket();
+      sendResponse({ success: true });
+      break;
+
+    case 'RECONNECT':
+      manuallyDisconnected = false;
+      isEnabled = true;
+      chrome.storage.local.set({ enabled: true });
+      connectWebSocket();
+      sendResponse({ success: true });
+      break;
+
     case 'FORGET_CONFIG':
+      manuallyDisconnected = false;
       disconnectWebSocket();
       chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
       config.apiKey = null;
@@ -339,9 +356,9 @@ function connectWebSocket() {
         updateConnectionStatus('disconnected', null, null);
       }
 
-      if (shouldRetry && isEnabled && config.serverUrl) {
+      if (shouldRetry && isEnabled && !manuallyDisconnected && config.serverUrl) {
         setTimeout(() => {
-          if (isEnabled) {
+          if (isEnabled && !manuallyDisconnected) {
             connectWebSocket();
           }
         }, 5000);
