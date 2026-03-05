@@ -26,7 +26,7 @@ function createExtensionBridge(apiKey) {
     return wsConnection !== null && wsConnection.readyState === 1;
   }
 
-  function sendCommand(type, params) {
+  function sendCommand(type, params, options = {}) {
     return new Promise((resolve, reject) => {
       if (!isConnected()) {
         reject(new Error('Extension not connected'));
@@ -34,11 +34,12 @@ function createExtensionBridge(apiKey) {
       }
 
       const id = uuidv4();
+      const timeoutMs = options.timeout || COMMAND_TIMEOUT;
 
       const timeout = setTimeout(() => {
         pendingCommands.delete(id);
         reject(new Error('Command timeout'));
-      }, COMMAND_TIMEOUT);
+      }, timeoutMs);
 
       pendingCommands.set(id, { resolve, reject, timeout });
 
@@ -76,12 +77,19 @@ function createExtensionBridge(apiKey) {
     }
   }
 
+  function notify(message) {
+    if (wsConnection && wsConnection.readyState === 1) {
+      wsConnection.send(JSON.stringify(message));
+    }
+  }
+
   return {
     setConnection,
     clearConnection,
     isConnected,
     sendCommand,
-    handleResponse
+    handleResponse,
+    notify
   };
 }
 

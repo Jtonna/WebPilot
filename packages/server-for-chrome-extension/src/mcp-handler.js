@@ -32,8 +32,8 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey) {
-  const sessions = new Map();  // session_id -> { res, queue }
+function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
+  const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
 
   const tools = [
     {
@@ -45,6 +45,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           url: {
             type: 'string',
             description: 'The URL to open in the new tab'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['url']
@@ -59,6 +63,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           tab_id: {
             type: 'number',
             description: 'The ID of the tab to close'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -69,7 +77,12 @@ function createMcpHandler(extensionBridge, apiKey) {
       description: 'Get a list of all open browser tabs',
       inputSchema: {
         type: 'object',
-        properties: {}
+        properties: {
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
+          }
+        }
       }
     },
     {
@@ -85,6 +98,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           usePlatformOptimizer: {
             type: 'boolean',
             description: 'Use platform-specific formatting if available (e.g., Threads feed parser). Default: true'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -107,6 +124,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           keep_injected: {
             type: 'boolean',
             description: 'If true, automatically re-inject script when page navigates (default: false)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'script_url']
@@ -125,6 +146,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           code: {
             type: 'string',
             description: 'JavaScript code to execute'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'code']
@@ -172,6 +197,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           showCursor: {
             type: 'boolean',
             description: 'Show visual cursor indicator on screen (default: true)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -198,6 +227,10 @@ function createMcpHandler(extensionBridge, apiKey) {
           pixels: {
             type: 'number',
             description: 'Pixels to scroll, positive=down, negative=up (mutually exclusive with ref/selector)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id']
@@ -232,9 +265,27 @@ function createMcpHandler(extensionBridge, apiKey) {
           pressEnter: {
             type: 'boolean',
             description: 'Press Enter key after typing (default: false)'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['tab_id', 'text']
+      }
+    },
+    {
+      name: 'request_pairing',
+      description: 'Request pairing with the browser extension. A human will see an approve/deny prompt in the Chrome extension popup. If approved, you will receive an API key to use for all subsequent requests.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent_name: {
+            type: 'string',
+            description: 'A human-readable name to identify this agent (e.g. "Claude Code", "Cursor", "My Script")'
+          }
+        },
+        required: ['agent_name']
       }
     },
     {
@@ -266,6 +317,10 @@ function createMcpHandler(extensionBridge, apiKey) {
             enum: ['all', 'last'],
             description: 'What to return: "all" returns results from every step (default), "last" returns only the final step result.',
             default: 'all'
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
           }
         },
         required: ['steps']
@@ -275,14 +330,15 @@ function createMcpHandler(extensionBridge, apiKey) {
 
   function handleSSE(req, res) {
     const sessionId = uuidv4();
+    const mcpApiKey = req.headers['x-api-key'] || req.query.apiKey || null;
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
 
-    // Store session with queue (matching backend pattern)
-    sessions.set(sessionId, { res, queue: [] });
+    // Store session with queue and MCP client API key
+    sessions.set(sessionId, { res, queue: [], mcpApiKey });
 
     // Send endpoint URL as first event (matching backend pattern exactly)
     res.write(`event: endpoint\ndata: /message?session_id=${sessionId}\n\n`);
@@ -322,8 +378,14 @@ function createMcpHandler(extensionBridge, apiKey) {
       return res.status(400).json({ error: 'Invalid session' });
     }
 
+    // Update session API key if provided on this request (allows late auth)
+    const reqApiKey = req.headers['x-api-key'] || req.query.apiKey || null;
+    if (reqApiKey) {
+      session.mcpApiKey = reqApiKey;
+    }
+
     const message = req.body;
-    const response = await processMessage(message);
+    const response = await processMessage(message, session);
 
     if (response) {
       session.queue.push(response);
@@ -333,7 +395,9 @@ function createMcpHandler(extensionBridge, apiKey) {
     res.status(202).send('');
   }
 
-  async function processMessage(message) {
+  const AUTH_ERROR_MESSAGE = 'Authentication required. Include your API key as the X-API-Key header or apiKey query parameter in requests. If you do not have a key, call the request_pairing tool to initiate pairing. If you have previously paired, check your working directory for a webpilot.key file.';
+
+  async function processMessage(message, session) {
     const { method, id, params } = message;
 
     if (method === 'initialize') {
@@ -361,6 +425,21 @@ function createMcpHandler(extensionBridge, apiKey) {
     }
 
     if (method === 'tools/call') {
+      // Auth gate: exempt request_pairing, require valid API key for all other tools
+      if (params.name !== 'request_pairing') {
+        const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
+        if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
+          console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: { code: -32001, message: AUTH_ERROR_MESSAGE }
+          };
+        }
+        console.log(`[auth] Authorized tool call: ${params.name}`);
+        pairedKeys.touchKey(effectiveKey);
+      }
+
       try {
         const result = await handleToolCall(params);
         return {
@@ -428,6 +507,42 @@ function createMcpHandler(extensionBridge, apiKey) {
 
   async function handleToolCall(params) {
     const { name, arguments: args } = params;
+
+    if (name === 'request_pairing') {
+      const agentName = params.arguments?.agent_name || 'Unknown Agent';
+      console.log(`[pairing] Pairing request from agent: "${agentName}"`);
+      try {
+        const response = await extensionBridge.sendCommand('pairing_request', { agentName }, { timeout: 120000 });
+        if (response.approved) {
+          const key = pairedKeys.addKey(agentName);
+          console.log(`[pairing] Approved agent "${agentName}", key: ${key.slice(0, 8)}...`);
+          extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
+          return {
+            content: [{
+              type: 'text',
+              text: `Pairing approved! Your API key: ${key}\n\nIMPORTANT: To use this key immediately in this session, include api_key: "${key}" as a parameter in your tool calls.\n\nTo persist this key for future sessions so you don't need to pass api_key every time, update your MCP server configuration. For Claude Code, update your .mcp.json file:\n\n{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:3456/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`
+            }]
+          };
+        } else {
+          console.log(`[pairing] Denied agent "${agentName}"`);
+          return {
+            content: [{
+              type: 'text',
+              text: 'Pairing denied by the user. The human chose not to approve this agent for browser access.'
+            }]
+          };
+        }
+      } catch (err) {
+        console.log(`[pairing] Failed for agent "${agentName}": ${err.message}`);
+        return {
+          content: [{
+            type: 'text',
+            text: `Pairing request failed: ${err.message}. The browser extension may not be connected, or the request timed out waiting for human approval.`
+          }],
+          isError: true
+        };
+      }
+    }
 
     if (!extensionBridge.isConnected()) {
       throw new Error('Browser extension not connected');

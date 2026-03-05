@@ -8,8 +8,8 @@ WebPilot lets AI agents control a real Chrome browser through the Model Context 
 
 ```
 packages/
-  extension/                  Chrome extension (Manifest V3) — browser automation
-  mcp-server/                 Node.js MCP server — bridges AI agents to the extension
+  chrome-extension-unpacked/  Chrome extension (Manifest V3) — browser automation
+  server-for-chrome-extension/ Node.js MCP server — bridges AI agents to the extension
   electron/                   Electron app (Phase 2) — installer and status dashboard
 ```
 
@@ -22,7 +22,7 @@ See [Documentation Index](docs/INDEX.md) for system architecture, development gu
 Start the MCP server:
 
 ```bash
-cd packages/mcp-server
+cd packages/server-for-chrome-extension
 npm install
 npm start
 ```
@@ -31,11 +31,19 @@ Load the Chrome extension:
 
 1. Open `chrome://extensions` in Chrome
 2. Enable **Developer mode**
-3. Click **Load unpacked** and select `packages/extension/`
-4. Click the WebPilot extension icon and paste the connection string from the server output
+3. Click **Load unpacked** and select `packages/chrome-extension-unpacked/`
+4. The extension automatically connects to the MCP server on startup — no connection string needed
 
-Add to your MCP client (e.g., Claude Code):
+Add to your MCP client (e.g., Claude Code `.mcp.json`):
 
-```bash
-claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
+```json
+{
+  "mcpServers": {
+    "webpilot": {
+      "url": "http://localhost:3456/sse"
+    }
+  }
+}
 ```
+
+**Pairing on first use:** MCP access is authenticated via per-agent API keys. The first time an agent connects, it must call the `request_pairing` tool. A pairing request will appear in the Chrome extension popup (Pairing tab) -- click **Approve** to grant access. The agent receives an API key to include as an `api_key` parameter in tool calls or to persist as the `X-API-Key` header in MCP client configuration.

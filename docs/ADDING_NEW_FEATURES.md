@@ -49,12 +49,18 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
       param_name: {
         type: 'string',  // or 'number', 'boolean', 'object', 'array'
         description: 'What this parameter does'
+      },
+      api_key: {
+        type: 'string',
+        description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
       }
     },
     required: ['param_name']  // list required params
   }
 }
 ```
+
+**Note:** All tools except `request_pairing` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
 
 **Add case to `handleToolCall` switch:**
 
@@ -156,7 +162,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 ### Step 5: Update Documentation
 
-- **README.md** - Add to tools table
+- **MCP_SERVER.md** - Add to the MCP Tools table
 - **MCP_INTEGRATION.md** - Add full documentation with parameters, return format, errors, and usage notes
 
 ## Adding a Site-Specific Formatter
@@ -248,7 +254,7 @@ function detectPlatform(url) {
 
 ### Step 3: Update Documentation
 
-Update README.md and MCP_INTEGRATION.md to list the new platform under `browser_get_accessibility_tree`.
+Update MCP_SERVER.md and MCP_INTEGRATION.md to list the new platform under `browser_get_accessibility_tree`.
 
 ### Formatter Tips
 
@@ -273,6 +279,10 @@ Update README.md and MCP_INTEGRATION.md to list the new platform under `browser_
       tab_id: {
         type: 'number',
         description: 'The ID of the tab to focus'
+      },
+      api_key: {
+        type: 'string',
+        description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
       }
     },
     required: ['tab_id']
@@ -346,7 +356,7 @@ Use this when adding a new tool:
 [ ] 5. background.js - Import handler and add case to `handleServerCommand`
 [ ] 6. background.js - Add organizeTab() call if tool takes a tab_id
 [ ] 7. background.js - Add tab cleanup in onRemoved listener if storing per-tab state
-[ ] 8. README.md - Update tools table
+[ ] 8. MCP_SERVER.md - Update MCP Tools table
 [ ] 9. MCP_INTEGRATION.md - Add full documentation
 [ ] 10. Test the tool end-to-end
 ```
@@ -356,6 +366,6 @@ Use this when adding a site-specific formatter:
 ```
 [ ] 1. formatters/<site>.js - Create formatter (return tree, elementCount, refs)
 [ ] 2. handlers/accessibility.js - Import formatter and add to detectPlatform()
-[ ] 3. README.md and MCP_INTEGRATION.md - Document the new platform
+[ ] 3. MCP_SERVER.md and MCP_INTEGRATION.md - Document the new platform
 [ ] 4. Test with browser_get_accessibility_tree on the target site
 ```

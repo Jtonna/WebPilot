@@ -16,5 +16,5 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Reference
 
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all ten MCP tools: parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all eleven MCP tools: parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
 

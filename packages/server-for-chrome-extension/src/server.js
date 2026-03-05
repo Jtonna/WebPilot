@@ -3,9 +3,11 @@ const cors = require('cors');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
+const pairedKeys = require('./paired-keys');
 
 const { getDataDir } = require('./service/paths');
 
@@ -26,14 +28,21 @@ function cleanupPidAndPortFiles() {
   try { fs.unlinkSync(path.join(dataDir, 'server.port')); } catch (e) { /* non-fatal */ }
 }
 
-function generateConnectionString(serverUrl, apiKey) {
-  const data = { v: 1, s: serverUrl, k: apiKey };
-  const json = JSON.stringify(data);
-  const base64 = Buffer.from(json).toString('base64url');
-  return `vf://${base64}`;
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
 }
 
-function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhost' }) {
+function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
+  let host = initialHost;
+  let publicHost = initialPublicHost;
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -41,8 +50,6 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
   const server = http.createServer(app);
 
   const extensionBridge = createExtensionBridge(apiKey);
-  const wsUrl = `ws://${publicHost}:${port}`;
-  const connectionString = generateConnectionString(wsUrl, apiKey);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -74,6 +81,53 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
           return;
         }
 
+        if (message.type === 'revoke_key') {
+          const { apiKey: keyToRevoke } = message;
+          const revoked = pairedKeys.revokeKey(keyToRevoke);
+          console.log(`[pairing] Revoke key ${keyToRevoke.slice(0, 8)}...: ${revoked ? 'removed' : 'not found'}`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          return;
+        }
+
+        if (message.type === 'rename_agent') {
+          const { apiKey: keyToRename, newName } = message;
+          const renamed = pairedKeys.renameKey(keyToRename, newName);
+          console.log(`[pairing] Rename key ${keyToRename.slice(0, 8)}...: ${renamed ? 'renamed to ' + newName : 'not found'}`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          return;
+        }
+
+        if (message.type === 'list_paired_agents') {
+          const agents = pairedKeys.listKeys();
+          console.log(`[pairing] Listed ${agents.length} paired agent(s)`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents }));
+          return;
+        }
+
+        if (message.type === 'set_network_mode') {
+          const networkEnabled = message.enabled;
+          host = networkEnabled ? '0.0.0.0' : '127.0.0.1';
+          publicHost = networkEnabled ? getLocalIP() : 'localhost';
+
+          // Persist preference so it survives server restarts
+          try {
+            fs.writeFileSync(path.join(getDataDir(), 'network.enabled'), networkEnabled ? '1' : '0', 'utf8');
+          } catch (e) {
+            console.error('Failed to save network mode:', e.message);
+          }
+
+          console.log(`[network] Switching to ${networkEnabled ? 'network' : 'local'} mode, restarting listener on ${host}:${port}`);
+
+          // Force-close all connections so server.close() completes immediately
+          server.closeAllConnections();
+          server.close(() => {
+            server.listen(port, host, () => {
+              console.log(`[network] Now listening on ${host}:${port}`);
+            });
+          });
+          return;
+        }
+
         extensionBridge.handleResponse(message);
       } catch (e) {
         console.error('Invalid message from extension:', e);
@@ -90,7 +144,7 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
     });
   });
 
-  const mcpHandler = createMcpHandler(extensionBridge, apiKey);
+  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys);
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
@@ -105,8 +159,10 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
 
   app.get('/connect', (req, res) => {
     res.json({
-      connectionString: connectionString,
-      serverUrl: wsUrl
+      apiKey,
+      serverUrl: `ws://${publicHost}:${port}`,
+      sseUrl: `http://${publicHost}:${port}/sse`,
+      networkMode: host === '0.0.0.0'
     });
   });
 
@@ -132,8 +188,7 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
       console.log('    ws: disabled');
     }
 
-    // Connection string for pasting into the extension
-    console.log(`connection_string: ${connectionString}`);
+    console.log(`Server URL: ws://${publicHost}:${port}`);
   });
 
   // Clean up PID/port files on shutdown

@@ -3,40 +3,75 @@ document.addEventListener('DOMContentLoaded', () => {
   const manifest = chrome.runtime.getManifest();
   document.getElementById('versionDisplay').textContent = `v${manifest.version}`;
 
-  const setupView = document.getElementById('setupView');
   const connectedView = document.getElementById('connectedView');
   const connectingView = document.getElementById('connectingView');
   const disconnectedView = document.getElementById('disconnectedView');
-  const connectionStringInput = document.getElementById('connectionString');
-  const connectBtn = document.getElementById('connectBtn');
   const disconnectBtn = document.getElementById('disconnectBtn');
-  const reconnectBtn = document.getElementById('reconnectBtn');
-  const forgetBtn = document.getElementById('forgetBtn');
-  const setupError = document.getElementById('setupError');
+  const retryBtn = document.getElementById('retryBtn');
   const connectingError = document.getElementById('connectingError');
   const serverUrlDisplay = document.getElementById('serverUrlDisplay');
   const connectingUrlDisplay = document.getElementById('connectingUrlDisplay');
   const disconnectedUrlDisplay = document.getElementById('disconnectedUrlDisplay');
-  const settingsSection = document.getElementById('settingsSection');
+  const wsUrlDisplay = document.getElementById('wsUrlDisplay');
+  const sseUrlDisplay = document.getElementById('sseUrlDisplay');
+  const networkModeDisplay = document.getElementById('networkModeDisplay');
   const focusNewTabsToggle = document.getElementById('focusNewTabs');
   const tabModeSelect = document.getElementById('tabMode');
+  const networkModeToggle = document.getElementById('networkModeToggle');
   const restrictedModeToggle = document.getElementById('restrictedMode');
   const whitelistPanel = document.getElementById('whitelistPanel');
   const whitelistCurrentBtn = document.getElementById('whitelistCurrentBtn');
   const domainInput = document.getElementById('domainInput');
   const addDomainBtn = document.getElementById('addDomainBtn');
   const domainList = document.getElementById('domainList');
+  const pairingRequestsSection = document.getElementById('pairingRequestsSection');
+  const pairingRequestsList = document.getElementById('pairingRequestsList');
+  const pairedAgentsSection = document.getElementById('pairedAgentsSection');
+  const pairedAgentsList = document.getElementById('pairedAgentsList');
+  const noAgentsMessage = document.getElementById('noAgentsMessage');
+
+  // Tab switching
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      switchTab(btn.dataset.tab);
+    });
+  });
+
+  function switchTab(tabName) {
+    tabBtns.forEach((btn) => {
+      if (btn.dataset.tab === tabName) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    tabContents.forEach((content) => {
+      if (content.id === `tab-${tabName}`) {
+        content.classList.add('active');
+      } else {
+        content.classList.remove('active');
+      }
+    });
+
+    // Load pairing data when switching to pairing tab
+    if (tabName === 'pairing') {
+      loadPairingData();
+    }
+
+    // Load settings when switching to settings tab
+    if (tabName === 'settings') {
+      loadSettings();
+    }
+  }
 
   loadStateAndShow();
 
-  connectBtn.addEventListener('click', handleConnect);
   disconnectBtn.addEventListener('click', handleDisconnect);
-  reconnectBtn.addEventListener('click', handleReconnect);
-  forgetBtn.addEventListener('click', handleForget);
-
-  connectionStringInput.addEventListener('input', () => {
-    hideError(setupError);
-  });
+  retryBtn.addEventListener('click', handleRetry);
 
   focusNewTabsToggle.addEventListener('change', () => {
     chrome.storage.local.set({ focusNewTabs: focusNewTabsToggle.checked });
@@ -44,6 +79,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   tabModeSelect.addEventListener('change', () => {
     chrome.storage.local.set({ tabMode: tabModeSelect.value });
+  });
+
+  networkModeToggle.addEventListener('change', () => {
+    const enabled = networkModeToggle.checked;
+    chrome.runtime.sendMessage({ type: 'SET_NETWORK_MODE', enabled }, (response) => {
+      if (response && response.success) {
+        chrome.storage.local.set({ networkMode: enabled });
+      } else {
+        // Revert toggle on failure
+        networkModeToggle.checked = !enabled;
+      }
+    });
   });
 
   restrictedModeToggle.addEventListener('change', () => {
@@ -68,84 +115,68 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'CONNECTION_STATUS_CHANGED') {
       handleConnectionStatusChange(msg.status, msg.errorType, msg.error);
+    } else if (msg.type === 'PAIRING_REQUEST') {
+      addPairingRequest({ commandId: msg.commandId, agentName: msg.agentName });
+    } else if (msg.type === 'PAIRED_AGENTS_UPDATED') {
+      renderPairedAgents(msg.agents || []);
     }
   });
 
-  function loadStateAndShow() {
-    chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
-      if (result.apiKey && result.serverUrl) {
-        chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
-          if (response && response.connectionStatus === 'connected') {
-            showView('connected');
-            serverUrlDisplay.textContent = result.serverUrl;
-          } else if (response && response.connectionStatus === 'connecting') {
-            showView('connecting');
-            connectingUrlDisplay.textContent = result.serverUrl;
-          } else {
-            showView('disconnected');
-            disconnectedUrlDisplay.textContent = result.serverUrl;
-          }
-        });
+  // React to storage changes from background (e.g. refreshConnectionMetadata after reconnect)
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local') {
+      if (changes.networkMode || changes.serverUrl || changes.sseUrl) {
+        updateEndpointDisplay();
+        if (changes.networkMode) {
+          networkModeToggle.checked = changes.networkMode.newValue === true;
+        }
+      }
+    }
+  });
+
+  function updateEndpointDisplay() {
+    chrome.storage.local.get(['serverUrl', 'sseUrl', 'networkMode'], (result) => {
+      const wsUrl = result.serverUrl || 'ws://localhost:3456';
+      const sseUrl = result.sseUrl || wsUrl.replace('ws://', 'http://').replace('wss://', 'https://') + '/sse';
+      wsUrlDisplay.textContent = wsUrl;
+      sseUrlDisplay.textContent = sseUrl;
+      networkModeDisplay.textContent = result.networkMode ? 'Network (LAN)' : 'Local only';
+      if (result.networkMode) {
+        networkModeDisplay.classList.add('network-enabled');
       } else {
-        showView('setup');
+        networkModeDisplay.classList.remove('network-enabled');
       }
     });
   }
 
-  function handleConnect() {
-    const connectionString = connectionStringInput.value.trim();
-
-    if (!connectionString) {
-      showError(setupError, 'Please paste a connection string');
-      return;
-    }
-
-    const parsed = parseConnectionString(connectionString);
-
-    if (!parsed) {
-      showError(setupError, 'Invalid connection string format');
-      return;
-    }
-
-    if (!parsed.serverUrl || !parsed.apiKey) {
-      showError(setupError, 'Connection string missing server URL or API key');
-      return;
-    }
-
-    connectBtn.disabled = true;
-    connectBtn.querySelector('span').textContent = 'Connecting...';
-
-    chrome.storage.local.set({
-      apiKey: parsed.apiKey,
-      serverUrl: parsed.serverUrl,
-      enabled: true
-    }, () => {
-      showView('connecting');
-      connectingUrlDisplay.textContent = parsed.serverUrl;
-
-      chrome.runtime.sendMessage({
-        type: 'CONFIG_UPDATED',
-        config: { apiKey: parsed.apiKey, serverUrl: parsed.serverUrl }
-      });
-
-      chrome.runtime.sendMessage({
-        type: 'SERVICE_STATUS_CHANGED',
-        enabled: true
-      });
-
-      connectBtn.disabled = false;
-      connectBtn.querySelector('span').textContent = 'Connect';
-      connectionStringInput.value = '';
+  function loadStateAndShow() {
+    chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
+      if (response && response.connectionStatus === 'connected') {
+        showView('connected');
+        chrome.storage.local.get(['serverUrl'], (result) => {
+          serverUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
+        });
+        updateEndpointDisplay();
+        loadPairingData();
+        loadRestrictedModeSettings();
+      } else if (response && (response.connectionStatus === 'connecting' || response.connectionStatus === 'error')) {
+        showView('connecting');
+        chrome.storage.local.get(['serverUrl'], (result) => {
+          connectingUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
+        });
+        if (response.connectionError) {
+          showError(connectingError, response.connectionError);
+        }
+      } else {
+        // disconnected — show connecting since auto-connect is always trying
+        showView('connecting');
+        connectingUrlDisplay.textContent = 'ws://localhost:3456';
+      }
     });
   }
 
   function handleDisconnect() {
-    chrome.storage.local.set({ enabled: false }, () => {
-      chrome.runtime.sendMessage({
-        type: 'SERVICE_STATUS_CHANGED',
-        enabled: false
-      });
-
+    chrome.runtime.sendMessage({ type: 'DISCONNECT' }, () => {
       chrome.storage.local.get(['serverUrl'], (result) => {
         showView('disconnected');
         disconnectedUrlDisplay.textContent = result.serverUrl || 'unknown';
@@ -162,97 +193,86 @@ document.addEventListener('DOMContentLoaded', () => {
       connectingUrlDisplay.textContent = result.serverUrl || 'unknown';
     });
 
-    chrome.runtime.sendMessage({ type: 'CONNECT_REQUEST' }, (response) => {
+    chrome.runtime.sendMessage({ type: 'RECONNECT' }, (response) => {
       reconnectBtn.disabled = false;
       reconnectBtn.textContent = 'Reconnect';
 
       if (!response || !response.success) {
-        showView('setup');
-        showError(setupError, response?.error || 'Failed to reconnect - please enter connection string');
+        showView('disconnected');
+        showError(setupError, response?.error || 'Failed to reconnect');
       }
     });
   }
 
   function handleForget() {
     chrome.runtime.sendMessage({ type: 'FORGET_CONFIG' }, () => {
-      showView('setup');
-      hideError(setupError);
+      showView('connecting');
+      connectingUrlDisplay.textContent = 'ws://localhost:3456';
+      hideError(connectingError);
+    });
+  }
+
+  function handleRetry() {
+    retryBtn.disabled = true;
+    retryBtn.textContent = 'Retrying...';
+
+    showView('connecting');
+    connectingUrlDisplay.textContent = 'ws://localhost:3456';
+    hideError(connectingError);
+
+    chrome.runtime.sendMessage({ type: 'RETRY_AUTO_CONNECT' }, () => {
+      retryBtn.disabled = false;
+      retryBtn.textContent = 'Retry';
     });
   }
 
   function handleConnectionStatusChange(status, errorType, errorMsg) {
-    chrome.storage.local.get(['serverUrl', 'apiKey'], (result) => {
-      const serverUrl = result.serverUrl || 'unknown';
-      const hasConfig = result.apiKey && result.serverUrl;
+    chrome.storage.local.get(['serverUrl'], (result) => {
+      const serverUrl = result.serverUrl || 'ws://localhost:3456';
 
       if (status === 'connected') {
         showView('connected');
         serverUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
+        updateEndpointDisplay();
+        loadPairingData();
+        loadRestrictedModeSettings();
       } else if (status === 'connecting') {
         showView('connecting');
         connectingUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
       } else if (status === 'error') {
-        if (errorType === 'auth_failed') {
-          showView('setup');
-          showError(setupError, errorMsg || 'Authentication failed - check your connection string');
-        } else if (errorType === 'server_unreachable') {
+        if (errorType === 'server_unreachable') {
           showView('connecting');
           connectingUrlDisplay.textContent = serverUrl;
           showError(connectingError, errorMsg || `Server not reachable at ${serverUrl}`);
+        } else if (errorType === 'auth_failed') {
+          showView('connecting');
+          connectingUrlDisplay.textContent = serverUrl;
+          showError(connectingError, errorMsg || 'Authentication failed - reconnecting...');
         } else {
           showView('connecting');
           connectingUrlDisplay.textContent = serverUrl;
           showError(connectingError, errorMsg || 'Connection failed');
         }
       } else {
-        if (hasConfig) {
-          showView('disconnected');
-          disconnectedUrlDisplay.textContent = serverUrl;
-        } else {
-          showView('setup');
-        }
+        // disconnected
+        showView('disconnected');
+        disconnectedUrlDisplay.textContent = serverUrl;
       }
     });
   }
 
-  function parseConnectionString(str) {
-    try {
-      if (!str.startsWith('vf://')) {
-        return null;
-      }
-
-      const base64Part = str.slice(5);
-
-      let base64Standard = base64Part.replace(/-/g, '+').replace(/_/g, '/');
-      while (base64Standard.length % 4) {
-        base64Standard += '=';
-      }
-
-      const json = atob(base64Standard);
-      const data = JSON.parse(json);
-
-      if (!data.v || !data.s || !data.k) {
-        return null;
-      }
-
-      return {
-        version: data.v,
-        serverUrl: data.s,
-        apiKey: data.k
-      };
-    } catch (e) {
-      console.error('Failed to parse connection string:', e);
-      return null;
-    }
-  }
-
   function loadSettings() {
-    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'restrictedModeEnabled', 'whitelistedDomains'], (result) => {
+    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'networkMode'], (result) => {
       focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
       tabModeSelect.value = result.tabMode || 'group'; // default 'group'
+      networkModeToggle.checked = result.networkMode === true;
+    });
+  }
 
+  function loadRestrictedModeSettings() {
+    chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
       // Default restrictedModeEnabled to true if undefined
       const restrictedEnabled = result.restrictedModeEnabled !== undefined ? result.restrictedModeEnabled : true;
       restrictedModeToggle.checked = restrictedEnabled;
@@ -393,7 +413,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const removeBtn = document.createElement('button');
         removeBtn.className = 'remove-domain-btn';
-        removeBtn.textContent = '×';
+        removeBtn.textContent = '\u00d7';
         removeBtn.addEventListener('click', () => removeDomain(domain));
 
         item.appendChild(name);
@@ -403,23 +423,254 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function loadPairingData() {
+    chrome.runtime.sendMessage({ type: 'GET_PENDING_PAIRING' }, (response) => {
+      renderPairingRequests(response?.requests || []);
+    });
+    chrome.runtime.sendMessage({ type: 'GET_PAIRED_AGENTS' }, (response) => {
+      renderPairedAgents(response?.agents || []);
+    });
+  }
+
+  function renderPairingRequests(requests) {
+    pairingRequestsList.innerHTML = '';
+
+    if (requests.length === 0) {
+      pairingRequestsSection.style.display = 'none';
+      updatePairingBadge();
+      return;
+    }
+
+    pairingRequestsSection.style.display = 'block';
+
+    requests.forEach((request) => {
+      const card = createPairingRequestCard(request);
+      pairingRequestsList.appendChild(card);
+    });
+    updatePairingBadge();
+  }
+
+  function updatePairingBadge() {
+    const pairingTabBtn = document.querySelector('.tab-btn[data-tab="pairing"]');
+    const count = pairingRequestsList.children.length;
+    if (count > 0) {
+      pairingTabBtn.textContent = `Pairing (${count})`;
+      pairingTabBtn.classList.add('has-badge');
+    } else {
+      pairingTabBtn.textContent = 'Pairing';
+      pairingTabBtn.classList.remove('has-badge');
+    }
+  }
+
+  function addPairingRequest(request) {
+    if (!request) return;
+    pairingRequestsSection.style.display = 'block';
+    const card = createPairingRequestCard(request);
+    pairingRequestsList.appendChild(card);
+    updatePairingBadge();
+  }
+
+  function createPairingRequestCard(request) {
+    const card = document.createElement('div');
+    card.className = 'pairing-request-card';
+    card.dataset.commandId = request.commandId;
+
+    const info = document.createElement('div');
+    info.className = 'pairing-request-info';
+
+    const name = document.createElement('span');
+    name.className = 'pairing-request-name';
+    name.textContent = request.agentName || 'Unknown Agent';
+
+    const desc = document.createElement('span');
+    desc.className = 'pairing-request-desc';
+    desc.textContent = 'wants to connect';
+
+    info.appendChild(name);
+    info.appendChild(desc);
+
+    const actions = document.createElement('div');
+    actions.className = 'pairing-request-actions';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'approve-btn';
+    approveBtn.textContent = 'Approve';
+    approveBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'PAIRING_RESPONSE',
+        commandId: request.commandId,
+        approved: true
+      });
+      card.remove();
+      if (pairingRequestsList.children.length === 0) {
+        pairingRequestsSection.style.display = 'none';
+      }
+      updatePairingBadge();
+    });
+
+    const denyBtn = document.createElement('button');
+    denyBtn.className = 'deny-btn';
+    denyBtn.textContent = 'Deny';
+    denyBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'PAIRING_RESPONSE',
+        commandId: request.commandId,
+        approved: false
+      });
+      card.remove();
+      if (pairingRequestsList.children.length === 0) {
+        pairingRequestsSection.style.display = 'none';
+      }
+      updatePairingBadge();
+    });
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(denyBtn);
+
+    card.appendChild(info);
+    card.appendChild(actions);
+
+    return card;
+  }
+
+  function renderPairedAgents(agents) {
+    pairedAgentsList.innerHTML = '';
+
+    if (agents.length === 0) {
+      noAgentsMessage.style.display = 'block';
+      return;
+    }
+
+    noAgentsMessage.style.display = 'none';
+
+    agents.forEach((agent) => {
+      const item = document.createElement('div');
+      item.className = 'paired-agent-item';
+
+      const info = document.createElement('div');
+      info.className = 'paired-agent-info';
+
+      // Name row with rename support
+      const nameRow = document.createElement('div');
+      nameRow.className = 'paired-agent-name-row';
+
+      const name = document.createElement('span');
+      name.className = 'paired-agent-name';
+      name.textContent = agent.agentName || 'Unknown Agent';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'rename-btn';
+      renameBtn.textContent = 'Rename';
+
+      renameBtn.addEventListener('click', () => {
+        // Switch to edit mode
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'rename-input';
+        input.value = agent.agentName || '';
+
+        function commitRename() {
+          const newName = input.value.trim();
+          if (newName && newName !== agent.agentName) {
+            chrome.runtime.sendMessage({
+              type: 'RENAME_AGENT',
+              apiKey: agent.key,
+              newName: newName
+            });
+          }
+          // Switch back to display mode
+          name.textContent = newName || agent.agentName || 'Unknown Agent';
+          nameRow.replaceChild(name, input);
+          renameBtn.textContent = 'Rename';
+        }
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commitRename();
+          } else if (e.key === 'Escape') {
+            nameRow.replaceChild(name, input);
+            renameBtn.textContent = 'Rename';
+          }
+        });
+        input.addEventListener('blur', commitRename);
+
+        nameRow.replaceChild(input, name);
+        renameBtn.textContent = 'Save';
+        input.focus();
+        input.select();
+      });
+
+      nameRow.appendChild(name);
+      nameRow.appendChild(renameBtn);
+
+      const date = document.createElement('span');
+      date.className = 'paired-agent-date';
+      date.textContent = agent.createdAt ? formatDate(agent.createdAt) : '';
+
+      info.appendChild(nameRow);
+      info.appendChild(date);
+
+      if (agent.lastAccessed) {
+        const lastActive = document.createElement('span');
+        lastActive.className = 'paired-agent-last-accessed';
+        lastActive.textContent = 'Last active: ' + timeAgo(agent.lastAccessed);
+        info.appendChild(lastActive);
+      }
+
+      const revokeBtn = document.createElement('button');
+      revokeBtn.className = 'revoke-btn';
+      revokeBtn.textContent = 'Revoke';
+      revokeBtn.onclick = function() {
+        console.log('[WebPilot Popup] Revoke clicked for agent:', agent.agentName, 'key:', agent.key);
+        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, function(response) {
+          console.log('[WebPilot Popup] Revoke response:', response);
+          item.remove();
+          if (pairedAgentsList.children.length === 0) {
+            noAgentsMessage.style.display = 'block';
+          }
+        });
+      };
+
+      item.appendChild(info);
+      item.appendChild(revokeBtn);
+      pairedAgentsList.appendChild(item);
+    });
+  }
+
+  function formatDate(dateStr) {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const now = Date.now();
+      const then = new Date(dateStr).getTime();
+      const seconds = Math.floor((now - then) / 1000);
+      if (seconds < 60) return 'just now';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + 'm ago';
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + 'h ago';
+      const days = Math.floor(hours / 24);
+      return days + 'd ago';
+    } catch (e) {
+      return '';
+    }
+  }
+
   function showView(viewName) {
-    setupView.classList.add('hidden');
     connectedView.classList.add('hidden');
     connectingView.classList.add('hidden');
     disconnectedView.classList.add('hidden');
 
-    // Show settings when connected or disconnected (has config)
-    if (viewName === 'connected' || viewName === 'disconnected') {
-      settingsSection.classList.remove('hidden');
-      loadSettings();
-    } else {
-      settingsSection.classList.add('hidden');
-    }
-
-    if (viewName === 'setup') {
-      setupView.classList.remove('hidden');
-    } else if (viewName === 'connected') {
+    if (viewName === 'connected') {
       connectedView.classList.remove('hidden');
     } else if (viewName === 'connecting') {
       connectingView.classList.remove('hidden');

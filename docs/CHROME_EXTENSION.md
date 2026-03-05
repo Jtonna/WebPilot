@@ -60,7 +60,34 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-Connection configuration (server URL, API key) is stored in `chrome.storage.local` and loaded on service worker startup. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and stop retrying.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes (e.g., network mode toggle). The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+
+### Message handlers
+
+#### From server
+
+| Message type | Action |
+|--------------|--------|
+| `pairing_request` | Stores the pending request and forwards it to the popup via `chrome.runtime.sendMessage` so the user can Approve or Deny. |
+
+#### From popup (chrome.runtime.onMessage)
+
+| Message type | Action |
+|--------------|--------|
+| `GET_STATUS` | Returns current connection state: `enabled`, `connected`, `connectionStatus`, `connectionError`, `errorType`, `manuallyDisconnected`, and config info (`hasApiKey`, `serverUrl`). |
+| `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
+| `DISCONNECT` | Sets `manuallyDisconnected = true`, then calls `disconnectWebSocket()` which nulls `wsConnection.onclose` before closing to prevent the onclose handler from auto-reconnecting. |
+| `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
+| `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
+| `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
+| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID. Removes the request from the pending list in storage. |
+| `REVOKE_KEY` | Sends a `revoke_key` message to the server over WebSocket with the specified `apiKey`. |
+| `RENAME_AGENT` | Sends a `rename_agent` message to the server over WebSocket with the specified `apiKey` and `newName`. |
+| `GET_PAIRED_AGENTS` | Reads `pairedAgents` from `chrome.storage.local` and returns the list to the popup. |
+| `GET_PENDING_PAIRING` | Reads `pendingPairingRequests` from `chrome.storage.local` and returns them to the popup. |
+| `SET_NETWORK_MODE` | Sends a `set_network_mode` message to the server over WebSocket with the `enabled` flag. The server switches listen address and persists the preference. |
+| `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
+| `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
 ## Handlers
 
@@ -205,45 +232,95 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) provides connection management with four views:
+The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) uses a tabbed interface with three tabs: **Dashboard**, **Pairing**, and **Settings**. The popup header displays the extension version (from `chrome.runtime.getManifest()`).
 
-| View | When Shown | Actions |
+### Dashboard Tab
+
+The Dashboard tab shows connection status with three views:
+
+| View | When Shown | Content |
 |------|-----------|---------|
-| Setup | No stored config | Paste connection string, click Connect |
-| Connecting | Connecting to server | Shows server URL, displays errors if server unreachable |
-| Connected | WebSocket open | Shows server URL, Disconnect button, Settings |
-| Disconnected | Has stored config but not connected | Reconnect button, Forget button (clears config), Settings |
+| Connecting | Connecting to server or auto-connect polling | Shows server URL, error messages if server unreachable |
+| Connected | WebSocket open | Server URL, endpoint display (WS, SSE, network mode), Disconnect button, restricted mode controls with whitelist management |
+| Disconnected | User manually disconnected | Shows server URL, Retry button |
 
-The popup header displays the extension version (from `chrome.runtime.getManifest()`).
+#### Connected View Details
 
-### Settings
+When connected, the Dashboard displays:
 
-When connected or disconnected, the popup shows a settings section with:
-
-- **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
-- **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
+- **Server URL** -- The WebSocket URL the extension is connected to
+- **Endpoints section** -- Shows the WS URL, SSE URL, and network mode indicator ("Local only" or "Network (LAN)")
+- **Disconnect button** -- Sets `manuallyDisconnected = true` and closes the connection; the onclose handler is nulled before closing to prevent auto-reconnect
 - **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
 
 #### Whitelist Management
 
-When restricted mode is enabled, the popup displays whitelist controls:
+When restricted mode is enabled, the Dashboard displays whitelist controls:
 
 - **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Shows "Remove this site" for whitelisted domains. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
 - **Manual domain input** (text field + Add button) -- Enter a domain manually (e.g., `example.com`, `https://example.com`). Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
-- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (×) buttons.
+- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (x) buttons.
 
 Domain matching is domain-level and covers all subdomains (e.g., whitelisting `yahoo.com` allows `www.yahoo.com`, `mail.yahoo.com`, etc.).
 
-These settings are stored in `chrome.storage.local` as `focusNewTabs`, `tabMode`, `restrictedModeEnabled` (boolean, default true), and `whitelistedDomains` (string array).
+### Pairing Tab
 
-The connection string format is `vf://<base64url>` encoding `{"v":1,"s":"<ws_url>","k":"<api_key>"}`.
+The Pairing tab has a badge count showing the number of pending pairing requests. It contains two sections:
 
-Authentication failures (invalid API key) automatically clear stored config and return to the Setup view.
+#### Pairing Requests
+
+Displays pending pairing requests from AI agents. Each entry shows the agent name and two action buttons:
+
+- **Approve** -- Approves the pairing request, generating an API key for the agent and sending it back to the server.
+- **Deny** -- Rejects the pairing request without granting access.
+
+The section is hidden when there are no pending requests.
+
+#### Paired Agents
+
+Lists all agents that have been granted access. Each entry shows:
+
+- **Agent name** -- The display name provided by the agent during pairing. Clicking the **Rename** button switches to an inline edit mode (text input) where the user can change the name. Pressing Enter or blurring the input commits the rename by sending a `RENAME_AGENT` message to the background script, which relays it to the server via WebSocket.
+- **Paired date** -- The date the agent was approved.
+- **Last active** -- A relative time-ago display (e.g., "5m ago") of the agent's last authenticated tool call. Only shown if the agent has been used since pairing. The server updates this via `touchKey()` on every authenticated `tools/call` request.
+- **Revoke** button -- Immediately invalidates the agent's API key, removing its access.
+
+Shows "No paired agents" when the list is empty.
+
+### Settings Tab
+
+The Settings tab provides:
+
+- **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
+- **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
+- **Network mode** (toggle, defaults to false) -- Switches the server between local-only (`127.0.0.1`) and LAN (`0.0.0.0`) mode. Sends a `SET_NETWORK_MODE` message to the background script, which relays it to the server via WebSocket. The server re-binds its listener, persists the preference to `network.enabled`, and the extension reconnects and refreshes its stored URLs via `refreshConnectionMetadata()`. The toggle state is synced from `chrome.storage.local` (`networkMode`) and also updates reactively when the storage value changes (e.g., after reconnect metadata refresh).
+
+### Storage Keys
+
+Settings and state are stored in `chrome.storage.local`:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `focusNewTabs` | boolean | false | Whether new tabs receive focus |
+| `tabMode` | string | `'group'` | Tab organization mode (`'group'` or `'window'`) |
+| `restrictedModeEnabled` | boolean | true | Whether restricted mode is active |
+| `whitelistedDomains` | string[] | `[]` | Whitelisted domains for restricted mode |
+| `apiKey` | string | null | Server API key (from auto-connect) |
+| `serverUrl` | string | null | WebSocket server URL |
+| `sseUrl` | string | null | SSE endpoint URL |
+| `networkMode` | boolean | false | Whether server is in network mode |
+| `enabled` | boolean | false | Whether the extension is enabled |
+| `pairedAgents` | array | `[]` | Cached list of paired agents |
+| `pendingPairingRequests` | array | `[]` | Pending pairing requests |
+| `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
+
+Authentication failures (invalid API key) automatically clear stored config and restart auto-connect.
 
 ## Communication Protocol
 
 ### Server to Extension (WebSocket)
 
+Standard command envelope:
 ```json
 {
   "id": "uuid",
@@ -251,6 +328,13 @@ Authentication failures (invalid API key) automatically clear stored config and 
   "params": { ... }
 }
 ```
+
+#### Pairing message types (Server → Extension)
+
+| Type | Envelope | Params / Fields | Description |
+|------|----------|-----------------|-------------|
+| `pairing_request` | Command | `agentName` (string) | Server forwards a pairing request from an AI agent. The extension shows an Approve/Deny prompt in the popup. |
+| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, key, keyDisplay }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
 
 ### Extension to Server (WebSocket)
 
@@ -271,6 +355,15 @@ Error:
   "error": "Error message"
 }
 ```
+
+#### Extension → Server message types
+
+| Type | Params | Description |
+|------|--------|-------------|
+| `revoke_key` | `apiKey` (string) | Extension requests the server to invalidate the specified API key. Sent when the user clicks Revoke in the Paired Agents panel. |
+| `rename_agent` | `apiKey` (string), `newName` (string) | Extension requests the server to rename the agent associated with the given API key. Sent when the user renames an agent in the Paired Agents panel. |
+| `list_paired_agents` | _(none)_ | Extension requests the current list of paired agents from the server. The server responds with a `paired_agents_list` push message. |
+| `set_network_mode` | `enabled` (boolean) | Extension requests the server to switch between local-only and LAN mode. The server re-binds its listener, persists the preference, and the extension reconnects. |
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 

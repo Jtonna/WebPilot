@@ -11,7 +11,7 @@ The MCP server is the middle layer between AI agents and the browser. It:
 3. Translates them into commands and sends them to the Chrome extension via WebSocket
 4. Returns results back to the agent via the SSE stream
 
-The MCP endpoints are open (no authentication). The WebSocket endpoint requires an API key to prevent unauthorized browser control.
+MCP tool calls now require a paired API key, except for `request_pairing` which is publicly accessible so agents can initiate the pairing flow. The key can be provided via the `X-API-Key` HTTP header, the `apiKey` query parameter on the SSE/message endpoints, or as an `api_key` parameter in individual tool call arguments. The WebSocket endpoint (used by the Chrome extension, not MCP agents) requires a separate server API key to prevent unauthorized browser control.
 
 ## Entry Points
 
@@ -35,7 +35,7 @@ Binary entry point. Parses command-line flags using Node 18's built-in `util.par
 
 ### `index.js`
 
-Server bootstrap. Reads configuration using a three-tier loading chain via `getPort()` and `getApiKey()` from `src/service/paths.js`:
+Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.js` (writes to the log path returned by `getLogPath()`), then reads configuration using a three-tier loading chain via `getPort()` and `getApiKey()` from `src/service/paths.js`:
 
 1. **Config file** at `<dataDir>/config/server.json` (if it exists)
 2. **Environment variables** (`PORT`, `API_KEY`) as fallback
@@ -45,8 +45,8 @@ Server bootstrap. Reads configuration using a three-tier loading chain via `getP
 |--------|----------|---------|-------------|
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Config file / Environment | `API_KEY` | `dev-123-test` | WebSocket authentication key |
-| Environment | `NETWORK` | `0` | Enable network mode if set to `1` |
-| CLI flag | `--network` | off | Enable network mode (listen on `0.0.0.0`) |
+| Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
+| Data file | `network.enabled` | (absent) | Persisted network mode preference (`1` or `0`). Written by the runtime `set_network_mode` WebSocket handler. If present, overrides both the `--network` flag and the `NETWORK` env var. |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -59,12 +59,11 @@ Sets up the Express HTTP server and WebSocket server:
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and a `WebSocketServer` (noServer mode, manual upgrade handling)
 - Authenticates WebSocket connections via `?apiKey=` query parameter
-- Handles WebSocket `{ type: 'ping' }` messages from the extension by responding with `{ type: 'pong' }` (keep-alive mechanism)
+- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'rename_agent' }` renames a paired agent; `{ type: 'list_paired_agents' }` returns all currently paired agents; `{ type: 'set_network_mode' }` toggles between local-only and LAN mode at runtime (see [Network Mode](#network-mode))
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
-- Exposes `GET /health` (server status) and `GET /connect` (connection string)
-- Generates a connection string (`vf://` + base64url-encoded JSON) for the extension popup
+- Exposes `GET /health` (server status with `extensionConnected` and `sessions` count) and `GET /connect` (returns `apiKey`, `serverUrl`, `sseUrl`, and `networkMode` for extension auto-connect)
 
 ## Source Files
 
@@ -73,7 +72,7 @@ Sets up the Express HTTP server and WebSocket server:
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing` is exempted from this check. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
@@ -85,15 +84,30 @@ WebSocket bridge to the Chrome extension:
 
 - Maintains a single WebSocket connection (one extension at a time)
 - `sendCommand(type, params)` -- Sends a command to the extension with a unique UUID and returns a Promise. The Promise resolves when the extension sends a matching response, or rejects on timeout (30 seconds) or disconnect.
+- `notify(message)` -- Sends a server-initiated message object to the extension without waiting for a response (fire-and-forget). Used for push notifications such as updated paired agent lists after pairing approval.
 - `handleResponse(message)` -- Routes incoming responses to their pending Promise by ID.
 - Connection lifecycle: `setConnection(ws)`, `clearConnection()`, `isConnected()`.
+- The `sendCommand` timeout is configurable via the `options` parameter (e.g., `{ timeout: 60000 }`).
+
+### `src/paired-keys.js`
+
+CRUD module for managing paired agent API keys:
+
+- Reads and writes `config/paired-keys.json` in the data directory
+- Provides `addKey(agentName)` -- generates a new UUID API key, persists it with agent name and creation timestamp, and returns the key
+- Provides `validateKey(apiKey)` -- checks whether a given key exists in the store; returns the matching entry object or null
+- Provides `renameKey(apiKey, newName)` -- updates the `agentName` for a given key; returns true if found and renamed, false if not found
+- Provides `touchKey(apiKey)` -- updates the `lastAccessed` timestamp for a given key (called on every authenticated tool call)
+- Provides `revokeKey(apiKey)` -- removes a specific API key from the store; returns true if removed, false if not found
+- Provides `listKeys()` -- returns all paired agents with their `agentName`, `createdAt`, `lastAccessed` (or null), full `key`, and truncated `keyDisplay` (first 8 characters)
 
 ## MCP Tools
 
-Ten tools are exposed to AI agents. All tools require the Chrome extension to be connected.
+Eleven tools are exposed to AI agents. All tools except `request_pairing` require both the Chrome extension to be connected and a valid paired API key. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
+| `request_pairing` | Initiate agent pairing to obtain an API key | `agent_name` |
 | `browser_create_tab` | Open a new tab with a URL | `url` |
 | `browser_close_tab` | Close a tab by ID | `tab_id` |
 | `browser_get_tabs` | List all open tabs | (none) |
@@ -142,7 +156,7 @@ AI Agent                MCP Server              Chrome Extension          Browse
 | GET | `/sse` | None | SSE stream for MCP communication |
 | POST | `/message?session_id=<id>` | None | JSON-RPC message endpoint |
 | GET | `/health` | None | Server status (`extensionConnected`, `sessions` count) |
-| GET | `/connect` | None | Connection string and server URL for extension setup |
+| GET | `/connect` | None | Returns `{ apiKey, serverUrl, sseUrl, networkMode }` for extension auto-connect |
 | WS | `/` (upgrade) | `?apiKey=<key>` | WebSocket for extension connection |
 
 ## Configuration
@@ -159,7 +173,7 @@ The server reads `<dataDir>/config/server.json` if it exists. This file can spec
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port (overridden by config file if present) |
 | `API_KEY` | `dev-123-test` | API key for WebSocket authentication (overridden by config file if present) |
-| `NETWORK` | `0` | Set to `1` for network mode |
+| `NETWORK` | `0` | Set to `1` for network mode (overridden by `<dataDir>/network.enabled` if present) |
 | `WEBPILOT_FOREGROUND` | unset | Set to `1` to run in foreground (used internally by daemon self-spawn) |
 
 ### Network Mode
@@ -172,6 +186,13 @@ npm run start:network   # Production
 ```
 
 In network mode, the server prints the machine's LAN IP so other devices can connect.
+
+Network mode can also be toggled at runtime via the Chrome extension's Settings tab. The extension sends a `set_network_mode` WebSocket message to the server, which:
+
+1. Updates the listen address (`127.0.0.1` or `0.0.0.0`)
+2. Persists the preference to `<dataDir>/network.enabled` (survives server restarts)
+3. Calls `server.closeAllConnections()` and re-listens on the new address
+4. The extension automatically reconnects and calls `refreshConnectionMetadata()` to update its stored URLs
 
 ## CLI and Background Service
 
@@ -206,6 +227,7 @@ Use `--foreground` (or set `WEBPILOT_FOREGROUND=1`) to run the server in the cur
 Background daemon output is captured by a size-managed log writer (`src/service/logger.js`):
 
 - Intercepts `process.stdout.write` and `process.stderr.write` for dual capture
+- Uses synchronous `fs.appendFileSync` for guaranteed flush (avoids buffering issues on Windows)
 - Strips ANSI escape codes for clean log files
 - Log file is truncated fresh on each startup
 - Maximum log size: 1 GB; when exceeded, drops the oldest 25% of the log (automatic rotation)
@@ -228,7 +250,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `logs/` subdirectory, `config/server.json`
+Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys)
 
 ## Build
 

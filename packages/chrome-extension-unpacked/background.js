@@ -13,13 +13,20 @@ import { click } from './handlers/click.js';
 import { scroll } from './handlers/scroll.js';
 import { type as typeText } from './handlers/keyboard.js';
 
+// Auto-connect defaults
+const DEFAULT_SERVER_URL = 'ws://localhost:3456';
+const DEFAULT_HTTP_URL = 'http://localhost:3456';
+const AUTO_CONNECT_INTERVAL_MS = 5000;
+
 // WebSocket connection state
 let wsConnection = null;
 let isEnabled = false;
 let connectionStatus = 'disconnected';
 let connectionError = null;
 let connectionErrorType = null;
+let manuallyDisconnected = false;
 let keepaliveInterval = null;
+let autoConnectInterval = null;
 const KEEPALIVE_INTERVAL_MS = 15000;
 let config = {
   apiKey: null,
@@ -41,6 +48,12 @@ chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (resul
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
+  // Explicitly initialize restricted mode to ON if not already set by user
+  chrome.storage.local.get(['restrictedModeEnabled'], (result) => {
+    if (result.restrictedModeEnabled === undefined) {
+      chrome.storage.local.set({ restrictedModeEnabled: true });
+    }
+  });
   loadConfig();
 });
 
@@ -54,12 +67,69 @@ function loadConfig() {
     config.apiKey = result.apiKey || null;
     config.serverUrl = result.serverUrl || null;
 
-    // Auto-connect if previously enabled with valid config
     if (isEnabled && config.apiKey && config.serverUrl) {
+      // Already have config, reconnect
       console.log('Auto-reconnecting on service worker startup...');
       connectWebSocket();
+    } else {
+      // No config stored — attempt auto-connect to local server
+      console.log('No config found, attempting auto-connect...');
+      attemptAutoConnect();
     }
   });
+}
+
+function attemptAutoConnect() {
+  clearAutoConnectInterval();
+
+  doAutoConnectFetch().then((success) => {
+    if (!success) {
+      // Server not reachable, retry on interval
+      console.log('Auto-connect failed, retrying every', AUTO_CONNECT_INTERVAL_MS, 'ms');
+      updateConnectionStatus('connecting', 'Waiting for server...', null);
+      autoConnectInterval = setInterval(() => {
+        doAutoConnectFetch().then((ok) => {
+          if (ok) clearAutoConnectInterval();
+        });
+      }, AUTO_CONNECT_INTERVAL_MS);
+    }
+  });
+}
+
+async function doAutoConnectFetch() {
+  try {
+    const response = await fetch(`${DEFAULT_HTTP_URL}/connect`);
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    if (!data.apiKey || !data.serverUrl) return false;
+
+    config.apiKey = data.apiKey;
+    config.serverUrl = data.serverUrl;
+    isEnabled = true;
+
+    await chrome.storage.local.set({
+      apiKey: data.apiKey,
+      serverUrl: data.serverUrl,
+      sseUrl: data.sseUrl || `http://localhost:3456/sse`,
+      networkMode: data.networkMode || false,
+      enabled: true
+    });
+
+    console.log('Auto-connect succeeded, connecting WebSocket...');
+    connectWebSocket();
+    return true;
+  } catch (e) {
+    // Server not running or unreachable
+    return false;
+  }
+}
+
+function clearAutoConnectInterval() {
+  if (autoConnectInterval) {
+    clearInterval(autoConnectInterval);
+    autoConnectInterval = null;
+  }
 }
 
 // Message handling
@@ -81,6 +151,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           connectionStatus: connectionStatus,
           connectionError: connectionError,
           errorType: connectionErrorType,
+          manuallyDisconnected: manuallyDisconnected,
           config: {
             hasApiKey: !!result.apiKey,
             serverUrl: result.serverUrl
@@ -104,13 +175,89 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
+    case 'DISCONNECT':
+      manuallyDisconnected = true;
+      disconnectWebSocket();
+      sendResponse({ success: true });
+      break;
+
+    case 'RECONNECT':
+      manuallyDisconnected = false;
+      isEnabled = true;
+      chrome.storage.local.set({ enabled: true });
+      connectWebSocket();
+      sendResponse({ success: true });
+      break;
+
     case 'FORGET_CONFIG':
+      manuallyDisconnected = false;
       disconnectWebSocket();
       chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
       config.apiKey = null;
       config.serverUrl = null;
       isEnabled = false;
+      // Restart auto-connect to pick up server again
+      attemptAutoConnect();
       sendResponse({ success: true });
+      break;
+
+    case 'RETRY_AUTO_CONNECT':
+      attemptAutoConnect();
+      sendResponse({ success: true });
+      break;
+
+    case 'PAIRING_RESPONSE':
+      sendResult(message.commandId, true, { approved: message.approved });
+      chrome.storage.local.get('pendingPairingRequests', (result) => {
+        const pending = (result.pendingPairingRequests || []).filter(
+          r => r.commandId !== message.commandId
+        );
+        chrome.storage.local.set({ pendingPairingRequests: pending });
+      });
+      sendResponse({ success: true });
+      break;
+
+    case 'RENAME_AGENT':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'rename_agent', apiKey: message.apiKey, newName: message.newName }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected to server' });
+      }
+      break;
+
+    case 'REVOKE_KEY':
+      console.log('REVOKE_KEY received, apiKey:', message.apiKey, 'wsConnected:', wsConnection && wsConnection.readyState === WebSocket.OPEN);
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'revoke_key', apiKey: message.apiKey }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected to server' });
+      }
+      break;
+
+    case 'GET_PAIRED_AGENTS':
+      chrome.storage.local.get('pairedAgents', (data) => {
+        sendResponse({ agents: data.pairedAgents || [] });
+      });
+      break;
+
+    case 'GET_PENDING_PAIRING':
+      chrome.storage.local.get('pendingPairingRequests', (data) => {
+        sendResponse({ requests: data.pendingPairingRequests || [] });
+      });
+      break;
+
+    case 'SET_NETWORK_MODE':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({
+          type: 'set_network_mode',
+          enabled: message.enabled
+        }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected' });
+      }
       break;
   }
   return true;
@@ -167,12 +314,23 @@ function connectWebSocket() {
       console.log('WebSocket connected');
       updateConnectionStatus('connected', null, null);
       startKeepalive();
+      refreshConnectionMetadata();
     };
 
     wsConnection.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
         if (message.type === 'pong') return;
+
+        // Handle non-command messages from server
+        if (message.type === 'paired_agents_list') {
+          chrome.storage.local.set({ pairedAgents: message.agents });
+          try {
+            chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
+          } catch (_) { /* popup may not be open */ }
+          return;
+        }
+
         handleServerCommand(message);
       } catch (e) {
         console.error('Failed to parse message:', e);
@@ -204,6 +362,8 @@ function connectWebSocket() {
         config.apiKey = null;
         config.serverUrl = null;
         isEnabled = false;
+        // Re-fetch credentials from server
+        attemptAutoConnect();
       } else if (event.code === 1011) {
         errorMsg = 'Server error';
         errorType = 'server_error';
@@ -220,9 +380,9 @@ function connectWebSocket() {
         updateConnectionStatus('disconnected', null, null);
       }
 
-      if (shouldRetry && isEnabled && config.serverUrl) {
+      if (shouldRetry && isEnabled && !manuallyDisconnected && config.serverUrl) {
         setTimeout(() => {
-          if (isEnabled) {
+          if (isEnabled && !manuallyDisconnected) {
             connectWebSocket();
           }
         }, 5000);
@@ -238,6 +398,7 @@ function disconnectWebSocket() {
   stopKeepalive();
   if (wsConnection) {
     console.log('Disconnecting WebSocket');
+    wsConnection.onclose = null;
     wsConnection.close();
     wsConnection = null;
   }
@@ -257,6 +418,25 @@ function stopKeepalive() {
   if (keepaliveInterval) {
     clearInterval(keepaliveInterval);
     keepaliveInterval = null;
+  }
+}
+
+async function refreshConnectionMetadata() {
+  try {
+    // Derive HTTP URL from stored WS URL (ws://host:port -> http://host:port)
+    const wsUrl = config.serverUrl;
+    if (!wsUrl) return;
+    const httpUrl = wsUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
+    const response = await fetch(`${httpUrl}/connect`);
+    if (!response.ok) return;
+    const data = await response.json();
+    await chrome.storage.local.set({
+      serverUrl: data.serverUrl,
+      sseUrl: data.sseUrl || `http://localhost:3456/sse`,
+      networkMode: data.networkMode || false
+    });
+  } catch (e) {
+    // Non-fatal — metadata refresh is best-effort
   }
 }
 
@@ -315,6 +495,18 @@ async function handleServerCommand(message) {
         result = await typeText(params);
         organizeTab(params.tab_id);
         break;
+      case 'pairing_request': {
+        const pairingEntry = { commandId: id, agentName: params.agentName, timestamp: Date.now() };
+        const stored = await chrome.storage.local.get('pendingPairingRequests');
+        const pending = stored.pendingPairingRequests || [];
+        pending.push(pairingEntry);
+        await chrome.storage.local.set({ pendingPairingRequests: pending });
+        try {
+          chrome.runtime.sendMessage({ type: 'PAIRING_REQUEST', commandId: id, agentName: params.agentName });
+        } catch (_) { /* popup may not be open */ }
+        // Do NOT call sendResult — human must approve/deny via popup
+        return;
+      }
       default:
         throw new Error(`Unknown command type: ${type}`);
     }
