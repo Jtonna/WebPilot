@@ -553,6 +553,152 @@ body {
   color: #dc2626;
 }
 
+/* Pairing & Agents Sections */
+.section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.section-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+/* Pairing Request Card */
+.pairing-request-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.pairing-request-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pairing-request-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.pairing-request-desc {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.pairing-request-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.approve-btn {
+  padding: 5px 12px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.approve-btn:hover {
+  background: #15803d;
+}
+
+.approve-btn:active {
+  background: #166534;
+}
+
+.deny-btn {
+  padding: 5px 12px;
+  background: #ffffff;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.deny-btn:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+/* Paired Agent Item */
+.paired-agent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.paired-agent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.paired-agent-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paired-agent-date {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.revoke-btn {
+  padding: 4px 10px;
+  background: #ffffff;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.revoke-btn:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.empty-message {
+  font-size: 12px;
+  color: #9ca3af;
+  text-align: center;
+  padding: 8px 0;
+}
+
 .footer {
   margin-top: 16px;
   padding-top: 12px;

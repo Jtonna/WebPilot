@@ -26,6 +26,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const domainInput = document.getElementById('domainInput');
   const addDomainBtn = document.getElementById('addDomainBtn');
   const domainList = document.getElementById('domainList');
+  const pairingRequestsSection = document.getElementById('pairingRequestsSection');
+  const pairingRequestsList = document.getElementById('pairingRequestsList');
+  const pairedAgentsSection = document.getElementById('pairedAgentsSection');
+  const pairedAgentsList = document.getElementById('pairedAgentsList');
+  const noAgentsMessage = document.getElementById('noAgentsMessage');
 
   loadStateAndShow();
 
@@ -68,6 +73,10 @@ document.addEventListener('DOMContentLoaded', () => {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'CONNECTION_STATUS_CHANGED') {
       handleConnectionStatusChange(msg.status, msg.errorType, msg.error);
+    } else if (msg.type === 'PAIRING_REQUEST') {
+      addPairingRequest(msg.request);
+    } else if (msg.type === 'PAIRED_AGENTS_UPDATED') {
+      renderPairedAgents(msg.agents || []);
     }
   });
 
@@ -78,6 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (response && response.connectionStatus === 'connected') {
             showView('connected');
             serverUrlDisplay.textContent = result.serverUrl;
+            loadPairingData();
           } else if (response && response.connectionStatus === 'connecting') {
             showView('connecting');
             connectingUrlDisplay.textContent = result.serverUrl;
@@ -189,6 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showView('connected');
         serverUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
+        loadPairingData();
       } else if (status === 'connecting') {
         showView('connecting');
         connectingUrlDisplay.textContent = serverUrl;
@@ -403,6 +414,156 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function loadPairingData() {
+    chrome.runtime.sendMessage({ type: 'GET_PENDING_PAIRING' }, (response) => {
+      renderPairingRequests(response?.requests || []);
+    });
+    chrome.runtime.sendMessage({ type: 'GET_PAIRED_AGENTS' }, (response) => {
+      renderPairedAgents(response?.agents || []);
+    });
+  }
+
+  function renderPairingRequests(requests) {
+    pairingRequestsList.innerHTML = '';
+
+    if (requests.length === 0) {
+      pairingRequestsSection.style.display = 'none';
+      return;
+    }
+
+    pairingRequestsSection.style.display = 'block';
+
+    requests.forEach((request) => {
+      const card = createPairingRequestCard(request);
+      pairingRequestsList.appendChild(card);
+    });
+  }
+
+  function addPairingRequest(request) {
+    if (!request) return;
+    pairingRequestsSection.style.display = 'block';
+    const card = createPairingRequestCard(request);
+    pairingRequestsList.appendChild(card);
+  }
+
+  function createPairingRequestCard(request) {
+    const card = document.createElement('div');
+    card.className = 'pairing-request-card';
+    card.dataset.commandId = request.commandId;
+
+    const info = document.createElement('div');
+    info.className = 'pairing-request-info';
+
+    const name = document.createElement('span');
+    name.className = 'pairing-request-name';
+    name.textContent = request.agentName || 'Unknown Agent';
+
+    const desc = document.createElement('span');
+    desc.className = 'pairing-request-desc';
+    desc.textContent = 'wants to connect';
+
+    info.appendChild(name);
+    info.appendChild(desc);
+
+    const actions = document.createElement('div');
+    actions.className = 'pairing-request-actions';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'approve-btn';
+    approveBtn.textContent = 'Approve';
+    approveBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'PAIRING_RESPONSE',
+        commandId: request.commandId,
+        approved: true
+      });
+      card.remove();
+      if (pairingRequestsList.children.length === 0) {
+        pairingRequestsSection.style.display = 'none';
+      }
+    });
+
+    const denyBtn = document.createElement('button');
+    denyBtn.className = 'deny-btn';
+    denyBtn.textContent = 'Deny';
+    denyBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({
+        type: 'PAIRING_RESPONSE',
+        commandId: request.commandId,
+        approved: false
+      });
+      card.remove();
+      if (pairingRequestsList.children.length === 0) {
+        pairingRequestsSection.style.display = 'none';
+      }
+    });
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(denyBtn);
+
+    card.appendChild(info);
+    card.appendChild(actions);
+
+    return card;
+  }
+
+  function renderPairedAgents(agents) {
+    pairedAgentsList.innerHTML = '';
+
+    if (agents.length === 0) {
+      pairedAgentsSection.style.display = 'none';
+      noAgentsMessage.style.display = 'block';
+      return;
+    }
+
+    pairedAgentsSection.style.display = 'block';
+    noAgentsMessage.style.display = 'none';
+
+    agents.forEach((agent) => {
+      const item = document.createElement('div');
+      item.className = 'paired-agent-item';
+
+      const info = document.createElement('div');
+      info.className = 'paired-agent-info';
+
+      const name = document.createElement('span');
+      name.className = 'paired-agent-name';
+      name.textContent = agent.name || 'Unknown Agent';
+
+      const date = document.createElement('span');
+      date.className = 'paired-agent-date';
+      date.textContent = agent.pairedAt ? formatDate(agent.pairedAt) : '';
+
+      info.appendChild(name);
+      info.appendChild(date);
+
+      const revokeBtn = document.createElement('button');
+      revokeBtn.className = 'revoke-btn';
+      revokeBtn.textContent = 'Revoke';
+      revokeBtn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, () => {
+          item.remove();
+          if (pairedAgentsList.children.length === 0) {
+            noAgentsMessage.style.display = 'block';
+          }
+        });
+      });
+
+      item.appendChild(info);
+      item.appendChild(revokeBtn);
+      pairedAgentsList.appendChild(item);
+    });
+  }
+
+  function formatDate(dateStr) {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
   function showView(viewName) {
     setupView.classList.add('hidden');
     connectedView.classList.add('hidden');
@@ -415,6 +576,12 @@ document.addEventListener('DOMContentLoaded', () => {
       loadSettings();
     } else {
       settingsSection.classList.add('hidden');
+    }
+
+    // Hide pairing sections when not connected
+    if (viewName !== 'connected') {
+      pairingRequestsSection.style.display = 'none';
+      pairedAgentsSection.style.display = 'none';
     }
 
     if (viewName === 'setup') {
