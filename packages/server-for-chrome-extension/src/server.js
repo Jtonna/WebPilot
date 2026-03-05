@@ -75,6 +75,19 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
           return;
         }
 
+        if (message.type === 'revoke_key') {
+          const { apiKey: keyToRevoke } = message;
+          pairedKeys.revokeKey(keyToRevoke);
+          console.log(`Revoked paired key: ${keyToRevoke}`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          return;
+        }
+
+        if (message.type === 'list_paired_agents') {
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          return;
+        }
+
         extensionBridge.handleResponse(message);
       } catch (e) {
         console.error('Invalid message from extension:', e);
