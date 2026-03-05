@@ -16,30 +16,6 @@
       <span class="version" id="versionDisplay"></span>
     </header>
 
-    <!-- Setup View - Connection String Input -->
-    <div id="setupView" class="view">
-      <div class="welcome-section">
-        <h2>Connect to Server</h2>
-        <p class="welcome-text">Paste your connection string from the MCP server console to get started.</p>
-      </div>
-
-      <div class="form-group">
-        <label for="connectionString">Connection String</label>
-        <textarea
-          id="connectionString"
-          placeholder="vf://eyJ2IjoxLCJz..."
-          autocomplete="off"
-          rows="3"
-        ></textarea>
-      </div>
-
-      <button class="connect-btn" id="connectBtn">
-        <span>Connect</span>
-      </button>
-
-      <div class="error-message" id="setupError"></div>
-    </div>
-
     <!-- Connected View -->
     <div id="connectedView" class="view hidden">
       <div class="status-card connected">
@@ -92,10 +68,7 @@
         </div>
       </div>
 
-      <div class="button-group">
-        <button class="reconnect-btn" id="reconnectBtn">Reconnect</button>
-        <button class="forget-btn" id="forgetBtn">Forget</button>
-      </div>
+      <button class="reconnect-btn" id="retryBtn" style="width:100%">Retry</button>
     </div>
 
     <!-- Pairing Requests Section -->

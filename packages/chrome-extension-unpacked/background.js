@@ -13,6 +13,11 @@ import { click } from './handlers/click.js';
 import { scroll } from './handlers/scroll.js';
 import { type as typeText } from './handlers/keyboard.js';
 
+// Auto-connect defaults
+const DEFAULT_SERVER_URL = 'ws://localhost:3456';
+const DEFAULT_HTTP_URL = 'http://localhost:3456';
+const AUTO_CONNECT_INTERVAL_MS = 5000;
+
 // WebSocket connection state
 let wsConnection = null;
 let isEnabled = false;
@@ -20,6 +25,7 @@ let connectionStatus = 'disconnected';
 let connectionError = null;
 let connectionErrorType = null;
 let keepaliveInterval = null;
+let autoConnectInterval = null;
 const KEEPALIVE_INTERVAL_MS = 15000;
 let config = {
   apiKey: null,
@@ -54,12 +60,67 @@ function loadConfig() {
     config.apiKey = result.apiKey || null;
     config.serverUrl = result.serverUrl || null;
 
-    // Auto-connect if previously enabled with valid config
     if (isEnabled && config.apiKey && config.serverUrl) {
+      // Already have config, reconnect
       console.log('Auto-reconnecting on service worker startup...');
       connectWebSocket();
+    } else {
+      // No config stored — attempt auto-connect to local server
+      console.log('No config found, attempting auto-connect...');
+      attemptAutoConnect();
     }
   });
+}
+
+function attemptAutoConnect() {
+  clearAutoConnectInterval();
+
+  doAutoConnectFetch().then((success) => {
+    if (!success) {
+      // Server not reachable, retry on interval
+      console.log('Auto-connect failed, retrying every', AUTO_CONNECT_INTERVAL_MS, 'ms');
+      updateConnectionStatus('connecting', 'Waiting for server...', null);
+      autoConnectInterval = setInterval(() => {
+        doAutoConnectFetch().then((ok) => {
+          if (ok) clearAutoConnectInterval();
+        });
+      }, AUTO_CONNECT_INTERVAL_MS);
+    }
+  });
+}
+
+async function doAutoConnectFetch() {
+  try {
+    const response = await fetch(`${DEFAULT_HTTP_URL}/connect`);
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    if (!data.apiKey || !data.serverUrl) return false;
+
+    config.apiKey = data.apiKey;
+    config.serverUrl = data.serverUrl;
+    isEnabled = true;
+
+    await chrome.storage.local.set({
+      apiKey: data.apiKey,
+      serverUrl: data.serverUrl,
+      enabled: true
+    });
+
+    console.log('Auto-connect succeeded, connecting WebSocket...');
+    connectWebSocket();
+    return true;
+  } catch (e) {
+    // Server not running or unreachable
+    return false;
+  }
+}
+
+function clearAutoConnectInterval() {
+  if (autoConnectInterval) {
+    clearInterval(autoConnectInterval);
+    autoConnectInterval = null;
+  }
 }
 
 // Message handling
@@ -110,6 +171,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       config.apiKey = null;
       config.serverUrl = null;
       isEnabled = false;
+      // Restart auto-connect to pick up server again
+      attemptAutoConnect();
+      sendResponse({ success: true });
+      break;
+
+    case 'RETRY_AUTO_CONNECT':
+      attemptAutoConnect();
       sendResponse({ success: true });
       break;
 
@@ -246,6 +314,8 @@ function connectWebSocket() {
         config.apiKey = null;
         config.serverUrl = null;
         isEnabled = false;
+        // Re-fetch credentials from server
+        attemptAutoConnect();
       } else if (event.code === 1011) {
         errorMsg = 'Server error';
         errorType = 'server_error';
