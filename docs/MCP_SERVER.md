@@ -63,8 +63,7 @@ Sets up the Express HTTP server and WebSocket server:
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
-- Exposes `GET /health` (server status) and `GET /connect` (connection string)
-- Generates a connection string (`vf://` + base64url-encoded JSON) for the extension popup
+- Exposes `GET /health` (server status) and `GET /connect` (API key and server URL for the extension)
 
 ## Source Files
 
@@ -155,7 +154,7 @@ AI Agent                MCP Server              Chrome Extension          Browse
 | GET | `/sse` | None | SSE stream for MCP communication |
 | POST | `/message?session_id=<id>` | None | JSON-RPC message endpoint |
 | GET | `/health` | None | Server status (`extensionConnected`, `sessions` count) |
-| GET | `/connect` | None | Connection string and server URL for extension setup |
+| GET | `/connect` | None | Returns `{ apiKey, serverUrl }` for extension auto-connect |
 | WS | `/` (upgrade) | `?apiKey=<key>` | WebSocket for extension connection |
 
 ## Configuration

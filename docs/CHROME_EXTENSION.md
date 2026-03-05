@@ -60,7 +60,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-Connection configuration (server URL, API key) is stored in `chrome.storage.local` and loaded on service worker startup. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and stop retrying.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key and server URL, then establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and stop retrying.
 
 ### Message handlers
 
@@ -222,12 +222,11 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) provides connection management with four views:
+The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) provides connection management with three views:
 
 | View | When Shown | Actions |
 |------|-----------|---------|
-| Setup | No stored config | Paste connection string, click Connect |
-| Connecting | Connecting to server | Shows server URL, displays errors if server unreachable |
+| Connecting | Connecting to server (auto-connect on startup) | Shows server URL, displays errors if server unreachable |
 | Connected | WebSocket open | Shows server URL, Disconnect button, Settings |
 | Disconnected | Has stored config but not connected | Reconnect button, Forget button (clears config), Settings |
 
@@ -272,9 +271,7 @@ Domain matching is domain-level and covers all subdomains (e.g., whitelisting `y
 
 These settings are stored in `chrome.storage.local` as `focusNewTabs`, `tabMode`, `restrictedModeEnabled` (boolean, default true), and `whitelistedDomains` (string array).
 
-The connection string format is `vf://<base64url>` encoding `{"v":1,"s":"<ws_url>","k":"<api_key>"}`.
-
-Authentication failures (invalid API key) automatically clear stored config and return to the Setup view.
+Authentication failures (invalid API key) automatically clear stored config and stop reconnect attempts.
 
 ## Communication Protocol
 

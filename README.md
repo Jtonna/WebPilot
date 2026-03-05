@@ -32,7 +32,7 @@ Load the Chrome extension:
 1. Open `chrome://extensions` in Chrome
 2. Enable **Developer mode**
 3. Click **Load unpacked** and select `packages/extension/`
-4. Click the WebPilot extension icon and paste the connection string from the server output
+4. The extension automatically connects to the MCP server on startup — no connection string needed
 
 Add to your MCP client (e.g., Claude Code):
 
