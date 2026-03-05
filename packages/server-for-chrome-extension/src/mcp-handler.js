@@ -32,8 +32,8 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey) {
-  const sessions = new Map();  // session_id -> { res, queue }
+function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
+  const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
 
   const tools = [
     {
@@ -275,14 +275,15 @@ function createMcpHandler(extensionBridge, apiKey) {
 
   function handleSSE(req, res) {
     const sessionId = uuidv4();
+    const mcpApiKey = req.headers['x-api-key'] || req.query.apiKey || null;
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
 
-    // Store session with queue (matching backend pattern)
-    sessions.set(sessionId, { res, queue: [] });
+    // Store session with queue and MCP client API key
+    sessions.set(sessionId, { res, queue: [], mcpApiKey });
 
     // Send endpoint URL as first event (matching backend pattern exactly)
     res.write(`event: endpoint\ndata: /message?session_id=${sessionId}\n\n`);
@@ -322,8 +323,14 @@ function createMcpHandler(extensionBridge, apiKey) {
       return res.status(400).json({ error: 'Invalid session' });
     }
 
+    // Update session API key if provided on this request (allows late auth)
+    const reqApiKey = req.headers['x-api-key'] || req.query.apiKey || null;
+    if (reqApiKey) {
+      session.mcpApiKey = reqApiKey;
+    }
+
     const message = req.body;
-    const response = await processMessage(message);
+    const response = await processMessage(message, session);
 
     if (response) {
       session.queue.push(response);
@@ -333,7 +340,9 @@ function createMcpHandler(extensionBridge, apiKey) {
     res.status(202).send('');
   }
 
-  async function processMessage(message) {
+  const AUTH_ERROR_MESSAGE = 'Authentication required. Include your API key as the X-API-Key header or apiKey query parameter in requests. If you do not have a key, call the request_pairing tool to initiate pairing. If you have previously paired, check your working directory for a webpilot.key file.';
+
+  async function processMessage(message, session) {
     const { method, id, params } = message;
 
     if (method === 'initialize') {
@@ -361,6 +370,17 @@ function createMcpHandler(extensionBridge, apiKey) {
     }
 
     if (method === 'tools/call') {
+      // Auth gate: exempt request_pairing, require valid API key for all other tools
+      if (params.name !== 'request_pairing') {
+        if (!session.mcpApiKey || !pairedKeys.validateKey(session.mcpApiKey)) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: { code: -32001, message: AUTH_ERROR_MESSAGE }
+          };
+        }
+      }
+
       try {
         const result = await handleToolCall(params);
         return {

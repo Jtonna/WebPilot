@@ -6,6 +6,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
+const pairedKeys = require('./paired-keys');
 
 const { getDataDir } = require('./service/paths');
 
@@ -90,7 +91,7 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
     });
   });
 
-  const mcpHandler = createMcpHandler(extensionBridge, apiKey);
+  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys);
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
