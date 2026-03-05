@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getFormatterDir, getBundledFormatterDir } = require('./service/paths');
+const { getFormatterDir } = require('./service/paths');
 
 let manifest = null;
 let formatterCache = {}; // path -> loaded module
@@ -11,16 +11,10 @@ function init() {
   const formatterDir = getFormatterDir();
   const manifestPath = path.join(formatterDir, 'manifest.json');
 
-  // First run: copy bundled formatters to data dir
+  // If no local cache exists, the updater will download from GitHub on startup
   if (!fs.existsSync(manifestPath)) {
-    const bundledDir = getBundledFormatterDir();
-    if (fs.existsSync(path.join(bundledDir, 'manifest.json'))) {
-      copyDirSync(bundledDir, formatterDir);
-      console.log('[formatter-manager] Copied bundled formatters to', formatterDir);
-    } else {
-      console.warn('[formatter-manager] No bundled formatters found at', bundledDir);
-      return;
-    }
+    console.log('[formatter-manager] No local formatters found — waiting for updater to download from GitHub');
+    return;
   }
 
   // Load manifest
@@ -30,9 +24,8 @@ function init() {
 
 function formatTree(url, rawNodes) {
   if (!manifest) {
-    // Fallback: try loading default from bundled
-    const { formatAccessibilityTree } = require(path.join(getBundledFormatterDir(), 'default.js'));
-    return formatAccessibilityTree(rawNodes);
+    console.warn('[formatter-manager] No manifest loaded — returning raw nodes');
+    return { tree: JSON.stringify(rawNodes), elementCount: rawNodes.length };
   }
 
   const formatterDir = getFormatterDir();
@@ -87,21 +80,6 @@ function reload() {
   if (fs.existsSync(manifestPath)) {
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     console.log('[formatter-manager] Reloaded manifest version', manifest.version);
-  }
-}
-
-// Helper: recursively copy directory
-function copyDirSync(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
   }
 }
 

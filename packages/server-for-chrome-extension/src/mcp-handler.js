@@ -592,8 +592,8 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
         // Build ancestry context for each ref using extractAncestryContext from default formatter
         if (refs && Object.keys(refs).length > 0) {
           try {
-            const { getBundledFormatterDir } = require('./service/paths');
-            const { extractAncestryContext } = require(require('path').join(getBundledFormatterDir(), 'default.js'));
+            const { getFormatterDir } = require('./service/paths');
+            const { extractAncestryContext } = require(require('path').join(getFormatterDir(), 'default.js'));
 
             // Build nodeMap from raw nodes
             const nodeMap = new Map();

@@ -80,15 +80,6 @@ function getFormatterDir() {
   return path.join(getDataDir(), 'formatters');
 }
 
-function getBundledFormatterDir() {
-  // In dev: relative path from server package to repo root's accessibility-tree-formatters/
-  // In pkg binary: adjacent to the exe (copied by Electron installer)
-  if (process.pkg) {
-    return path.join(path.dirname(process.execPath), 'accessibility-tree-formatters');
-  }
-  return path.resolve(__dirname, '..', '..', '..', 'accessibility-tree-formatters');
-}
-
 function loadConfig() {
   const configPath = getConfigPath();
   try {
@@ -131,5 +122,4 @@ module.exports = {
   getPort,
   getApiKey,
   getFormatterDir,
-  getBundledFormatterDir,
 };
