@@ -374,6 +374,7 @@ function disconnectWebSocket() {
   stopKeepalive();
   if (wsConnection) {
     console.log('Disconnecting WebSocket');
+    wsConnection.onclose = null;
     wsConnection.close();
     wsConnection = null;
   }
