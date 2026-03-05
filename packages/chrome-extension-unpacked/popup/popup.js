@@ -362,6 +362,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (requests.length === 0) {
       pairingRequestsSection.style.display = 'none';
+      updatePairingBadge();
       return;
     }
 
@@ -371,6 +372,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = createPairingRequestCard(request);
       pairingRequestsList.appendChild(card);
     });
+    updatePairingBadge();
+  }
+
+  function updatePairingBadge() {
+    const pairingTabBtn = document.querySelector('.tab-btn[data-tab="pairing"]');
+    const count = pairingRequestsList.children.length;
+    if (count > 0) {
+      pairingTabBtn.textContent = `Pairing (${count})`;
+      pairingTabBtn.classList.add('has-badge');
+    } else {
+      pairingTabBtn.textContent = 'Pairing';
+      pairingTabBtn.classList.remove('has-badge');
+    }
   }
 
   function addPairingRequest(request) {
@@ -378,6 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pairingRequestsSection.style.display = 'block';
     const card = createPairingRequestCard(request);
     pairingRequestsList.appendChild(card);
+    updatePairingBadge();
   }
 
   function createPairingRequestCard(request) {
@@ -415,6 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (pairingRequestsList.children.length === 0) {
         pairingRequestsSection.style.display = 'none';
       }
+      updatePairingBadge();
     });
 
     const denyBtn = document.createElement('button');
@@ -430,6 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (pairingRequestsList.children.length === 0) {
         pairingRequestsSection.style.display = 'none';
       }
+      updatePairingBadge();
     });
 
     actions.appendChild(approveBtn);

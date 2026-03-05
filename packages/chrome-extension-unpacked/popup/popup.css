@@ -75,6 +75,15 @@ body {
   border-bottom-color: #16a34a;
 }
 
+.tab-btn.has-badge {
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.tab-btn.has-badge.active {
+  color: #16a34a;
+}
+
 /* Tab Content */
 .tab-content {
   display: none;
