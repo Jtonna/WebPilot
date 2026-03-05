@@ -472,18 +472,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const revokeBtn = document.createElement('button');
       revokeBtn.className = 'revoke-btn';
       revokeBtn.textContent = 'Revoke';
-      revokeBtn.addEventListener('click', () => {
-        console.log('Revoking agent key:', agent.key);
-        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, (response) => {
-          console.log('Revoke response:', response);
-          if (response && response.success) {
-            item.remove();
-            if (pairedAgentsList.children.length === 0) {
-              noAgentsMessage.style.display = 'block';
-            }
+      revokeBtn.onclick = function() {
+        console.log('[WebPilot Popup] Revoke clicked for agent:', agent.agentName, 'key:', agent.key);
+        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, function(response) {
+          console.log('[WebPilot Popup] Revoke response:', response);
+          item.remove();
+          if (pairedAgentsList.children.length === 0) {
+            noAgentsMessage.style.display = 'block';
           }
         });
-      });
+      };
 
       item.appendChild(info);
       item.appendChild(revokeBtn);
