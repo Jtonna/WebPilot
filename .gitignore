@@ -58,8 +58,6 @@ config.local.json
 .claude/settings.local.json
 
 # starterpack — these paths must be tracked by git
-!.beads/
-!.beads/**
 !.starterpack/
 !.starterpack/**
 !.claude/
