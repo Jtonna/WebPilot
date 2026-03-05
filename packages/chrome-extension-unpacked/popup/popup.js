@@ -122,6 +122,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // React to storage changes from background (e.g. refreshConnectionMetadata after reconnect)
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local') {
+      if (changes.networkMode || changes.serverUrl || changes.sseUrl) {
+        updateEndpointDisplay();
+        if (changes.networkMode) {
+          networkModeToggle.checked = changes.networkMode.newValue === true;
+        }
+      }
+    }
+  });
+
   function updateEndpointDisplay() {
     chrome.storage.local.get(['serverUrl', 'sseUrl', 'networkMode'], (result) => {
       const wsUrl = result.serverUrl || 'ws://localhost:3456';
