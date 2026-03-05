@@ -74,7 +74,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'GET_STATUS':
-      chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl'], (result) => {
+      chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl', 'sseUrl', 'networkMode'], (result) => {
         sendResponse({
           enabled: result.enabled || false,
           connected: connectionStatus === 'connected',
@@ -83,7 +83,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           errorType: connectionErrorType,
           config: {
             hasApiKey: !!result.apiKey,
-            serverUrl: result.serverUrl
+            serverUrl: result.serverUrl,
+            sseUrl: result.sseUrl || null,
+            networkMode: result.networkMode || false
           }
         });
       });
@@ -106,7 +108,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'FORGET_CONFIG':
       disconnectWebSocket();
-      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
+      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled', 'sseUrl', 'networkMode']);
       config.apiKey = null;
       config.serverUrl = null;
       isEnabled = false;
@@ -142,6 +144,27 @@ function handleConfigUpdate(newConfig) {
   }
 }
 
+// Fetch endpoint info from server after connection
+function fetchServerEndpoints() {
+  if (!config.serverUrl) return;
+  try {
+    const httpUrl = config.serverUrl.replace(/^ws(s?):\/\//, 'http$1://');
+    fetch(`${httpUrl}/connect`)
+      .then(res => res.json())
+      .then(data => {
+        chrome.storage.local.set({
+          sseUrl: data.sseUrl || null,
+          networkMode: data.networkMode || false
+        });
+      })
+      .catch(err => {
+        console.error('Failed to fetch server endpoints:', err);
+      });
+  } catch (e) {
+    console.error('Failed to build connect URL:', e);
+  }
+}
+
 // WebSocket connection
 function connectWebSocket() {
   if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
@@ -167,6 +190,7 @@ function connectWebSocket() {
       console.log('WebSocket connected');
       updateConnectionStatus('connected', null, null);
       startKeepalive();
+      fetchServerEndpoints();
     };
 
     wsConnection.onmessage = (event) => {

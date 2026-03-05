@@ -26,6 +26,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const domainInput = document.getElementById('domainInput');
   const addDomainBtn = document.getElementById('addDomainBtn');
   const domainList = document.getElementById('domainList');
+  const wsEndpoint = document.getElementById('wsEndpoint');
+  const sseEndpoint = document.getElementById('sseEndpoint');
+  const networkModeDisplay = document.getElementById('networkModeDisplay');
 
   loadStateAndShow();
 
@@ -72,12 +75,13 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function loadStateAndShow() {
-    chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
+    chrome.storage.local.get(['apiKey', 'serverUrl', 'sseUrl', 'networkMode'], (result) => {
       if (result.apiKey && result.serverUrl) {
         chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
           if (response && response.connectionStatus === 'connected') {
             showView('connected');
             serverUrlDisplay.textContent = result.serverUrl;
+            updateEndpointDisplay(result.serverUrl, result.sseUrl, result.networkMode);
           } else if (response && response.connectionStatus === 'connecting') {
             showView('connecting');
             connectingUrlDisplay.textContent = result.serverUrl;
@@ -181,13 +185,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function handleConnectionStatusChange(status, errorType, errorMsg) {
-    chrome.storage.local.get(['serverUrl', 'apiKey'], (result) => {
+    chrome.storage.local.get(['serverUrl', 'apiKey', 'sseUrl', 'networkMode'], (result) => {
       const serverUrl = result.serverUrl || 'unknown';
       const hasConfig = result.apiKey && result.serverUrl;
 
       if (status === 'connected') {
         showView('connected');
         serverUrlDisplay.textContent = serverUrl;
+        updateEndpointDisplay(serverUrl, result.sseUrl, result.networkMode);
         hideError(connectingError);
       } else if (status === 'connecting') {
         showView('connecting');
@@ -401,6 +406,30 @@ document.addEventListener('DOMContentLoaded', () => {
         domainList.appendChild(item);
       });
     });
+  }
+
+  function updateEndpointDisplay(serverUrl, sseUrl, networkMode) {
+    if (wsEndpoint) {
+      wsEndpoint.textContent = serverUrl || 'ws://localhost:3456';
+    }
+    if (sseEndpoint) {
+      if (sseUrl) {
+        sseEndpoint.textContent = sseUrl;
+      } else if (serverUrl) {
+        // Derive SSE URL from WS URL as fallback
+        const derived = serverUrl.replace(/^ws(s?):\/\//, 'http$1://') + '/sse';
+        sseEndpoint.textContent = derived;
+      }
+    }
+    if (networkModeDisplay) {
+      if (networkMode) {
+        networkModeDisplay.textContent = 'LAN (network mode)';
+        networkModeDisplay.classList.add('network-enabled');
+      } else {
+        networkModeDisplay.textContent = 'Local only';
+        networkModeDisplay.classList.remove('network-enabled');
+      }
+    }
   }
 
   function showView(viewName) {

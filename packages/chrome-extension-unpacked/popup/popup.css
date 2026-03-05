@@ -233,6 +233,55 @@ body {
   font-family: 'SF Mono', Monaco, 'Consolas', monospace;
 }
 
+/* Endpoints Section */
+.endpoints-section {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.endpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.endpoint-row + .endpoint-row {
+  border-top: 1px solid #f3f4f6;
+}
+
+.endpoint-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.endpoint-url {
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, 'Consolas', monospace;
+  color: #374151;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 8px;
+  user-select: all;
+}
+
+.endpoint-value {
+  font-size: 11px;
+  color: #374151;
+  font-weight: 500;
+}
+
+.endpoint-value.network-enabled {
+  color: #16a34a;
+}
+
 .disconnect-btn {
   width: 100%;
   padding: 10px 16px;

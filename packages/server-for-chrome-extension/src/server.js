@@ -106,7 +106,9 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
   app.get('/connect', (req, res) => {
     res.json({
       connectionString: connectionString,
-      serverUrl: wsUrl
+      serverUrl: wsUrl,
+      sseUrl: `http://${publicHost}:${port}/sse`,
+      networkMode: host === '0.0.0.0'
     });
   });
 
