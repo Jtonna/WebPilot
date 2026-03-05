@@ -217,6 +217,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
+    case 'RENAME_AGENT':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'rename_agent', apiKey: message.apiKey, newName: message.newName }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected to server' });
+      }
+      break;
+
     case 'REVOKE_KEY':
       console.log('REVOKE_KEY received, apiKey:', message.apiKey, 'wsConnected:', wsConnection && wsConnection.readyState === WebSocket.OPEN);
       if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
