@@ -23,11 +23,28 @@ Defined in `packages/server-for-chrome-extension/package.json`:
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
-      "index.js"
+      "index.js",
+      "../../accessibility-tree-formatters/**/*"
     ]
   }
 }
 ```
+
+### accessibility-tree-formatters/ Package
+
+`accessibility-tree-formatters/` lives at the repo root (a sibling of `packages/`). It contains:
+
+- `manifest.json` -- lists available formatters with metadata (name, version, entry point)
+- Formatter JS files -- one per formatter, written as CommonJS modules
+
+The entire directory is bundled into the server binary via the `../../accessibility-tree-formatters/**/*` pkg assets glob above.
+
+At runtime, the server copies the bundled formatters to `<dataDir>/formatters/` on first run so they can be updated independently of the binary.
+
+Two new server modules handle formatter lifecycle:
+
+- **`formatter-manager.js`** -- loads formatters from `<dataDir>/formatters/` and runs the appropriate one for each accessibility tree request
+- **`formatter-updater.js`** -- auto-updates formatters from GitHub by comparing the bundled `manifest.json` version against the latest published release
 
 Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux":
 
@@ -64,8 +81,6 @@ resources/
     manifest.json
     background.js
     accessibility-storage.js
-    accessibility-tree.js
-    formatters/
     handlers/
     icons/
     popup/
@@ -110,8 +125,6 @@ The server binary and extension files remain in the Electron app's `resources/` 
       manifest.json
       background.js
       accessibility-storage.js
-      accessibility-tree.js
-      formatters/
       handlers/
       icons/
       popup/
