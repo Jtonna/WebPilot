@@ -483,7 +483,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           const result = {
             content: [{
               type: 'text',
-              text: `Pairing approved! Your API key is:\n\n${key}\n\nSave this key to a file called "webpilot.key" in your working directory. Include it as the X-API-Key header or apiKey query parameter in all subsequent requests.`
+              text: `Pairing approved! Your API key: ${key}\n\nYour current session is already authenticated — you can make tool calls immediately.\n\nTo persist this key for future sessions, add it to your MCP server configuration. For Claude Code, update your .mcp.json file to include the key as a header in the WebPilot server config:\n\n{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:3456/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}\n\nAlternatively, you can pass the key per-request as the X-API-Key header or apiKey query parameter.`
             }]
           };
           result._pairedKey = key;
