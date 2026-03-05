@@ -45,8 +45,8 @@ Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.
 |--------|----------|---------|-------------|
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Config file / Environment | `API_KEY` | `dev-123-test` | WebSocket authentication key |
-| Environment | `NETWORK` | `0` | Enable network mode if set to `1` |
-| CLI flag | `--network` | off | Enable network mode (listen on `0.0.0.0`) |
+| Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
+| Data file | `network.enabled` | (absent) | Persisted network mode preference (`1` or `0`). Written by the runtime `set_network_mode` WebSocket handler. If present, overrides both the `--network` flag and the `NETWORK` env var. |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -59,7 +59,7 @@ Sets up the Express HTTP server and WebSocket server:
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and a `WebSocketServer` (noServer mode, manual upgrade handling)
 - Authenticates WebSocket connections via `?apiKey=` query parameter
-- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'list_paired_agents' }` returns all currently paired agents
+- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'rename_agent' }` renames a paired agent; `{ type: 'list_paired_agents' }` returns all currently paired agents; `{ type: 'set_network_mode' }` toggles between local-only and LAN mode at runtime (see [Network Mode](#network-mode))
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
@@ -72,7 +72,7 @@ Sets up the Express HTTP server and WebSocket server:
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing` is exempted from this check.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing` is exempted from this check. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
@@ -96,8 +96,10 @@ CRUD module for managing paired agent API keys:
 - Reads and writes `config/paired-keys.json` in the data directory
 - Provides `addKey(agentName)` -- generates a new UUID API key, persists it with agent name and creation timestamp, and returns the key
 - Provides `validateKey(apiKey)` -- checks whether a given key exists in the store; returns the matching entry object or null
+- Provides `renameKey(apiKey, newName)` -- updates the `agentName` for a given key; returns true if found and renamed, false if not found
+- Provides `touchKey(apiKey)` -- updates the `lastAccessed` timestamp for a given key (called on every authenticated tool call)
 - Provides `revokeKey(apiKey)` -- removes a specific API key from the store; returns true if removed, false if not found
-- Provides `listKeys()` -- returns all paired agents with their `agentName`, `createdAt`, full `key`, and truncated `keyDisplay` (first 8 characters)
+- Provides `listKeys()` -- returns all paired agents with their `agentName`, `createdAt`, `lastAccessed` (or null), full `key`, and truncated `keyDisplay` (first 8 characters)
 
 ## MCP Tools
 
@@ -171,7 +173,7 @@ The server reads `<dataDir>/config/server.json` if it exists. This file can spec
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port (overridden by config file if present) |
 | `API_KEY` | `dev-123-test` | API key for WebSocket authentication (overridden by config file if present) |
-| `NETWORK` | `0` | Set to `1` for network mode |
+| `NETWORK` | `0` | Set to `1` for network mode (overridden by `<dataDir>/network.enabled` if present) |
 | `WEBPILOT_FOREGROUND` | unset | Set to `1` to run in foreground (used internally by daemon self-spawn) |
 
 ### Network Mode
@@ -184,6 +186,13 @@ npm run start:network   # Production
 ```
 
 In network mode, the server prints the machine's LAN IP so other devices can connect.
+
+Network mode can also be toggled at runtime via the Chrome extension's Settings tab. The extension sends a `set_network_mode` WebSocket message to the server, which:
+
+1. Updates the listen address (`127.0.0.1` or `0.0.0.0`)
+2. Persists the preference to `<dataDir>/network.enabled` (survives server restarts)
+3. Calls `server.closeAllConnections()` and re-listens on the new address
+4. The extension automatically reconnects and calls `refreshConnectionMetadata()` to update its stored URLs
 
 ## CLI and Background Service
 
@@ -241,7 +250,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys)
+Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys)
 
 ## Build
 

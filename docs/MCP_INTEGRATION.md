@@ -4,7 +4,7 @@ Reference documentation for AI agents integrating with the WebPilot browser cont
 
 ## Overview
 
-The WebPilot MCP server provides browser tab control capabilities to AI agents via the Model Context Protocol (MCP). Agents can list, open, and close browser tabs in the user's Chrome browser.
+The WebPilot MCP server provides browser automation capabilities to AI agents via the Model Context Protocol (MCP). Agents can manage tabs, read page content via accessibility trees, click elements, scroll, type text, inject scripts, and execute JavaScript in the user's Chrome browser.
 
 ## Authentication
 
@@ -922,7 +922,7 @@ If the Chrome extension is not connected to the MCP server:
 }
 ```
 
-**Solution:** User needs to open the extension popup and click "Reconnect".
+**Solution:** User needs to open the extension popup and click "Retry" to restart the auto-connect process.
 
 ---
 

@@ -121,6 +121,7 @@ The server binary and extension files remain in the Electron app's `resources/` 
       server.json                                    API key and port configuration
       paired-keys.json                               Paired agent API keys
     daemon.log                                       Daemon log output
+    network.enabled                                  Persisted network mode preference (1 or 0)
     server.pid                                       PID of running daemon
     server.port                                      Port of running daemon
     logs/

@@ -60,7 +60,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes (e.g., network mode toggle). The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Message handlers
 
@@ -82,8 +82,10 @@ On startup, the extension auto-connects to `localhost:3456` by fetching `/connec
 | `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
 | `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID. Removes the request from the pending list in storage. |
 | `REVOKE_KEY` | Sends a `revoke_key` message to the server over WebSocket with the specified `apiKey`. |
+| `RENAME_AGENT` | Sends a `rename_agent` message to the server over WebSocket with the specified `apiKey` and `newName`. |
 | `GET_PAIRED_AGENTS` | Reads `pairedAgents` from `chrome.storage.local` and returns the list to the popup. |
 | `GET_PENDING_PAIRING` | Reads `pendingPairingRequests` from `chrome.storage.local` and returns them to the popup. |
+| `SET_NETWORK_MODE` | Sends a `set_network_mode` message to the server over WebSocket with the `enabled` flag. The server switches listen address and persists the preference. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
@@ -278,8 +280,9 @@ The section is hidden when there are no pending requests.
 
 Lists all agents that have been granted access. Each entry shows:
 
-- **Agent name** -- The display name provided by the agent during pairing.
+- **Agent name** -- The display name provided by the agent during pairing. Clicking the **Rename** button switches to an inline edit mode (text input) where the user can change the name. Pressing Enter or blurring the input commits the rename by sending a `RENAME_AGENT` message to the background script, which relays it to the server via WebSocket.
 - **Paired date** -- The date the agent was approved.
+- **Last active** -- A relative time-ago display (e.g., "5m ago") of the agent's last authenticated tool call. Only shown if the agent has been used since pairing. The server updates this via `touchKey()` on every authenticated `tools/call` request.
 - **Revoke** button -- Immediately invalidates the agent's API key, removing its access.
 
 Shows "No paired agents" when the list is empty.
@@ -290,6 +293,7 @@ The Settings tab provides:
 
 - **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
 - **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
+- **Network mode** (toggle, defaults to false) -- Switches the server between local-only (`127.0.0.1`) and LAN (`0.0.0.0`) mode. Sends a `SET_NETWORK_MODE` message to the background script, which relays it to the server via WebSocket. The server re-binds its listener, persists the preference to `network.enabled`, and the extension reconnects and refreshes its stored URLs via `refreshConnectionMetadata()`. The toggle state is synced from `chrome.storage.local` (`networkMode`) and also updates reactively when the storage value changes (e.g., after reconnect metadata refresh).
 
 ### Storage Keys
 
@@ -352,12 +356,14 @@ Error:
 }
 ```
 
-#### Pairing message types (Extension → Server)
+#### Extension → Server message types
 
 | Type | Params | Description |
 |------|--------|-------------|
 | `revoke_key` | `apiKey` (string) | Extension requests the server to invalidate the specified API key. Sent when the user clicks Revoke in the Paired Agents panel. |
+| `rename_agent` | `apiKey` (string), `newName` (string) | Extension requests the server to rename the agent associated with the given API key. Sent when the user renames an agent in the Paired Agents panel. |
 | `list_paired_agents` | _(none)_ | Extension requests the current list of paired agents from the server. The server responds with a `paired_agents_list` push message. |
+| `set_network_mode` | `enabled` (boolean) | Extension requests the server to switch between local-only and LAN mode. The server re-binds its listener, persists the preference, and the extension reconnects. |
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
