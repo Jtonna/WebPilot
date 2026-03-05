@@ -111,6 +111,8 @@ async function doAutoConnectFetch() {
     await chrome.storage.local.set({
       apiKey: data.apiKey,
       serverUrl: data.serverUrl,
+      sseUrl: data.sseUrl || `http://localhost:3456/sse`,
+      networkMode: data.networkMode || false,
       enabled: true
     });
 

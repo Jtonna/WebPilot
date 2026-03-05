@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const serverUrlDisplay = document.getElementById('serverUrlDisplay');
   const connectingUrlDisplay = document.getElementById('connectingUrlDisplay');
   const disconnectedUrlDisplay = document.getElementById('disconnectedUrlDisplay');
+  const wsUrlDisplay = document.getElementById('wsUrlDisplay');
+  const sseUrlDisplay = document.getElementById('sseUrlDisplay');
+  const networkModeDisplay = document.getElementById('networkModeDisplay');
   const focusNewTabsToggle = document.getElementById('focusNewTabs');
   const tabModeSelect = document.getElementById('tabMode');
   const restrictedModeToggle = document.getElementById('restrictedMode');
@@ -106,6 +109,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function updateEndpointDisplay() {
+    chrome.storage.local.get(['serverUrl', 'sseUrl', 'networkMode'], (result) => {
+      const wsUrl = result.serverUrl || 'ws://localhost:3456';
+      const sseUrl = result.sseUrl || wsUrl.replace('ws://', 'http://').replace('wss://', 'https://') + '/sse';
+      wsUrlDisplay.textContent = wsUrl;
+      sseUrlDisplay.textContent = sseUrl;
+      networkModeDisplay.textContent = result.networkMode ? 'Network (LAN)' : 'Local only';
+      if (result.networkMode) {
+        networkModeDisplay.classList.add('network-enabled');
+      } else {
+        networkModeDisplay.classList.remove('network-enabled');
+      }
+    });
+  }
+
   function loadStateAndShow() {
     chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
       if (response && response.connectionStatus === 'connected') {
@@ -113,6 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.get(['serverUrl'], (result) => {
           serverUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
         });
+        updateEndpointDisplay();
         loadPairingData();
         loadRestrictedModeSettings();
       } else if (response && (response.connectionStatus === 'connecting' || response.connectionStatus === 'error')) {
@@ -190,6 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showView('connected');
         serverUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
+        updateEndpointDisplay();
         loadPairingData();
         loadRestrictedModeSettings();
       } else if (status === 'connecting') {

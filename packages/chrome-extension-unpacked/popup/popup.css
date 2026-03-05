@@ -203,6 +203,46 @@ body {
   font-family: 'SF Mono', Monaco, 'Consolas', monospace;
 }
 
+.endpoints-section {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.endpoint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.endpoint-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  min-width: 32px;
+  text-transform: uppercase;
+}
+
+.endpoint-url {
+  font-size: 12px;
+  font-family: 'SF Mono', Monaco, 'Consolas', monospace;
+  color: #374151;
+  user-select: all;
+}
+
+.endpoint-value {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.endpoint-value.network-enabled {
+  color: #16a34a;
+  font-weight: 600;
+}
+
 .disconnect-btn {
   width: 100%;
   padding: 10px 16px;
