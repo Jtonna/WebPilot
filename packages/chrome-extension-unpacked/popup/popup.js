@@ -419,11 +419,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const name = document.createElement('span');
       name.className = 'paired-agent-name';
-      name.textContent = agent.name || 'Unknown Agent';
+      name.textContent = agent.agentName || 'Unknown Agent';
 
       const date = document.createElement('span');
       date.className = 'paired-agent-date';
-      date.textContent = agent.pairedAt ? formatDate(agent.pairedAt) : '';
+      date.textContent = agent.createdAt ? formatDate(agent.createdAt) : '';
 
       info.appendChild(name);
       info.appendChild(date);

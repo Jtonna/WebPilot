@@ -101,7 +101,8 @@ function listKeys() {
   return keys.map((entry) => ({
     agentName: entry.agentName,
     createdAt: entry.createdAt,
-    key: entry.key.slice(0, 8) + '...',
+    key: entry.key,
+    keyDisplay: entry.key.slice(0, 8) + '...',
   }));
 }
 
