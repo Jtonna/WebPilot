@@ -11,7 +11,7 @@ The MCP server is the middle layer between AI agents and the browser. It:
 3. Translates them into commands and sends them to the Chrome extension via WebSocket
 4. Returns results back to the agent via the SSE stream
 
-The MCP endpoints are open (no authentication). The WebSocket endpoint requires an API key to prevent unauthorized browser control.
+MCP tool calls now require a paired API key (passed as `x-api-key` in the request or as the `api_key` JSON-RPC parameter), except for `request_pairing` which is publicly accessible so agents can initiate the pairing flow. The WebSocket endpoint requires an API key to prevent unauthorized browser control.
 
 ## Entry Points
 
@@ -59,7 +59,7 @@ Sets up the Express HTTP server and WebSocket server:
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and a `WebSocketServer` (noServer mode, manual upgrade handling)
 - Authenticates WebSocket connections via `?apiKey=` query parameter
-- Handles WebSocket `{ type: 'ping' }` messages from the extension by responding with `{ type: 'pong' }` (keep-alive mechanism)
+- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'list_paired_agents' }` returns all currently paired agents
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
@@ -73,7 +73,7 @@ Sets up the Express HTTP server and WebSocket server:
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. The `processMessage` function enforces authentication on `tools/call` requests by validating the paired API key, exempting only `request_pairing` from this check.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
@@ -85,15 +85,28 @@ WebSocket bridge to the Chrome extension:
 
 - Maintains a single WebSocket connection (one extension at a time)
 - `sendCommand(type, params)` -- Sends a command to the extension with a unique UUID and returns a Promise. The Promise resolves when the extension sends a matching response, or rejects on timeout (30 seconds) or disconnect.
+- `notify(type, params)` -- Sends a server-initiated message to the extension without waiting for a response (fire-and-forget). Used for push notifications such as pairing approval events.
 - `handleResponse(message)` -- Routes incoming responses to their pending Promise by ID.
 - Connection lifecycle: `setConnection(ws)`, `clearConnection()`, `isConnected()`.
+- The `sendCommand` timeout is configurable via the `options` parameter (e.g., `{ timeout: 60000 }`).
+
+### `src/paired-keys.js`
+
+CRUD module for managing paired agent API keys:
+
+- Reads and writes `config/paired-keys.json` in the data directory
+- Provides `addKey(agentName)` -- generates a new UUID API key, persists it, and returns the key
+- Provides `removeKey(apiKey)` -- revokes a specific API key by value
+- Provides `listKeys()` -- returns all paired agents with their names and keys
+- Provides `isValidKey(apiKey)` -- checks whether a given key exists in the store
 
 ## MCP Tools
 
-Ten tools are exposed to AI agents. All tools require the Chrome extension to be connected.
+Eleven tools are exposed to AI agents. All tools except `request_pairing` require both the Chrome extension to be connected and a valid paired API key.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
+| `request_pairing` | Initiate agent pairing to obtain an API key | `agent_name` |
 | `browser_create_tab` | Open a new tab with a URL | `url` |
 | `browser_close_tab` | Close a tab by ID | `tab_id` |
 | `browser_get_tabs` | List all open tabs | (none) |
@@ -228,7 +241,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `logs/` subdirectory, `config/server.json`
+Contents: `daemon.log`, `server.pid`, `server.port`, `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys)
 
 ## Build
 
