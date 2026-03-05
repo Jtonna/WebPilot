@@ -75,6 +75,37 @@ function validateKey(apiKey) {
 }
 
 /**
+ * Renames the agent associated with the given apiKey.
+ * Returns true if the entry was found and renamed, false otherwise.
+ *
+ * @param {string} apiKey
+ * @param {string} newName
+ * @returns {boolean}
+ */
+function renameKey(apiKey, newName) {
+  const keys = loadKeys();
+  const entry = keys.find((e) => e.key === apiKey);
+  if (!entry) return false;
+  entry.agentName = newName;
+  saveKeys(keys);
+  return true;
+}
+
+/**
+ * Updates the lastAccessed timestamp for the given apiKey.
+ *
+ * @param {string} apiKey
+ */
+function touchKey(apiKey) {
+  const keys = loadKeys();
+  const entry = keys.find((e) => e.key === apiKey);
+  if (entry) {
+    entry.lastAccessed = new Date().toISOString();
+    saveKeys(keys);
+  }
+}
+
+/**
  * Removes the entry with the given apiKey from the store.
  * Returns true if an entry was removed, false if no matching key was found.
  *
@@ -101,6 +132,7 @@ function listKeys() {
   return keys.map((entry) => ({
     agentName: entry.agentName,
     createdAt: entry.createdAt,
+    lastAccessed: entry.lastAccessed || null,
     key: entry.key,
     keyDisplay: entry.key.slice(0, 8) + '...',
   }));
@@ -112,6 +144,8 @@ module.exports = {
   generateKey,
   addKey,
   validateKey,
+  renameKey,
+  touchKey,
   revokeKey,
   listKeys,
 };
