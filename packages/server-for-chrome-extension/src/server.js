@@ -3,11 +3,24 @@ const cors = require('cors');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
 
 const { getDataDir } = require('./service/paths');
+
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 
 function writePidAndPortFiles(port) {
   const dataDir = getDataDir();
@@ -40,9 +53,10 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
 
   const server = http.createServer(app);
 
+  let currentHost = host;
+  let currentPublicHost = publicHost;
+
   const extensionBridge = createExtensionBridge(apiKey);
-  const wsUrl = `ws://${publicHost}:${port}`;
-  const connectionString = generateConnectionString(wsUrl, apiKey);
 
   const wss = new WebSocketServer({ noServer: true });
 
@@ -71,6 +85,31 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
 
         if (message.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+
+        if (message.type === 'set_network_mode') {
+          const networkEnabled = message.enabled;
+          currentHost = networkEnabled ? '0.0.0.0' : '127.0.0.1';
+          currentPublicHost = networkEnabled ? getLocalIP() : 'localhost';
+
+          // Persist preference
+          const configPath = path.join(getDataDir(), 'network.enabled');
+          try {
+            fs.writeFileSync(configPath, networkEnabled ? '1' : '0', 'utf8');
+          } catch (e) {
+            console.error('Failed to save network mode:', e.message);
+          }
+
+          console.log(`[network] Switching to ${networkEnabled ? 'network' : 'local'} mode, restarting listener on ${currentHost}:${port}`);
+
+          // Force-close all connections so server.close() completes immediately
+          server.closeAllConnections();
+          server.close(() => {
+            server.listen(port, currentHost, () => {
+              console.log(`[network] Now listening on ${currentHost}:${port}`);
+            });
+          });
           return;
         }
 
@@ -104,36 +143,43 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
   });
 
   app.get('/connect', (req, res) => {
+    const currentWsUrl = `ws://${currentPublicHost}:${port}`;
+    const currentConnectionString = generateConnectionString(currentWsUrl, apiKey);
+    const networkMode = currentHost === '0.0.0.0';
     res.json({
-      connectionString: connectionString,
-      serverUrl: wsUrl
+      connectionString: currentConnectionString,
+      serverUrl: currentWsUrl,
+      sseUrl: `http://${currentPublicHost}:${port}/sse`,
+      networkMode: networkMode
     });
   });
 
-  server.listen(port, host, () => {
+  server.listen(port, currentHost, () => {
     // Write PID and port files for service management
     writePidAndPortFiles(port);
 
-    const networkMode = host === '0.0.0.0';
+    const networkMode = currentHost === '0.0.0.0';
+    const currentWsUrl = `ws://${currentPublicHost}:${port}`;
+    const currentConnectionString = generateConnectionString(currentWsUrl, apiKey);
 
     // Startup info in YAML format
     console.log('server:');
-    console.log(`  host: ${host}`);
+    console.log(`  host: ${currentHost}`);
     console.log(`  port: ${port}`);
     console.log('  local:');
     console.log(`    sse: http://localhost:${port}/sse`);
     console.log(`    ws: ws://localhost:${port}`);
     console.log('  network:');
     if (networkMode) {
-      console.log(`    sse: http://${publicHost}:${port}/sse`);
-      console.log(`    ws: ws://${publicHost}:${port}`);
+      console.log(`    sse: http://${currentPublicHost}:${port}/sse`);
+      console.log(`    ws: ws://${currentPublicHost}:${port}`);
     } else {
       console.log('    sse: disabled');
       console.log('    ws: disabled');
     }
 
     // Connection string for pasting into the extension
-    console.log(`connection_string: ${connectionString}`);
+    console.log(`connection_string: ${currentConnectionString}`);
   });
 
   // Clean up PID/port files on shutdown
