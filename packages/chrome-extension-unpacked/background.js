@@ -112,6 +112,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       isEnabled = false;
       sendResponse({ success: true });
       break;
+
+    case 'PAIRING_RESPONSE':
+      sendResult(message.commandId, true, { approved: message.approved });
+      chrome.storage.local.get('pendingPairingRequests', (result) => {
+        const pending = (result.pendingPairingRequests || []).filter(
+          r => r.commandId !== message.commandId
+        );
+        chrome.storage.local.set({ pendingPairingRequests: pending });
+      });
+      sendResponse({ success: true });
+      break;
+
+    case 'REVOKE_KEY':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'revoke_key', apiKey: message.apiKey }));
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Not connected to server' });
+      }
+      break;
+
+    case 'GET_PAIRED_AGENTS':
+      chrome.storage.local.get('pairedAgents', (data) => {
+        sendResponse({ agents: data.pairedAgents || [] });
+      });
+      break;
+
+    case 'GET_PENDING_PAIRING':
+      chrome.storage.local.get('pendingPairingRequests', (data) => {
+        sendResponse({ requests: data.pendingPairingRequests || [] });
+      });
+      break;
   }
   return true;
 });
@@ -173,6 +205,16 @@ function connectWebSocket() {
       try {
         const message = JSON.parse(event.data);
         if (message.type === 'pong') return;
+
+        // Handle non-command messages from server
+        if (message.type === 'paired_agents_list') {
+          chrome.storage.local.set({ pairedAgents: message.agents });
+          try {
+            chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
+          } catch (_) { /* popup may not be open */ }
+          return;
+        }
+
         handleServerCommand(message);
       } catch (e) {
         console.error('Failed to parse message:', e);
@@ -315,6 +357,18 @@ async function handleServerCommand(message) {
         result = await typeText(params);
         organizeTab(params.tab_id);
         break;
+      case 'pairing_request': {
+        const pairingEntry = { commandId: id, agentName: params.agentName, timestamp: Date.now() };
+        const stored = await chrome.storage.local.get('pendingPairingRequests');
+        const pending = stored.pendingPairingRequests || [];
+        pending.push(pairingEntry);
+        await chrome.storage.local.set({ pendingPairingRequests: pending });
+        try {
+          chrome.runtime.sendMessage({ type: 'PAIRING_REQUEST', commandId: id, agentName: params.agentName });
+        } catch (_) { /* popup may not be open */ }
+        // Do NOT call sendResult — human must approve/deny via popup
+        return;
+      }
       default:
         throw new Error(`Unknown command type: ${type}`);
     }
