@@ -6,6 +6,28 @@ Reference documentation for AI agents integrating with the WebPilot browser cont
 
 The WebPilot MCP server provides browser tab control capabilities to AI agents via the Model Context Protocol (MCP). Agents can list, open, and close browser tabs in the user's Chrome browser.
 
+## Authentication
+
+All MCP tool calls (except `request_pairing`) require a valid API key obtained by pairing with the browser extension.
+
+### Providing the API Key
+
+Include the key with every request using either:
+
+- **HTTP header:** `X-API-Key: <your-key>` on the `/sse` and `/message` endpoints
+- **Query parameter:** `?apiKey=<your-key>` on the `/sse` and `/message` endpoints
+
+### First-Time Setup
+
+1. Call the `request_pairing` tool with a human-readable `agent_name`.
+2. The user will see an approve/deny prompt in the WebPilot Chrome extension popup.
+3. On approval, the tool returns your API key.
+4. Save the key to a file named `webpilot.key` in your working directory for reuse across sessions.
+
+### Auth Error
+
+Unauthenticated or invalid-key requests receive MCP error code `-32001`.
+
 ## Security: Restricted Mode
 
 **Restricted mode is ON by default.** All MCP commands that interact with web pages are blocked until the domain is explicitly whitelisted by the user. This prevents automated actions on sensitive sites without user consent.
@@ -34,6 +56,35 @@ Blocked: [domain] is not whitelisted. The human must manually add this site to t
 Users can add domains to the whitelist via the WebPilot extension popup UI. Domain matching is domain-level (e.g., whitelisting `example.com` allows both `example.com` and `subdomain.example.com`).
 
 ## Available Tools
+
+### request_pairing
+
+Request pairing with the browser extension. A human will see an approve/deny prompt in the WebPilot extension popup. This is the only tool that works without authentication.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_name` | string | Yes | Human-readable name for this agent, shown in the approval prompt |
+
+**Returns (approved):**
+```json
+{
+  "apiKey": "wp_abc123..."
+}
+```
+
+**Returns (denied):**
+```json
+{
+  "error": "Pairing request denied by user"
+}
+```
+
+**Notes:**
+- Save the returned `apiKey` to `webpilot.key` in your working directory to reuse it across sessions
+- This is the only MCP tool that does not require an API key
+
+---
 
 ### browser_get_tabs
 
@@ -826,6 +877,20 @@ All tabs have a `windowId` that identifies which browser window they belong to.
 
 ## Error Handling
 
+### Not Authenticated
+
+If a tool call is made without a valid API key (or with no key at all):
+```json
+{
+  "code": -32001,
+  "message": "Not authenticated"
+}
+```
+
+**Cause:** Missing or invalid `X-API-Key` header / `apiKey` query parameter.
+
+**Solution:** Call `request_pairing` to obtain an API key, then include it with all subsequent requests.
+
 ### Tab Not Found
 
 If you try to close a tab that doesn't exist:
@@ -907,8 +972,10 @@ Agent:
 ### Adding to Claude Code
 
 ```bash
-claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse"
+claude mcp add -s project --transport sse webpilot "http://localhost:3456/sse?apiKey=<your-key>"
 ```
+
+Replace `<your-key>` with the API key obtained from `request_pairing`. If you saved it to `webpilot.key`, retrieve it with `cat webpilot.key`.
 
 ### Prerequisites
 
