@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const serverUrlDisplay = document.getElementById('serverUrlDisplay');
   const connectingUrlDisplay = document.getElementById('connectingUrlDisplay');
   const disconnectedUrlDisplay = document.getElementById('disconnectedUrlDisplay');
-  const settingsSection = document.getElementById('settingsSection');
   const focusNewTabsToggle = document.getElementById('focusNewTabs');
   const tabModeSelect = document.getElementById('tabMode');
   const restrictedModeToggle = document.getElementById('restrictedMode');
@@ -26,6 +25,44 @@ document.addEventListener('DOMContentLoaded', () => {
   const pairedAgentsSection = document.getElementById('pairedAgentsSection');
   const pairedAgentsList = document.getElementById('pairedAgentsList');
   const noAgentsMessage = document.getElementById('noAgentsMessage');
+
+  // Tab switching
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      switchTab(btn.dataset.tab);
+    });
+  });
+
+  function switchTab(tabName) {
+    tabBtns.forEach((btn) => {
+      if (btn.dataset.tab === tabName) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    tabContents.forEach((content) => {
+      if (content.id === `tab-${tabName}`) {
+        content.classList.add('active');
+      } else {
+        content.classList.remove('active');
+      }
+    });
+
+    // Load pairing data when switching to pairing tab
+    if (tabName === 'pairing') {
+      loadPairingData();
+    }
+
+    // Load settings when switching to settings tab
+    if (tabName === 'settings') {
+      loadSettings();
+    }
+  }
 
   loadStateAndShow();
 
@@ -77,6 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
           serverUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
         });
         loadPairingData();
+        loadRestrictedModeSettings();
       } else if (response && (response.connectionStatus === 'connecting' || response.connectionStatus === 'error')) {
         showView('connecting');
         chrome.storage.local.get(['serverUrl'], (result) => {
@@ -124,6 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
         serverUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
         loadPairingData();
+        loadRestrictedModeSettings();
       } else if (status === 'connecting') {
         showView('connecting');
         connectingUrlDisplay.textContent = serverUrl;
@@ -151,10 +190,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadSettings() {
-    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'restrictedModeEnabled', 'whitelistedDomains'], (result) => {
+    chrome.storage.local.get(['focusNewTabs', 'tabMode'], (result) => {
       focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
       tabModeSelect.value = result.tabMode || 'group'; // default 'group'
+    });
+  }
 
+  function loadRestrictedModeSettings() {
+    chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
       // Default restrictedModeEnabled to true if undefined
       const restrictedEnabled = result.restrictedModeEnabled !== undefined ? result.restrictedModeEnabled : true;
       restrictedModeToggle.checked = restrictedEnabled;
@@ -402,12 +445,10 @@ document.addEventListener('DOMContentLoaded', () => {
     pairedAgentsList.innerHTML = '';
 
     if (agents.length === 0) {
-      pairedAgentsSection.style.display = 'none';
       noAgentsMessage.style.display = 'block';
       return;
     }
 
-    pairedAgentsSection.style.display = 'block';
     noAgentsMessage.style.display = 'none';
 
     agents.forEach((agent) => {
@@ -432,10 +473,14 @@ document.addEventListener('DOMContentLoaded', () => {
       revokeBtn.className = 'revoke-btn';
       revokeBtn.textContent = 'Revoke';
       revokeBtn.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, () => {
-          item.remove();
-          if (pairedAgentsList.children.length === 0) {
-            noAgentsMessage.style.display = 'block';
+        console.log('Revoking agent key:', agent.key);
+        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, (response) => {
+          console.log('Revoke response:', response);
+          if (response && response.success) {
+            item.remove();
+            if (pairedAgentsList.children.length === 0) {
+              noAgentsMessage.style.display = 'block';
+            }
           }
         });
       });
@@ -459,20 +504,6 @@ document.addEventListener('DOMContentLoaded', () => {
     connectedView.classList.add('hidden');
     connectingView.classList.add('hidden');
     disconnectedView.classList.add('hidden');
-
-    // Show settings when connected or disconnected (has config)
-    if (viewName === 'connected' || viewName === 'disconnected') {
-      settingsSection.classList.remove('hidden');
-      loadSettings();
-    } else {
-      settingsSection.classList.add('hidden');
-    }
-
-    // Hide pairing sections when not connected
-    if (viewName !== 'connected') {
-      pairingRequestsSection.style.display = 'none';
-      pairedAgentsSection.style.display = 'none';
-    }
 
     if (viewName === 'connected') {
       connectedView.classList.remove('hidden');

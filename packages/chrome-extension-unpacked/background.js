@@ -199,6 +199,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'REVOKE_KEY':
+      console.log('REVOKE_KEY received, apiKey:', message.apiKey, 'wsConnected:', wsConnection && wsConnection.readyState === WebSocket.OPEN);
       if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
         wsConnection.send(JSON.stringify({ type: 'revoke_key', apiKey: message.apiKey }));
         sendResponse({ success: true });

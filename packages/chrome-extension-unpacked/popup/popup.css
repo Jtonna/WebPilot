@@ -21,7 +21,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .logo {
@@ -45,6 +45,46 @@ body {
   border-radius: 4px;
 }
 
+/* Tab Bar */
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 16px;
+  gap: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: #374151;
+}
+
+.tab-btn.active {
+  color: #16a34a;
+  border-bottom-color: #16a34a;
+}
+
+/* Tab Content */
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Views */
 .view {
   display: block;
 }
@@ -52,7 +92,6 @@ body {
 .view.hidden {
   display: none;
 }
-
 
 .error-message {
   margin-top: 12px;
@@ -200,26 +239,14 @@ body {
   cursor: not-allowed;
 }
 
-/* Settings Section */
-.settings-section {
+/* Dashboard Section (restricted mode area) */
+.dashboard-section {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #e5e7eb;
 }
 
-.settings-section.hidden {
-  display: none;
-}
-
-.settings-header {
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-}
-
+/* Settings Rows */
 .setting-row {
   display: flex;
   align-items: center;
@@ -454,7 +481,10 @@ body {
 
 /* Pairing & Agents Sections */
 .section {
-  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.section + .section {
   padding-top: 16px;
   border-top: 1px solid #e5e7eb;
 }
