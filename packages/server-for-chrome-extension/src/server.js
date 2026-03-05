@@ -74,6 +74,14 @@ function createServer({ port, apiKey, host = '127.0.0.1', publicHost = 'localhos
           return;
         }
 
+        if (message.type === 'rename_agent') {
+          const { apiKey: keyToRename, newName } = message;
+          const renamed = pairedKeys.renameKey(keyToRename, newName);
+          console.log(`[pairing] Rename key ${keyToRename.slice(0, 8)}...: ${renamed ? 'renamed to ' + newName : 'not found'}`);
+          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
+          return;
+        }
+
         if (message.type === 'list_paired_agents') {
           const agents = pairedKeys.listKeys();
           console.log(`[pairing] Listed ${agents.length} paired agent(s)`);

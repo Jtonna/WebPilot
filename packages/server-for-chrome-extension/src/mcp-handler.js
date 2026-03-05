@@ -437,6 +437,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
           };
         }
         console.log(`[auth] Authorized tool call: ${params.name}`);
+        pairedKeys.touchKey(effectiveKey);
       }
 
       try {
