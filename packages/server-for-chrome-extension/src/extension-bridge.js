@@ -77,12 +77,19 @@ function createExtensionBridge(apiKey) {
     }
   }
 
+  function notify(message) {
+    if (wsConnection && wsConnection.readyState === 1) {
+      wsConnection.send(JSON.stringify(message));
+    }
+  }
+
   return {
     setConnection,
     clearConnection,
     isConnected,
     sendCommand,
-    handleResponse
+    handleResponse,
+    notify
   };
 }
 

@@ -469,6 +469,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys) {
         const response = await extensionBridge.sendCommand('pairing_request', { agentName }, { timeout: 120000 });
         if (response.approved) {
           const key = pairedKeys.addKey(agentName);
+          extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
           return {
             content: [{
               type: 'text',
