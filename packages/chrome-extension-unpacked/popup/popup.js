@@ -29,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const pairedAgentsSection = document.getElementById('pairedAgentsSection');
   const pairedAgentsList = document.getElementById('pairedAgentsList');
   const noAgentsMessage = document.getElementById('noAgentsMessage');
+  const checkFormatterUpdatesBtn = document.getElementById('checkFormatterUpdates');
+  const formatterUpdateStatus = document.getElementById('formatterUpdateStatus');
 
   // Tab switching
   const tabBtns = document.querySelectorAll('.tab-btn');
@@ -72,6 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   disconnectBtn.addEventListener('click', handleDisconnect);
   retryBtn.addEventListener('click', handleRetry);
+  checkFormatterUpdatesBtn.addEventListener('click', handleCheckFormatterUpdates);
 
   focusNewTabsToggle.addEventListener('change', () => {
     chrome.storage.local.set({ focusNewTabs: focusNewTabsToggle.checked });
@@ -223,6 +226,35 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ type: 'RETRY_AUTO_CONNECT' }, () => {
       retryBtn.disabled = false;
       retryBtn.textContent = 'Retry';
+    });
+  }
+
+  function handleCheckFormatterUpdates() {
+    const btn = checkFormatterUpdatesBtn;
+    const status = formatterUpdateStatus;
+
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    status.style.display = 'none';
+
+    chrome.runtime.sendMessage({ type: 'CHECK_FORMATTER_UPDATES' }, (response) => {
+      btn.disabled = false;
+      btn.textContent = 'Check for formatter updates';
+      status.style.display = 'block';
+
+      if (response && response.updated) {
+        status.textContent = `Updated to version ${response.toVersion}`;
+        status.style.color = '#4CAF50';
+      } else if (response && !response.error) {
+        status.textContent = `Already up to date (version ${response.currentVersion})`;
+        status.style.color = '#666';
+      } else {
+        status.textContent = 'Update check failed';
+        status.style.color = '#f44336';
+      }
+
+      // Auto-hide after 5 seconds
+      setTimeout(() => { status.style.display = 'none'; }, 5000);
     });
   }
 

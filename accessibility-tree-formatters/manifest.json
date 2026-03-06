@@ -1,0 +1,26 @@
+{
+  "version": "1",
+  "platforms": {
+    "threads": {
+      "match": "threads.com",
+      "entry": "threads/router.js"
+    },
+    "zillow": {
+      "match": "zillow.com",
+      "entry": "zillow/router.js"
+    }
+  },
+  "default": "default.js",
+  "files": [
+    "default.js",
+    "threads/router.js",
+    "threads/home.js",
+    "threads/search.js",
+    "threads/activity.js",
+    "zillow/router.js",
+    "zillow/home.js",
+    "zillow/search.js",
+    "zillow/detail.js",
+    "zillow/detail_page.js"
+  ]
+}

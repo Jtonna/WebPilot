@@ -171,14 +171,14 @@ Site-specific formatters extract structured data (posts, feeds, listings) from a
 
 ### How Platform Detection Works
 
-When `browser_get_accessibility_tree` is called with `usePlatformOptimizer: true` (the default), `handlers/accessibility.js` calls `detectPlatform()` which checks the tab URL and returns a `{ formatter, platform }` object that routes to the appropriate formatter automatically.
+The MCP server's `formatter-manager.js` receives raw nodes and the tab URL from the extension. It reads `manifest.json` and matches each platform's `match` string against the URL hostname. The matched formatter is loaded from the local cache. No extension changes are needed for new formatters.
 
 ### Step 1: Create the Formatter
 
-Create `packages/chrome-extension-unpacked/formatters/<site>.js`:
+For multi-page sites create `accessibility-tree-formatters/<site>/router.js`; for single-page sites create `accessibility-tree-formatters/<site>.js`. Use CommonJS exports:
 
 ```javascript
-export function formatPlatformTree(nodes) {
+function formatYourSiteTree(nodes) {
   const nodeMap = new Map();
   const refMap = new Map();
   let refCounter = 1;
@@ -216,10 +216,12 @@ export function formatPlatformTree(nodes) {
   return {
     tree: 'Your formatted output string',
     elementCount: refCounter - 1,
-    refs: refs,  // REQUIRED: consumed by handlers/accessibility.js for click/scroll targeting
+    refs: refs,  // REQUIRED: consumed by formatter-manager.js for click/scroll targeting
     // Optional platform-specific counts: postCount, listingCount, etc.
   };
 }
+
+module.exports = { formatYourSiteTree };
 ```
 
 **Return format requirements:**
@@ -232,25 +234,30 @@ export function formatPlatformTree(nodes) {
 
 Omitting `refs` will break click/scroll-by-ref functionality.
 
-### Step 2: Add Platform Detection
+### Step 2: Register in manifest.json
 
-Edit `packages/chrome-extension-unpacked/handlers/accessibility.js`:
+Edit `accessibility-tree-formatters/manifest.json`:
 
-**Add import for your formatter**, then add your platform to `detectPlatform()`:
+- Add a platform entry under `"platforms"` with a `"match"` hostname substring and an `"entry"` path pointing to your formatter file.
+- Add all new formatter files to the `"files"` array so the auto-updater downloads them.
+- Bump `"version"` to trigger auto-updates for existing users.
 
-```javascript
-function detectPlatform(url) {
-  try {
-    const hostname = new URL(url).hostname;
-    if (hostname.includes('threads.com')) return { formatter: formatThreadsTree, platform: 'threads' };
-    if (hostname.includes('zillow.com')) return { formatter: formatZillowTree, platform: 'zillow' };
-    if (hostname.includes('yoursite.com')) return { formatter: formatYourSiteTree, platform: 'yoursite' };  // Add here
-    return null;
-  } catch {
-    return null;
-  }
+```json
+{
+  "version": "<bumped-version>",
+  "platforms": {
+    "yoursite": {
+      "match": "yoursite.com",
+      "entry": "accessibility-tree-formatters/yoursite/router.js"
+    }
+  },
+  "files": [
+    "accessibility-tree-formatters/yoursite/router.js"
+  ]
 }
 ```
+
+> **Auto-updater note:** The auto-updater compares the remote `manifest.json` `"version"` against the locally cached version. If `"version"` is not bumped, users never receive the update. Every new file must be listed in the `"files"` array — the updater downloads exactly those files and nothing else.
 
 ### Step 3: Update Documentation
 
@@ -258,7 +265,7 @@ Update MCP_SERVER.md and MCP_INTEGRATION.md to list the new platform under `brow
 
 ### Formatter Tips
 
-- **Router pattern:** If your site has multiple distinct page layouts (e.g., home, search, detail), create a top-level router file (`<site>.js`) that delegates to page-specific sub-formatters (`<site>_home.js`, `<site>_search.js`). See `formatters/threads.js` and `formatters/zillow.js` for examples.
+- **Router pattern:** If your site has multiple distinct page layouts (e.g., home, search, detail), create a top-level router file (`<site>/router.js`) that delegates to page-specific sub-formatters (`<site>/<site>_home.js`, `<site>/<site>_search.js`). See `accessibility-tree-formatters/threads/router.js` and `accessibility-tree-formatters/zillow/router.js` for examples.
 - Use `findChildrenByRole(nodeId, role)` to search for elements recursively
 - Profile pictures, buttons, links often mark content boundaries
 - Parse button names for counts (e.g., "Like 5" -> 5 likes)
@@ -337,7 +344,8 @@ No new permissions needed -- uses existing `tabs` permission.
 2. **Restart the MCP server:** If using `npm run dev`, it auto-reloads. Otherwise run `npm run dev`.
 3. **Restart Claude Code** to pick up new tool definitions.
 4. **Test via Claude Code:** Ask Claude to use your new tool.
-5. **Debug issues:**
+5. **Formatter-only changes:** Restart the MCP server to clear the formatter cache. The extension does not need reloading for formatter-only changes.
+6. **Debug issues:**
    - Extension logs: `chrome://extensions` -> click "Service worker" link on WebPilot -> Console tab
    - Server logs: Check terminal running `npm run dev`
    - "Unknown command type" -> case not added to `handleServerCommand`
@@ -364,8 +372,9 @@ Use this when adding a new tool:
 Use this when adding a site-specific formatter:
 
 ```
-[ ] 1. formatters/<site>.js - Create formatter (return tree, elementCount, refs)
-[ ] 2. handlers/accessibility.js - Import formatter and add to detectPlatform()
-[ ] 3. MCP_SERVER.md and MCP_INTEGRATION.md - Document the new platform
-[ ] 4. Test with browser_get_accessibility_tree on the target site
+[ ] 1. accessibility-tree-formatters/<site>/router.js — Create formatter (CommonJS, returns tree, elementCount, refs)
+[ ] 2. accessibility-tree-formatters/manifest.json — Add platform entry, add files to "files" array, bump "version"
+[ ] 3. docs/ — Document the new platform
+[ ] 4. Push to main so auto-updater fetches the new version
+[ ] 5. Test with browser_get_accessibility_tree on target site
 ```

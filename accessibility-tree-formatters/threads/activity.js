@@ -3,7 +3,7 @@
  * Extracts follows, likes, milestones, replies, and polls from the activity feed
  */
 
-export function formatActivityPage(context) {
+function formatActivityPage(context) {
   const {
     nodeMap,
     getRef,
@@ -316,3 +316,5 @@ export function formatActivityPage(context) {
 
   return activity;
 }
+
+module.exports = { formatActivityPage };

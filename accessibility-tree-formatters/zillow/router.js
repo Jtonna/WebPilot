@@ -4,12 +4,12 @@
  * Detects property detail overlay and includes overlay data when present.
  */
 
-import { formatHomePage } from './zillow_home.js';
-import { formatSearchPage } from './zillow_search.js';
-import { formatDetailOverlay } from './zillow_detail.js';
-import { formatDetailPage } from './zillow_detail_page.js';
+const { formatHomePage } = require('./home');
+const { formatSearchPage } = require('./search');
+const { formatDetailOverlay } = require('./detail');
+const { formatDetailPage } = require('./detail_page');
 
-export function formatZillowTree(nodes) {
+function formatZillowTree(nodes) {
   // Build node map for fast lookups
   const nodeMap = new Map();
   for (const node of nodes) {
@@ -203,3 +203,5 @@ export function formatZillowTree(nodes) {
     refs
   };
 }
+
+module.exports = { formatZillowTree };

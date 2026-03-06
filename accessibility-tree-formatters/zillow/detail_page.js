@@ -3,7 +3,7 @@
  * Extracts property information from standalone /homedetails/ pages.
  */
 
-export function formatDetailPage(context) {
+function formatDetailPage(context) {
   const { nodeMap, getRef, getNodeName, getNodeRole, getNodeUrl, findChildrenByRole, rootNode } = context;
 
   // Extract property address - try multiple sources
@@ -186,3 +186,5 @@ function collectTexts(nodeId, context) {
   walk(nodeId);
   return texts;
 }
+
+module.exports = { formatDetailPage };

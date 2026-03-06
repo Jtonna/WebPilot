@@ -3,7 +3,7 @@
  * Handles search landing page, search results, and autocomplete suggestions
  */
 
-export function formatSearchPage(context) {
+function formatSearchPage(context) {
   const {
     nodeMap,
     getRef,
@@ -733,3 +733,5 @@ function parseEngagementCount(str) {
   }
   return parseInt(str, 10) || 0;
 }
+
+module.exports = { formatSearchPage };

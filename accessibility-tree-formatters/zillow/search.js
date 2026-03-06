@@ -3,7 +3,7 @@
  * Extracts search controls, filters, listings, pagination, and sort from search results.
  */
 
-export function formatSearchPage(context) {
+function formatSearchPage(context) {
   const { nodeMap, getRef, getNodeName, getNodeRole, getNodeUrl, findChildrenByRole, rootNode } = context;
 
   // --- Search controls ---
@@ -526,3 +526,5 @@ function extractActiveFilter(filtersRegion, context) {
     applyRef
   };
 }
+
+module.exports = { formatSearchPage };

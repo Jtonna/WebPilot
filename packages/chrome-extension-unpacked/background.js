@@ -3,7 +3,7 @@
  * Handles WebSocket connection and routes commands to handlers.
  */
 
-import { clearRefs } from './accessibility-storage.js';
+import { clearRefs, storeRefs, storeRefContext } from './accessibility-storage.js';
 import { clearPosition } from './utils/mouse-state.js';
 import { cleanup as cleanupDebugger } from './utils/debugger.js';
 import { createTab, closeTab, getTabs, organizeTab, getWebPilotWindowId } from './handlers/tabs.js';
@@ -259,6 +259,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, error: 'Not connected' });
       }
       break;
+
+    case 'CHECK_FORMATTER_UPDATES':
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        const updateCheckRequestId = `update-check-${Date.now()}`;
+        let responseReceived = false;
+
+        // Set up a timeout for the response
+        const timeout = setTimeout(() => {
+          if (!responseReceived) {
+            responseReceived = true;
+            sendResponse({ error: 'Request timeout' });
+          }
+        }, 10000);
+
+        // Temporarily store the response handler
+        const originalOnMessage = wsConnection.onmessage;
+        const tempHandler = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'formatter_update_result') {
+              if (!responseReceived) {
+                responseReceived = true;
+                clearTimeout(timeout);
+                wsConnection.onmessage = originalOnMessage;
+                sendResponse(message);
+              }
+            }
+          } catch (e) {
+            console.error('Failed to parse formatter update response:', e);
+          }
+        };
+
+        wsConnection.onmessage = tempHandler;
+
+        // Send the check formatter updates request
+        wsConnection.send(JSON.stringify({
+          type: 'check_formatter_updates'
+        }));
+      } else {
+        sendResponse({ error: 'Not connected to server' });
+      }
+      break;
   }
   return true;
 });
@@ -328,6 +370,20 @@ function connectWebSocket() {
           try {
             chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
           } catch (_) { /* popup may not be open */ }
+          return;
+        }
+
+        // When the server sends ref mappings after server-side formatting
+        if (message.type === 'store_refs') {
+          const { tabId, refs, refContexts } = message;
+          if (refs) {
+            storeRefs(tabId, refs);
+          }
+          if (refContexts) {
+            for (const [ref, context] of Object.entries(refContexts)) {
+              storeRefContext(tabId, ref, context);
+            }
+          }
           return;
         }
 

@@ -76,6 +76,10 @@ function getBinaryPath() {
   return process.execPath;
 }
 
+function getFormatterDir() {
+  return path.join(getDataDir(), 'formatters');
+}
+
 function loadConfig() {
   const configPath = getConfigPath();
   try {
@@ -117,4 +121,5 @@ module.exports = {
   loadConfig,
   getPort,
   getApiKey,
+  getFormatterDir,
 };

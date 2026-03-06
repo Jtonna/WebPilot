@@ -59,7 +59,8 @@ Sets up the Express HTTP server and WebSocket server:
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and a `WebSocketServer` (noServer mode, manual upgrade handling)
 - Authenticates WebSocket connections via `?apiKey=` query parameter
-- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'rename_agent' }` renames a paired agent; `{ type: 'list_paired_agents' }` returns all currently paired agents; `{ type: 'set_network_mode' }` toggles between local-only and LAN mode at runtime (see [Network Mode](#network-mode))
+- On startup, calls `formatterManager.init()` to load the formatter manifest from `<dataDir>/formatters/`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks.
+- Handles WebSocket messages from the extension: `{ type: 'ping' }` responds with `{ type: 'pong' }` (keep-alive mechanism); `{ type: 'revoke_key' }` removes a paired agent API key; `{ type: 'rename_agent' }` renames a paired agent; `{ type: 'list_paired_agents' }` returns all currently paired agents; `{ type: 'set_network_mode' }` toggles between local-only and LAN mode at runtime (see [Network Mode](#network-mode)); `{ type: 'check_formatter_updates' }` triggers an on-demand formatter update check and responds with `{ type: 'formatter_update_result' }`
 - On WebSocket connection, registers with the extension bridge
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
@@ -75,8 +76,10 @@ Implements the MCP protocol:
 - **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing` is exempted from this check. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
+- **Server-side formatting** -- For `browser_get_accessibility_tree`, the server receives raw nodes from the extension and formats them via `formatterManager.formatTree(url, nodes)`. Passing `usePlatformOptimizer: false` forces the default formatter instead of a platform-matched one. After formatting, ancestry context is built using `extractAncestryContext`, and a `store_refs` notification is pushed to the extension via `extensionBridge.notify()`.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
 - **Chain execution** -- `browser_request_chain` is handled entirely server-side. It calls `handleToolCall()` internally for each step and never sends a command directly to the extension bridge.
+- `createMcpHandler()` now accepts a 4th parameter `formatterManager`.
 
 ### `src/extension-bridge.js`
 
@@ -101,6 +104,21 @@ CRUD module for managing paired agent API keys:
 - Provides `revokeKey(apiKey)` -- removes a specific API key from the store; returns true if removed, false if not found
 - Provides `listKeys()` -- returns all paired agents with their `agentName`, `createdAt`, `lastAccessed` (or null), full `key`, and truncated `keyDisplay` (first 8 characters)
 
+### `src/formatter-manager.js`
+
+Loads and runs accessibility tree formatters:
+
+- `init()` -- Reads the formatter manifest from the data directory's `formatters/` folder. If no local formatters exist (first run), defers to the updater to download them from GitHub.
+- `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the manifest and runs the matched formatter. Falls back to the default formatter if no platform matches.
+- `reload()` -- Clears the require cache for all loaded formatter modules and re-reads the manifest. Called after an update is applied.
+
+### `src/formatter-updater.js`
+
+GitHub-based auto-updater for accessibility tree formatters:
+
+- `init(manager)` -- Wires the updater to the given formatter manager instance. Runs an immediate update check on startup, then schedules recurring checks every hour.
+- `checkForUpdates()` -- Fetches the remote manifest from `raw.githubusercontent.com/Jtonna/WebPilot/main/accessibility-tree-formatters/manifest.json`, compares versions against the locally installed manifest, downloads all files listed in the `files` array for any updated formatters, then calls `manager.reload()`. Each fetch uses a 10-second timeout.
+
 ## MCP Tools
 
 Eleven tools are exposed to AI agents. All tools except `request_pairing` require both the Chrome extension to be connected and a valid paired API key. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
@@ -111,7 +129,7 @@ Eleven tools are exposed to AI agents. All tools except `request_pairing` requir
 | `browser_create_tab` | Open a new tab with a URL | `url` |
 | `browser_close_tab` | Close a tab by ID | `tab_id` |
 | `browser_get_tabs` | List all open tabs | (none) |
-| `browser_get_accessibility_tree` | Get the accessibility tree of a tab | `tab_id`, `usePlatformOptimizer?` |
+| `browser_get_accessibility_tree` | Get the accessibility tree of a tab. Server formats the raw nodes via `formatterManager.formatTree`; set `usePlatformOptimizer: false` to force the default formatter. Sends a `store_refs` notification to the extension as a side-effect. | `tab_id`, `usePlatformOptimizer?` |
 | `browser_inject_script` | Inject a script from a URL into a tab | `tab_id`, `script_url`, `keep_injected?` |
 | `browser_execute_js` | Execute JavaScript in page context | `tab_id`, `code` |
 | `browser_click` | Click by ref, selector, or coordinates | `tab_id`, `ref?`, `selector?`, `x?`, `y?`, `button?`, `clickCount?`, `delay?`, `showCursor?` |
@@ -250,7 +268,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys)
+Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys), `formatters/` (contains `manifest.json` and formatter JS files; downloaded from GitHub on first run and kept up to date by the auto-updater)
 
 ## Build
 
@@ -264,7 +282,7 @@ npm run build:linux  # node18-linux-x64
 
 Output directory: `dist/`.
 
-The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The `cli.js` file is the `bin` entry point in `package.json`, so pkg uses it as the binary's main entry.
+The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The `cli.js` file is the `bin` entry point in `package.json`, so pkg uses it as the binary's main entry. Formatters are not bundled in the binary -- they are downloaded from GitHub on first run.
 
 ## Dependencies
 

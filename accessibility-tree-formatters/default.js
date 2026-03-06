@@ -1,4 +1,4 @@
-export function formatAccessibilityTree(nodes) {
+function formatAccessibilityTree(nodes) {
   return defaultFormatter(nodes);
 }
 
@@ -127,7 +127,7 @@ function defaultFormatter(nodes) {
  * @param {Map} nodeMap - Map of nodeId -> node for parent lookup
  * @returns {Object} Context with role, name, parent info, and ancestor content
  */
-export function extractAncestryContext(node, nodeMap) {
+function extractAncestryContext(node, nodeMap) {
   const context = {
     role: node.role?.value,
     name: node.name?.value?.slice(0, 100),
@@ -157,3 +157,5 @@ export function extractAncestryContext(node, nodeMap) {
 
   return context;
 }
+
+module.exports = { formatAccessibilityTree, extractAncestryContext };

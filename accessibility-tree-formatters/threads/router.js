@@ -3,11 +3,11 @@
  * Detects page type and delegates to appropriate formatter
  */
 
-import { formatActivityPage } from './threads_activity.js';
-import { formatHomePage } from './threads_home.js';
-import { formatSearchPage } from './threads_search.js';
+const { formatActivityPage } = require('./activity');
+const { formatHomePage } = require('./home');
+const { formatSearchPage } = require('./search');
 
-export function formatThreadsTree(nodes) {
+function formatThreadsTree(nodes) {
   // Build node map for fast lookups
   const nodeMap = new Map();
   for (const node of nodes) {
@@ -266,3 +266,5 @@ export function formatThreadsTree(nodes) {
     refs
   };
 }
+
+module.exports = { formatThreadsTree };

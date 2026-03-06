@@ -3,7 +3,7 @@
  * Extracts posts from the home feed or profile pages
  */
 
-export function formatHomePage(context) {
+function formatHomePage(context) {
   const {
     nodeMap,
     getRef,
@@ -243,3 +243,5 @@ export function formatHomePage(context) {
     ghostCount: formattedGhosts.length
   };
 }
+
+module.exports = { formatHomePage };

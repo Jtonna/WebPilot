@@ -3,7 +3,7 @@
  * Extracts property detail data from the overlay region shown on search results.
  */
 
-export function formatDetailOverlay(overlayRegion, context) {
+function formatDetailOverlay(overlayRegion, context) {
   const { getRef, getNodeName, getNodeRole, getNodeUrl, findChildrenByRole } = context;
 
   const address = getNodeName(overlayRegion);
@@ -118,3 +118,5 @@ function collectTexts(nodeId, context) {
   walk(nodeId);
   return texts;
 }
+
+module.exports = { formatDetailOverlay };

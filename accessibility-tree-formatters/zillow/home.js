@@ -3,7 +3,7 @@
  * Extracts search controls, recommended listings, and saved searches from the homepage.
  */
 
-export function formatHomePage(context) {
+function formatHomePage(context) {
   const { nodeMap, getRef, getNodeName, getNodeRole, getNodeUrl, findChildrenByRole, rootNode } = context;
 
   // --- Search controls ---
@@ -291,3 +291,5 @@ function collectTexts(nodeId, context) {
   walk(nodeId);
   return texts;
 }
+
+module.exports = { formatHomePage };
