@@ -36,13 +36,18 @@ let config = {
 // Restricted mode whitelist cache
 let restrictedModeCache = {
   enabled: true,  // default ON
-  domains: []     // default empty = block all
+  domains: [],    // default empty = block all
+  loaded: false   // true once storage has been read
 };
 
 // Initialize cache from storage
-chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
-  restrictedModeCache.enabled = result.restrictedModeEnabled !== false; // default true
-  restrictedModeCache.domains = result.whitelistedDomains || [];
+let _whitelistReady = new Promise((resolve) => {
+  chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
+    restrictedModeCache.enabled = result.restrictedModeEnabled !== false; // default true
+    restrictedModeCache.domains = result.whitelistedDomains || [];
+    restrictedModeCache.loaded = true;
+    resolve();
+  });
 });
 
 // Extension lifecycle
@@ -512,6 +517,11 @@ function updateConnectionStatus(status, error = null, errorType = null) {
 async function handleServerCommand(message) {
   const { id, type, params } = message;
 
+  // Coerce tab_id to integer — MCP clients may send it as a string
+  if (params && params.tab_id !== undefined) {
+    params.tab_id = parseInt(params.tab_id, 10);
+  }
+
   try {
     await checkWhitelist(type, params);
 
@@ -601,6 +611,11 @@ function isDomainWhitelisted(url) {
 }
 
 async function checkWhitelist(type, params) {
+  // Wait for cache to be populated from storage on service worker startup
+  if (!restrictedModeCache.loaded) {
+    await _whitelistReady;
+  }
+
   if (!restrictedModeCache.enabled) return; // restricted mode off, allow all
   if (type === 'get_tabs') return; // get_tabs is always allowed
 
@@ -611,9 +626,9 @@ async function checkWhitelist(type, params) {
     try {
       const tab = await chrome.tabs.get(params.tab_id);
       url = tab.url;
-    } catch {
+    } catch (err) {
       // Tab doesn't exist or can't be accessed — fail-closed
-      throw new Error('Blocked: Unable to verify tab domain. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.');
+      throw new Error(`Blocked: Unable to verify tab domain (tab_id=${params.tab_id}, reason=${err.message}). The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
     }
   } else {
     return; // no tab context to check
@@ -622,7 +637,7 @@ async function checkWhitelist(type, params) {
   if (!url || !isDomainWhitelisted(url)) {
     let domain = 'unknown';
     try { domain = new URL(url).hostname; } catch {}
-    throw new Error(`Blocked: ${domain} is not whitelisted. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
+    throw new Error(`Blocked: ${domain} is not whitelisted. Whitelist contains: [${restrictedModeCache.domains.join(', ')}]. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
   }
 }
 
