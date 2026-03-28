@@ -302,6 +302,14 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
       }
     },
     {
+      name: 'webpilot_reload_formatters',
+      description: 'Reload all formatters (both auto-updated and custom) without restarting the server. Use this after adding or modifying custom formatter files in the custom-formatters directory. Returns the updated formatter state.',
+      inputSchema: {
+        type: 'object',
+        properties: {}
+      }
+    },
+    {
       name: 'browser_request_chain',
       description: 'Execute multiple tool calls sequentially and return combined results. Best used for sequential browser operations that do not need intermediate LLM reasoning between steps (e.g., click then get accessibility tree). Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
@@ -452,7 +460,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 
     if (method === 'tools/call') {
       // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
-      const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info';
+      const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info' || params.name === 'webpilot_reload_formatters';
       if (!noAuthRequired && isPairingRequired()) {
         const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
@@ -574,6 +582,12 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     if (name === 'webpilot_get_formatter_info') {
       const info = formatterManager.getFormatterInfo(args.platform);
       return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+    }
+
+    if (name === 'webpilot_reload_formatters') {
+      formatterManager.reload();
+      const info = formatterManager.getFormatterInfo();
+      return { content: [{ type: 'text', text: JSON.stringify({ reloaded: true, ...info }, null, 2) }] };
     }
 
     if (!extensionBridge.isConnected()) {
