@@ -151,12 +151,18 @@ function reload() {
 }
 
 function getFormatterInfo(platform) {
+  // Trigger a reload so agents can use this call to pick up changes
+  reload();
+
+  const customFormatterDir = getCustomFormatterDir();
+
   if (!manifest) {
     return {
       version: null,
       status: 'No manifest loaded — formatters have not been downloaded yet. They will be fetched from GitHub on next startup.',
       platforms: {},
       default: null,
+      customFormatterDir,
       formatterApiContract: getFormatterApiContract(),
       howToCreateCustomFormatter: getHowToCreateCustomFormatter()
     };
@@ -167,7 +173,8 @@ function getFormatterInfo(platform) {
     platforms[name] = {
       name,
       match: config.match,
-      description: config.description || `Platform-specific formatter for sites matching hostname "${config.match}"`
+      description: config.description || `Platform-specific formatter for sites matching hostname "${config.match}"`,
+      source: customPlatforms.has(name) ? 'custom' : 'auto-updated'
     };
   }
 
@@ -178,6 +185,7 @@ function getFormatterInfo(platform) {
         platforms: null,
         message: `Platform "${platform}" not found. Available platforms: ${Object.keys(platforms).join(', ') || 'none'}`,
         default: { entry: manifest.default },
+        customFormatterDir,
         formatterApiContract: getFormatterApiContract(),
         howToCreateCustomFormatter: getHowToCreateCustomFormatter()
       };
@@ -189,6 +197,7 @@ function getFormatterInfo(platform) {
     version: manifest.version,
     platforms,
     default: { entry: manifest.default },
+    customFormatterDir,
     formatterApiContract: getFormatterApiContract(),
     howToCreateCustomFormatter: getHowToCreateCustomFormatter()
   };
@@ -223,12 +232,18 @@ function getHowToCreateCustomFormatter() {
     outputRequirements: 'Must return { tree: string, elementCount: number, refs: { e1: backendDOMNodeId, e2: ... }, ...optionalExtras }',
     refsExplanation: 'The refs object maps ref strings to backendDOMNodeId values. These refs enable the agent to target elements with browser_click, browser_scroll, and browser_type tools.',
     routerPattern: 'For multi-page sites, export a router function that detects the page type from the URL and delegates to page-specific sub-formatters.',
-    registration: {
+    customFormatters: {
+      step1: 'Drop your formatter files into the custom-formatters directory (path shown in the customFormatterDir field of this response)',
+      step2: 'Edit custom-formatters/manifest.json to add your platform entry under "platforms": { "myplatform": { "match": "hostname-substring", "entry": "my-formatter.js" } }',
+      step3: 'Custom formatters are never overwritten by auto-updates — they persist across server updates',
+      step4: 'Restart the server or call webpilot_get_formatter_info to trigger a reload'
+    },
+    autoUpdatedFormatters: {
       step1: 'Add an entry to manifest.json under "platforms" with: "match" (hostname substring to match), "entry" (relative path to your formatter file), and "files" (array of ALL files included in your formatter)',
       step2: 'List every file your formatter depends on in the "files" array so the auto-updater downloads them all',
-      step3: 'Bump the top-level "version" in manifest.json to trigger auto-updates on connected clients'
+      step3: 'Bump the top-level "version" in manifest.json to trigger auto-updates on connected clients',
+      hosting: 'Formatters are hosted on GitHub and auto-update hourly. Bump "version" in manifest.json to push updates to all clients.'
     },
-    hosting: 'Formatters are hosted on GitHub and auto-update hourly. Bump "version" in manifest.json to push updates to all clients.',
     example: [
       "'use strict';",
       "module.exports = function formatMysite(nodes) {",
