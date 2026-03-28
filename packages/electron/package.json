@@ -1,6 +1,6 @@
 {
   "name": "@webpilot/onboarding",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "author": "WebPilot",
   "description": "WebPilot onboarding UI",
