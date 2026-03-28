@@ -1,6 +1,6 @@
 {
   "name": "webpilot-server-for-chrome-extension",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "MCP server for browser control via Chrome extension",
   "main": "index.js",
   "bin": "cli.js",
