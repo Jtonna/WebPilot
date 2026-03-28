@@ -8,7 +8,11 @@ The WebPilot MCP server provides browser automation capabilities to AI agents vi
 
 ## Authentication
 
-All MCP tool calls (except `request_pairing`) require a valid API key obtained by pairing with the browser extension.
+By default, all MCP tool calls (except `request_pairing`) require a valid API key obtained by pairing with the browser extension. Users can disable this requirement in the Chrome extension's Pairing tab, after which agents can connect and call tools without authentication.
+
+### Pairing Requirement Toggle
+
+The pairing requirement can be toggled on/off in the WebPilot Chrome extension (Pairing tab → "Require Pairing Approval" toggle). When disabled, all agents can call tools without an API key. When enabled (default), authentication is required as described below.
 
 ### Providing the API Key
 
@@ -95,7 +99,7 @@ Pairing denied by the user. The human chose not to approve this agent for browse
 **Notes:**
 - To use the key immediately, pass it as the `api_key` parameter in each tool call
 - To persist the key, add it as the `X-API-Key` header in your MCP client configuration
-- This is the only MCP tool that does not require an API key
+- This is the only MCP tool that does not require an API key by default; other tools also skip auth when the pairing requirement is disabled
 
 ---
 
@@ -149,7 +153,7 @@ webpilot_get_formatter_info(platform="threads")
 ```
 
 **Notes:**
-- This tool does not require an API key (unauthenticated, like `request_pairing`)
+- This tool does not require an API key (unauthenticated, like `request_pairing`; other tools also skip auth when the pairing requirement is disabled)
 - Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
 - The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
 
