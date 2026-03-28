@@ -108,9 +108,11 @@ CRUD module for managing paired agent API keys:
 
 Loads and runs accessibility tree formatters:
 
-- `init()` -- Reads the formatter manifest from the data directory's `formatters/` folder. If no local formatters exist (first run), defers to the updater to download them from GitHub.
-- `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the manifest and runs the matched formatter. Falls back to the default formatter if no platform matches.
-- `reload()` -- Clears the require cache for all loaded formatter modules and re-reads the manifest. Called after an update is applied.
+- `init()` -- Creates the `custom-formatters/` directory if absent and seeds an empty `manifest.json` there. Reads and merges the auto-updated manifest (`formatters/`) with the custom manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key. If no auto-updated manifest exists yet (first run), defers to the updater while still loading any custom formatters.
+- `getCustomFormatterDir()` -- Returns the absolute path to `{dataDir}/custom-formatters/`.
+- `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the merged manifest and runs the matched formatter. Resolves formatter file paths from `custom-formatters/` for custom platforms and `formatters/` for auto-updated ones. Falls back to the default formatter (always from `formatters/`) if no platform matches.
+- `reload()` -- Clears the require cache for all loaded formatter modules and re-merges both manifests. Called after an auto-update is applied and on each `webpilot_get_formatter_info` call.
+- `getFormatterInfo(platform?)` -- Returns formatter metadata including `customFormatterDir` path and a `source: "auto-updated" | "custom"` field per platform. Triggers `reload()` so callers always see the latest state.
 
 ### `src/formatter-updater.js`
 
@@ -269,7 +271,7 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys), `formatters/` (contains `manifest.json` and formatter JS files; downloaded from GitHub on first run and kept up to date by the auto-updater)
+Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (stores paired agent API keys), `formatters/` (contains `manifest.json` and formatter JS files; downloaded from GitHub on first run and kept up to date by the auto-updater), `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater)
 
 ## Build
 
