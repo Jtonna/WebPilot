@@ -13,6 +13,9 @@ function init(manager) {
   formatterManager = manager;
 }
 
+// This updater intentionally manages only the auto-updated formatters/ directory.
+// The custom-formatters/ directory is never read or written here — it is managed
+// exclusively by the user and loaded by formatter-manager.js alongside this dir.
 async function checkForUpdates() {
   const formatterDir = getFormatterDir();
   const localManifestPath = path.join(formatterDir, 'manifest.json');
