@@ -289,6 +289,19 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
       }
     },
     {
+      name: 'webpilot_get_formatter_info',
+      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          platform: {
+            type: 'string',
+            description: 'Optional: filter to a specific platform (e.g., "threads", "zillow"). Omit to get info on all platforms.'
+          }
+        }
+      }
+    },
+    {
       name: 'browser_request_chain',
       description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
@@ -438,8 +451,9 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     }
 
     if (method === 'tools/call') {
-      // Auth gate: exempt request_pairing, require valid API key for all other tools
-      if (params.name !== 'request_pairing') {
+      // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
+      const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info';
+      if (!noAuthRequired) {
         const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
           console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
@@ -555,6 +569,11 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
           isError: true
         };
       }
+    }
+
+    if (name === 'webpilot_get_formatter_info') {
+      const info = formatterManager.getFormatterInfo(args.platform);
+      return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
     }
 
     if (!extensionBridge.isConnected()) {
