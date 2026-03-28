@@ -259,6 +259,25 @@ Edit `accessibility-tree-formatters/manifest.json`:
 
 > **Auto-updater note:** The auto-updater compares the remote `manifest.json` `"version"` against the locally cached version. If `"version"` is not bumped, users never receive the update. Every new file must be listed in the `"files"` array — the updater downloads exactly those files and nothing else.
 
+### Alternative: Custom Formatters (No GitHub Commit Required)
+
+For **private or internal sites** that you don't want to publish to the GitHub repo, use the `custom-formatters/` directory instead:
+
+1. Drop your formatter file(s) into `{dataDir}/custom-formatters/` (path available from `webpilot_get_formatter_info` → `customFormatterDir`)
+2. Edit `custom-formatters/manifest.json` to register your platform:
+   ```json
+   {
+     "version": "1",
+     "platforms": {
+       "mysite": { "match": "mysite.com", "entry": "my-formatter.js" }
+     },
+     "files": ["my-formatter.js"]
+   }
+   ```
+3. Restart the server or call `webpilot_get_formatter_info` to reload
+
+Custom formatters are never overwritten by auto-updates and take priority over auto-updated formatters for the same domain. The formatter file format is identical to the GitHub-hosted approach — same CommonJS module, same return shape.
+
 ### Step 3: Update Documentation
 
 Update MCP_SERVER.md and MCP_INTEGRATION.md to list the new platform under `browser_get_accessibility_tree`.
@@ -369,7 +388,7 @@ Use this when adding a new tool:
 [ ] 10. Test the tool end-to-end
 ```
 
-Use this when adding a site-specific formatter:
+Use this when adding a site-specific formatter (GitHub / public):
 
 ```
 [ ] 1. accessibility-tree-formatters/<site>/router.js — Create formatter (CommonJS, returns tree, elementCount, refs)
@@ -377,4 +396,13 @@ Use this when adding a site-specific formatter:
 [ ] 3. docs/ — Document the new platform
 [ ] 4. Push to main so auto-updater fetches the new version
 [ ] 5. Test with browser_get_accessibility_tree on target site
+```
+
+Use this when adding a private/custom formatter (no GitHub commit):
+
+```
+[ ] 1. Drop formatter file(s) into custom-formatters/ (path from webpilot_get_formatter_info → customFormatterDir)
+[ ] 2. Edit custom-formatters/manifest.json — add platform entry under "platforms"
+[ ] 3. Restart server or call webpilot_get_formatter_info to reload
+[ ] 4. Test with browser_get_accessibility_tree on target site
 ```

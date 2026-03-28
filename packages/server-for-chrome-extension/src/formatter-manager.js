@@ -2,24 +2,61 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getFormatterDir } = require('./service/paths');
+const { getFormatterDir, getDataDir } = require('./service/paths');
 
 let manifest = null;
 let formatterCache = {}; // path -> loaded module
+let customPlatforms = new Set(); // platform names that came from custom manifest
+
+function getCustomFormatterDir() {
+  return path.join(getDataDir(), 'custom-formatters');
+}
 
 function init() {
   const formatterDir = getFormatterDir();
   const manifestPath = path.join(formatterDir, 'manifest.json');
 
-  // If no local cache exists, the updater will download from GitHub on startup
+  // Ensure custom-formatters directory exists
+  const customFormatterDir = getCustomFormatterDir();
+  fs.mkdirSync(customFormatterDir, { recursive: true });
+
+  // Create empty custom manifest if none exists
+  const customManifestPath = path.join(customFormatterDir, 'manifest.json');
+  if (!fs.existsSync(customManifestPath)) {
+    fs.writeFileSync(customManifestPath, JSON.stringify({ version: '1', platforms: {}, files: [] }, null, 2), 'utf8');
+  }
+
+  // If no auto-updated manifest exists, the updater will download from GitHub on startup
   if (!fs.existsSync(manifestPath)) {
     console.log('[formatter-manager] No local formatters found — waiting for updater to download from GitHub');
+    // Still load custom manifest so custom formatters work even before auto-updated ones arrive
+    const customManifest = JSON.parse(fs.readFileSync(customManifestPath, 'utf8'));
+    customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+    manifest = customManifest;
+    if (customPlatforms.size > 0) {
+      console.log('[formatter-manager] Loaded custom manifest with platforms:', [...customPlatforms].join(', '));
+    }
     return;
   }
 
-  // Load manifest
-  manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  console.log('[formatter-manager] Loaded manifest version', manifest.version);
+  // Load and merge manifests: auto-updated base, custom overlays on top
+  const autoManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const customManifest = JSON.parse(fs.readFileSync(customManifestPath, 'utf8'));
+
+  customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+
+  manifest = {
+    ...autoManifest,
+    platforms: {
+      ...autoManifest.platforms,
+      ...customManifest.platforms
+    }
+  };
+
+  console.log('[formatter-manager] Loaded manifest version', autoManifest.version);
+  if (customPlatforms.size > 0) {
+    console.log('[formatter-manager] Custom platforms loaded:', [...customPlatforms].join(', '));
+  }
 }
 
 function formatTree(url, rawNodes) {
@@ -29,6 +66,7 @@ function formatTree(url, rawNodes) {
   }
 
   const formatterDir = getFormatterDir();
+  const customFormatterDir = getCustomFormatterDir();
 
   // Match URL to platform
   if (url) {
@@ -36,7 +74,8 @@ function formatTree(url, rawNodes) {
       const hostname = new URL(url).hostname;
       for (const [platformName, platformConfig] of Object.entries(manifest.platforms)) {
         if (hostname.includes(platformConfig.match)) {
-          const entryPath = path.join(formatterDir, platformConfig.entry);
+          const baseDir = customPlatforms.has(platformName) ? customFormatterDir : formatterDir;
+          const entryPath = path.join(baseDir, platformConfig.entry);
           try {
             const formatter = loadFormatter(entryPath);
             // Platform formatters export a single format function (the main exported function)
@@ -54,7 +93,7 @@ function formatTree(url, rawNodes) {
     }
   }
 
-  // Default formatter
+  // Default formatter always comes from the auto-updated directory
   const defaultPath = path.join(formatterDir, manifest.default);
   const defaultFormatter = loadFormatter(defaultPath);
   return defaultFormatter.formatAccessibilityTree(rawNodes);
@@ -74,22 +113,56 @@ function reload() {
     delete require.cache[resolved];
   }
   formatterCache = {};
+  customPlatforms = new Set();
 
-  // Re-read manifest
+  // Re-read and re-merge both manifests
   const manifestPath = path.join(getFormatterDir(), 'manifest.json');
-  if (fs.existsSync(manifestPath)) {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    console.log('[formatter-manager] Reloaded manifest version', manifest.version);
+  const customManifestPath = path.join(getCustomFormatterDir(), 'manifest.json');
+
+  const autoManifestExists = fs.existsSync(manifestPath);
+  const customManifestExists = fs.existsSync(customManifestPath);
+
+  if (!autoManifestExists && !customManifestExists) {
+    manifest = null;
+    return;
+  }
+
+  const autoManifest = autoManifestExists ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+  const customManifest = customManifestExists ? JSON.parse(fs.readFileSync(customManifestPath, 'utf8')) : { platforms: {} };
+
+  customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+
+  if (autoManifest) {
+    manifest = {
+      ...autoManifest,
+      platforms: {
+        ...autoManifest.platforms,
+        ...customManifest.platforms
+      }
+    };
+    console.log('[formatter-manager] Reloaded manifest version', autoManifest.version);
+  } else {
+    manifest = customManifest;
+  }
+
+  if (customPlatforms.size > 0) {
+    console.log('[formatter-manager] Custom platforms reloaded:', [...customPlatforms].join(', '));
   }
 }
 
 function getFormatterInfo(platform) {
+  // Trigger a reload so agents can use this call to pick up changes
+  reload();
+
+  const customFormatterDir = getCustomFormatterDir();
+
   if (!manifest) {
     return {
       version: null,
       status: 'No manifest loaded — formatters have not been downloaded yet. They will be fetched from GitHub on next startup.',
       platforms: {},
       default: null,
+      customFormatterDir,
       formatterApiContract: getFormatterApiContract(),
       howToCreateCustomFormatter: getHowToCreateCustomFormatter()
     };
@@ -100,7 +173,8 @@ function getFormatterInfo(platform) {
     platforms[name] = {
       name,
       match: config.match,
-      description: config.description || `Platform-specific formatter for sites matching hostname "${config.match}"`
+      description: config.description || `Platform-specific formatter for sites matching hostname "${config.match}"`,
+      source: customPlatforms.has(name) ? 'custom' : 'auto-updated'
     };
   }
 
@@ -111,6 +185,7 @@ function getFormatterInfo(platform) {
         platforms: null,
         message: `Platform "${platform}" not found. Available platforms: ${Object.keys(platforms).join(', ') || 'none'}`,
         default: { entry: manifest.default },
+        customFormatterDir,
         formatterApiContract: getFormatterApiContract(),
         howToCreateCustomFormatter: getHowToCreateCustomFormatter()
       };
@@ -122,6 +197,7 @@ function getFormatterInfo(platform) {
     version: manifest.version,
     platforms,
     default: { entry: manifest.default },
+    customFormatterDir,
     formatterApiContract: getFormatterApiContract(),
     howToCreateCustomFormatter: getHowToCreateCustomFormatter()
   };
@@ -156,12 +232,18 @@ function getHowToCreateCustomFormatter() {
     outputRequirements: 'Must return { tree: string, elementCount: number, refs: { e1: backendDOMNodeId, e2: ... }, ...optionalExtras }',
     refsExplanation: 'The refs object maps ref strings to backendDOMNodeId values. These refs enable the agent to target elements with browser_click, browser_scroll, and browser_type tools.',
     routerPattern: 'For multi-page sites, export a router function that detects the page type from the URL and delegates to page-specific sub-formatters.',
-    registration: {
+    customFormatters: {
+      step1: 'Drop your formatter files into the custom-formatters directory (path shown in the customFormatterDir field of this response)',
+      step2: 'Edit custom-formatters/manifest.json to add your platform entry under "platforms": { "myplatform": { "match": "hostname-substring", "entry": "my-formatter.js" } }',
+      step3: 'Custom formatters are never overwritten by auto-updates — they persist across server updates',
+      step4: 'Restart the server or call webpilot_get_formatter_info to trigger a reload'
+    },
+    autoUpdatedFormatters: {
       step1: 'Add an entry to manifest.json under "platforms" with: "match" (hostname substring to match), "entry" (relative path to your formatter file), and "files" (array of ALL files included in your formatter)',
       step2: 'List every file your formatter depends on in the "files" array so the auto-updater downloads them all',
-      step3: 'Bump the top-level "version" in manifest.json to trigger auto-updates on connected clients'
+      step3: 'Bump the top-level "version" in manifest.json to trigger auto-updates on connected clients',
+      hosting: 'Formatters are hosted on GitHub and auto-update hourly. Bump "version" in manifest.json to push updates to all clients.'
     },
-    hosting: 'Formatters are hosted on GitHub and auto-update hourly. Bump "version" in manifest.json to push updates to all clients.',
     example: [
       "'use strict';",
       "module.exports = function formatMysite(nodes) {",
@@ -180,4 +262,4 @@ function getHowToCreateCustomFormatter() {
   };
 }
 
-module.exports = { init, formatTree, reload, getFormatterInfo };
+module.exports = { init, formatTree, reload, getFormatterInfo, getCustomFormatterDir };

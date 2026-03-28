@@ -120,10 +120,12 @@ Get information about available platform-specific formatters and instructions fo
     {
       "name": "threads",
       "match": "threads.com",
-      "description": "Formats Threads pages (home, activity, search, profiles) into structured JSON"
+      "description": "Formats Threads pages (home, activity, search, profiles) into structured JSON",
+      "source": "auto-updated"
     }
   ],
   "default": "Raw accessibility tree text when no platform formatter matches",
+  "customFormatterDir": "C:\\Users\\...\\WebPilot\\custom-formatters",
   "formatterApiContract": {
     "input": "{ url: string, title: string, tree: object }",
     "output": "{ tree: string, ...extraFields }"
@@ -136,8 +138,10 @@ Get information about available platform-specific formatters and instructions fo
 | Field | Description |
 |-------|-------------|
 | `version` | Formatter API version |
-| `platforms` | Array of available formatters, each with `name`, `match` pattern, and `description` |
+| `platforms` | Object of available formatters, each with `name`, `match` pattern, `description`, and `source` |
+| `platforms[].source` | `"auto-updated"` for GitHub-hosted formatters, `"custom"` for user-provided ones |
 | `default` | Description of fallback behavior when no formatter matches |
+| `customFormatterDir` | Absolute path to the `custom-formatters/` directory on this machine |
 | `formatterApiContract` | Input/output specification for the formatter API |
 | `howToCreateCustomFormatter` | Authoring guide for writing a custom platform formatter |
 
@@ -145,17 +149,37 @@ Get information about available platform-specific formatters and instructions fo
 ```
 // Get all available formatters
 webpilot_get_formatter_info()
-→ { "version": "...", "platforms": [...], "formatterApiContract": {...}, ... }
+→ { "version": "...", "platforms": {...}, "customFormatterDir": "...", "formatterApiContract": {...}, ... }
 
 // Filter to a specific platform
 webpilot_get_formatter_info(platform="threads")
-→ { "version": "...", "platforms": [{ "name": "threads", ... }], ... }
+→ { "version": "...", "platforms": { "threads": { ..., "source": "auto-updated" } }, ... }
 ```
 
 **Notes:**
 - This tool does not require an API key (unauthenticated, like `request_pairing`; other tools also skip auth when the pairing requirement is disabled)
 - Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
 - The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
+- Calling this tool also triggers a live reload of both manifests, so changes to `custom-formatters/manifest.json` are picked up immediately
+
+### Custom Formatters
+
+Agents and users can add site-specific formatters that are never overwritten by auto-updates:
+
+1. **Drop formatter files** into the `custom-formatters/` directory (absolute path returned in `customFormatterDir`)
+2. **Register the platform** by editing `custom-formatters/manifest.json`:
+   ```json
+   {
+     "version": "1",
+     "platforms": {
+       "mysite": { "match": "mysite.com", "entry": "my-formatter.js" }
+     },
+     "files": ["my-formatter.js"]
+   }
+   ```
+3. **Reload** by restarting the server or calling `webpilot_get_formatter_info`
+4. Custom formatters take **priority** over auto-updated ones for the same domain
+5. The `howToCreateCustomFormatter.customFormatters` field in the response has step-by-step instructions
 
 ---
 
