@@ -45,6 +45,7 @@ function getLocalIP() {
 function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
   let host = initialHost;
   let publicHost = initialPublicHost;
+  let pairingRequired = true; // default: pairing required
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -137,6 +138,12 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           return;
         }
 
+        if (message.type === 'set_pairing_required') {
+          pairingRequired = message.enabled !== false;
+          console.log(`[config] Pairing requirement ${pairingRequired ? 'enabled' : 'disabled'}`);
+          return;
+        }
+
         extensionBridge.handleResponse(message);
       } catch (e) {
         console.error('Invalid message from extension:', e);
@@ -162,7 +169,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     3600000
   );
 
-  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager);
+  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, () => pairingRequired);
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
