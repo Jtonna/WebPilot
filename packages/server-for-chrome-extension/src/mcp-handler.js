@@ -87,7 +87,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     },
     {
       name: 'browser_get_accessibility_tree',
-      description: 'Get the accessibility tree (a11y DOM) of a browser tab. Returns a structured representation of the page content.',
+      description: 'Get the accessibility tree (a11y DOM) of a browser tab. Output is pre-filtered and optimized for LLM consumption (~97% smaller than raw CDP) — use this for page data extraction instead of browser_execute_js. Platform-specific formatters activate automatically for supported sites and return structured JSON with extra fields (e.g., postCount, listingCount); use webpilot_get_formatter_info to discover available formatters.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -135,7 +135,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     },
     {
       name: 'browser_execute_js',
-      description: 'Execute JavaScript code in page context and return the result. Return value must be JSON-serializable.',
+      description: 'Execute JavaScript code in page context and return the result. Return value must be JSON-serializable. Use for actions that require JS execution (form manipulation, custom interactions) — for page data extraction, prefer browser_get_accessibility_tree which already provides pre-filtered, structured content.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -303,7 +303,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     },
     {
       name: 'browser_request_chain',
-      description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
+      description: 'Execute multiple tool calls sequentially and return combined results. Best used for sequential browser operations that do not need intermediate LLM reasoning between steps (e.g., click then get accessibility tree). Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
         type: 'object',
         properties: {
