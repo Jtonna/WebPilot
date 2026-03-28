@@ -407,7 +407,20 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'webpilot-browser', version: '0.4.0' }
+          serverInfo: { name: 'webpilot-browser', version: '0.4.0' },
+          instructions: `WebPilot is an MCP server that controls a real Chrome browser via a paired Chrome extension. All browser interactions happen in the user's actual browser, not a headless instance.
+
+Tool workflow: Use browser_get_tabs to find open tabs, then browser_get_accessibility_tree to read page content, then use the refs returned (e1, e2, etc.) with browser_click, browser_scroll, and browser_type for precise element targeting. Chain these operations to navigate and interact with pages.
+
+Accessibility tree: The tree from browser_get_accessibility_tree is already heavily pre-filtered and optimized for LLM consumption — roughly 97% smaller than raw CDP output. Do not use browser_execute_js to filter or extract data from pages. The tree already contains what you need.
+
+Platform formatters: Supported sites (e.g., Threads, Zillow) automatically activate platform-specific formatters that return structured JSON with extra fields like postCount and listingCount. Check the response object for these additional fields. Use webpilot_get_formatter_info to discover which platforms have built-in formatters and to learn how to write custom platform optimizers for sites without built-in support.
+
+Refs: Element identifiers (e1, e2, etc.) are returned in the accessibility tree. Pass them to click, scroll, and type tools for precise targeting. Refs are scoped to the most recent tree fetch for a given tab.
+
+browser_request_chain: Batches sequential tool calls (e.g., click then get tree) into a single round-trip when you do not need intermediate LLM reasoning between steps. Steps can reference prior results using $N.path.to.value syntax.
+
+browser_execute_js: Reserve for actions that genuinely require JavaScript execution, such as form manipulation or custom interactions. Do not use it to extract or filter page data — the accessibility tree already handles that.`
         }
       };
     }
