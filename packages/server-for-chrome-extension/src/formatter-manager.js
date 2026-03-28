@@ -2,24 +2,61 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getFormatterDir } = require('./service/paths');
+const { getFormatterDir, getDataDir } = require('./service/paths');
 
 let manifest = null;
 let formatterCache = {}; // path -> loaded module
+let customPlatforms = new Set(); // platform names that came from custom manifest
+
+function getCustomFormatterDir() {
+  return path.join(getDataDir(), 'custom-formatters');
+}
 
 function init() {
   const formatterDir = getFormatterDir();
   const manifestPath = path.join(formatterDir, 'manifest.json');
 
-  // If no local cache exists, the updater will download from GitHub on startup
+  // Ensure custom-formatters directory exists
+  const customFormatterDir = getCustomFormatterDir();
+  fs.mkdirSync(customFormatterDir, { recursive: true });
+
+  // Create empty custom manifest if none exists
+  const customManifestPath = path.join(customFormatterDir, 'manifest.json');
+  if (!fs.existsSync(customManifestPath)) {
+    fs.writeFileSync(customManifestPath, JSON.stringify({ version: '1', platforms: {}, files: [] }, null, 2), 'utf8');
+  }
+
+  // If no auto-updated manifest exists, the updater will download from GitHub on startup
   if (!fs.existsSync(manifestPath)) {
     console.log('[formatter-manager] No local formatters found — waiting for updater to download from GitHub');
+    // Still load custom manifest so custom formatters work even before auto-updated ones arrive
+    const customManifest = JSON.parse(fs.readFileSync(customManifestPath, 'utf8'));
+    customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+    manifest = customManifest;
+    if (customPlatforms.size > 0) {
+      console.log('[formatter-manager] Loaded custom manifest with platforms:', [...customPlatforms].join(', '));
+    }
     return;
   }
 
-  // Load manifest
-  manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  console.log('[formatter-manager] Loaded manifest version', manifest.version);
+  // Load and merge manifests: auto-updated base, custom overlays on top
+  const autoManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const customManifest = JSON.parse(fs.readFileSync(customManifestPath, 'utf8'));
+
+  customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+
+  manifest = {
+    ...autoManifest,
+    platforms: {
+      ...autoManifest.platforms,
+      ...customManifest.platforms
+    }
+  };
+
+  console.log('[formatter-manager] Loaded manifest version', autoManifest.version);
+  if (customPlatforms.size > 0) {
+    console.log('[formatter-manager] Custom platforms loaded:', [...customPlatforms].join(', '));
+  }
 }
 
 function formatTree(url, rawNodes) {
@@ -29,6 +66,7 @@ function formatTree(url, rawNodes) {
   }
 
   const formatterDir = getFormatterDir();
+  const customFormatterDir = getCustomFormatterDir();
 
   // Match URL to platform
   if (url) {
@@ -36,7 +74,8 @@ function formatTree(url, rawNodes) {
       const hostname = new URL(url).hostname;
       for (const [platformName, platformConfig] of Object.entries(manifest.platforms)) {
         if (hostname.includes(platformConfig.match)) {
-          const entryPath = path.join(formatterDir, platformConfig.entry);
+          const baseDir = customPlatforms.has(platformName) ? customFormatterDir : formatterDir;
+          const entryPath = path.join(baseDir, platformConfig.entry);
           try {
             const formatter = loadFormatter(entryPath);
             // Platform formatters export a single format function (the main exported function)
@@ -54,7 +93,7 @@ function formatTree(url, rawNodes) {
     }
   }
 
-  // Default formatter
+  // Default formatter always comes from the auto-updated directory
   const defaultPath = path.join(formatterDir, manifest.default);
   const defaultFormatter = loadFormatter(defaultPath);
   return defaultFormatter.formatAccessibilityTree(rawNodes);
@@ -74,12 +113,40 @@ function reload() {
     delete require.cache[resolved];
   }
   formatterCache = {};
+  customPlatforms = new Set();
 
-  // Re-read manifest
+  // Re-read and re-merge both manifests
   const manifestPath = path.join(getFormatterDir(), 'manifest.json');
-  if (fs.existsSync(manifestPath)) {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    console.log('[formatter-manager] Reloaded manifest version', manifest.version);
+  const customManifestPath = path.join(getCustomFormatterDir(), 'manifest.json');
+
+  const autoManifestExists = fs.existsSync(manifestPath);
+  const customManifestExists = fs.existsSync(customManifestPath);
+
+  if (!autoManifestExists && !customManifestExists) {
+    manifest = null;
+    return;
+  }
+
+  const autoManifest = autoManifestExists ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : null;
+  const customManifest = customManifestExists ? JSON.parse(fs.readFileSync(customManifestPath, 'utf8')) : { platforms: {} };
+
+  customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+
+  if (autoManifest) {
+    manifest = {
+      ...autoManifest,
+      platforms: {
+        ...autoManifest.platforms,
+        ...customManifest.platforms
+      }
+    };
+    console.log('[formatter-manager] Reloaded manifest version', autoManifest.version);
+  } else {
+    manifest = customManifest;
+  }
+
+  if (customPlatforms.size > 0) {
+    console.log('[formatter-manager] Custom platforms reloaded:', [...customPlatforms].join(', '));
   }
 }
 
@@ -180,4 +247,4 @@ function getHowToCreateCustomFormatter() {
   };
 }
 
-module.exports = { init, formatTree, reload, getFormatterInfo };
+module.exports = { init, formatTree, reload, getFormatterInfo, getCustomFormatterDir };
