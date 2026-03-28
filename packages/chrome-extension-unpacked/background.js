@@ -274,7 +274,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'SET_PAIRING_REQUIRED': {
-      const enabled = request.enabled !== false;
+      const enabled = message.enabled !== false;
       pairingRequiredCache = enabled;
       chrome.storage.local.set({ pairingRequired: enabled });
       // Notify server via WebSocket
