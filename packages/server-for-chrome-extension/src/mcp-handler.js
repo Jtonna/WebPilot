@@ -420,7 +420,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'webpilot-browser', version: '0.4.0' },
+          serverInfo: { name: 'webpilot-browser', version: '0.5.0' },
           instructions: `WebPilot is an MCP server that controls a real Chrome browser via a paired Chrome extension. All browser interactions happen in the user's actual browser, not a headless instance.
 
 Tool workflow: Use browser_get_tabs to find open tabs, then browser_get_accessibility_tree to read page content, then use the refs returned (e1, e2, etc.) with browser_click, browser_scroll, and browser_type for precise element targeting. Chain these operations to navigate and interact with pages.
