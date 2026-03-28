@@ -87,7 +87,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     },
     {
       name: 'browser_get_accessibility_tree',
-      description: 'Get the accessibility tree (a11y DOM) of a browser tab. Returns a structured representation of the page content.',
+      description: 'Get the accessibility tree (a11y DOM) of a browser tab. Output is pre-filtered and optimized for LLM consumption (~97% smaller than raw CDP) — use this for page data extraction instead of browser_execute_js. Platform-specific formatters activate automatically for supported sites and return structured JSON with extra fields (e.g., postCount, listingCount); use webpilot_get_formatter_info to discover available formatters.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -135,7 +135,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     },
     {
       name: 'browser_execute_js',
-      description: 'Execute JavaScript code in page context and return the result. Return value must be JSON-serializable.',
+      description: 'Execute JavaScript code in page context and return the result. Return value must be JSON-serializable. Use for actions that require JS execution (form manipulation, custom interactions) — for page data extraction, prefer browser_get_accessibility_tree which already provides pre-filtered, structured content.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -289,8 +289,21 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
       }
     },
     {
+      name: 'webpilot_get_formatter_info',
+      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          platform: {
+            type: 'string',
+            description: 'Optional: filter to a specific platform (e.g., "threads", "zillow"). Omit to get info on all platforms.'
+          }
+        }
+      }
+    },
+    {
       name: 'browser_request_chain',
-      description: 'Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
+      description: 'Execute multiple tool calls sequentially and return combined results. Best used for sequential browser operations that do not need intermediate LLM reasoning between steps (e.g., click then get accessibility tree). Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -407,7 +420,20 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
         result: {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'webpilot-browser', version: '0.4.0' }
+          serverInfo: { name: 'webpilot-browser', version: '0.4.0' },
+          instructions: `WebPilot is an MCP server that controls a real Chrome browser via a paired Chrome extension. All browser interactions happen in the user's actual browser, not a headless instance.
+
+Tool workflow: Use browser_get_tabs to find open tabs, then browser_get_accessibility_tree to read page content, then use the refs returned (e1, e2, etc.) with browser_click, browser_scroll, and browser_type for precise element targeting. Chain these operations to navigate and interact with pages.
+
+Accessibility tree: The tree from browser_get_accessibility_tree is already heavily pre-filtered and optimized for LLM consumption — roughly 97% smaller than raw CDP output. Do not use browser_execute_js to filter or extract data from pages. The tree already contains what you need.
+
+Platform formatters: Supported sites (e.g., Threads, Zillow) automatically activate platform-specific formatters that return structured JSON with extra fields like postCount and listingCount. Check the response object for these additional fields. Use webpilot_get_formatter_info to discover which platforms have built-in formatters and to learn how to write custom platform optimizers for sites without built-in support.
+
+Refs: Element identifiers (e1, e2, etc.) are returned in the accessibility tree. Pass them to click, scroll, and type tools for precise targeting. Refs are scoped to the most recent tree fetch for a given tab.
+
+browser_request_chain: Batches sequential tool calls (e.g., click then get tree) into a single round-trip when you do not need intermediate LLM reasoning between steps. Steps can reference prior results using $N.path.to.value syntax.
+
+browser_execute_js: Reserve for actions that genuinely require JavaScript execution, such as form manipulation or custom interactions. Do not use it to extract or filter page data — the accessibility tree already handles that.`
         }
       };
     }
@@ -425,8 +451,9 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
     }
 
     if (method === 'tools/call') {
-      // Auth gate: exempt request_pairing, require valid API key for all other tools
-      if (params.name !== 'request_pairing') {
+      // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
+      const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info';
+      if (!noAuthRequired) {
         const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
           console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
@@ -542,6 +569,11 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager)
           isError: true
         };
       }
+    }
+
+    if (name === 'webpilot_get_formatter_info') {
+      const info = formatterManager.getFormatterInfo(args.platform);
+      return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
     }
 
     if (!extensionBridge.isConnected()) {

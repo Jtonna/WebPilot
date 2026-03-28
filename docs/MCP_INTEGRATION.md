@@ -61,6 +61,10 @@ Users can add domains to the whitelist via the WebPilot extension popup UI. Doma
 
 **Note on `api_key` parameter:** All tools except `request_pairing` include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
+## Agent Instructions
+
+When an agent connects to the WebPilot MCP server, the `initialize` response includes an `instructions` field with a comprehensive guide on how to use WebPilot effectively. Agents receive this automatically on connection — no extra tool call is needed. The instructions cover authentication, tool usage patterns, platform formatter behavior, and best practices.
+
 ## Available Tools
 
 ### request_pairing
@@ -92,6 +96,62 @@ Pairing denied by the user. The human chose not to approve this agent for browse
 - To use the key immediately, pass it as the `api_key` parameter in each tool call
 - To persist the key, add it as the `X-API-Key` header in your MCP client configuration
 - This is the only MCP tool that does not require an API key
+
+---
+
+### webpilot_get_formatter_info
+
+Get information about available platform-specific formatters and instructions for writing custom platform optimizers. This tool does not require authentication.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `platform` | string | No | Filter to a specific platform (e.g., `"threads"`, `"zillow"`). Omit to return all platforms. |
+
+**Returns:**
+```json
+{
+  "version": "1.0.0",
+  "platforms": [
+    {
+      "name": "threads",
+      "match": "threads.com",
+      "description": "Formats Threads pages (home, activity, search, profiles) into structured JSON"
+    }
+  ],
+  "default": "Raw accessibility tree text when no platform formatter matches",
+  "formatterApiContract": {
+    "input": "{ url: string, title: string, tree: object }",
+    "output": "{ tree: string, ...extraFields }"
+  },
+  "howToCreateCustomFormatter": "Step-by-step guide for authoring a custom platform formatter..."
+}
+```
+
+**Response Fields:**
+| Field | Description |
+|-------|-------------|
+| `version` | Formatter API version |
+| `platforms` | Array of available formatters, each with `name`, `match` pattern, and `description` |
+| `default` | Description of fallback behavior when no formatter matches |
+| `formatterApiContract` | Input/output specification for the formatter API |
+| `howToCreateCustomFormatter` | Authoring guide for writing a custom platform formatter |
+
+**Example Usage:**
+```
+// Get all available formatters
+webpilot_get_formatter_info()
+→ { "version": "...", "platforms": [...], "formatterApiContract": {...}, ... }
+
+// Filter to a specific platform
+webpilot_get_formatter_info(platform="threads")
+→ { "version": "...", "platforms": [{ "name": "threads", ... }], ... }
+```
+
+**Notes:**
+- This tool does not require an API key (unauthenticated, like `request_pairing`)
+- Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
+- The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
 
 ---
 
@@ -187,7 +247,7 @@ Closes a browser tab by its ID.
 
 ### browser_get_accessibility_tree
 
-Gets the accessibility tree (a11y DOM) of a browser tab. Returns a structured representation of the page content that's useful for understanding page structure and content.
+Gets the accessibility tree (a11y DOM) of a browser tab. Returns a pre-filtered, LLM-optimized representation of the page — ignored nodes and empty elements are stripped. When a platform formatter is available (e.g., Threads, Zillow), it is applied automatically to produce compact structured JSON instead of raw tree text. Use `webpilot_get_formatter_info` to see which platforms have formatters and what their output looks like.
 
 **Parameters:**
 | Parameter | Type   | Required | Description                    |
@@ -356,7 +416,7 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 
 ### browser_execute_js
 
-Executes JavaScript code in the page context and returns the result.
+Executes JavaScript code in the page context and returns the result. Prefer `browser_get_accessibility_tree` for reading page data — it is pre-filtered for LLM consumption and handles platform-specific formatting automatically. Reserve this tool for actions that cannot be done via the accessibility tree (e.g., triggering custom events, reading JS variables, interacting with page APIs).
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -758,7 +818,7 @@ browser_type(tab_id, text="test", delay=100)
 
 ### browser_request_chain
 
-Execute multiple tool calls sequentially and return combined results. Each step can reference results from prior steps using `$N.path.to.value` syntax. Validates all tool names before execution begins.
+Execute multiple tool calls sequentially and return combined results, without intermediate LLM reasoning between steps. Use this for fixed sequences where each step's inputs can be derived directly from prior step outputs using `$N.path.to.value` references. If you need to inspect a result and decide what to do next, call the tools individually instead. Validates all tool names before execution begins.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
