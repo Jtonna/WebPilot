@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pairedAgentsSection = document.getElementById('pairedAgentsSection');
   const pairedAgentsList = document.getElementById('pairedAgentsList');
   const noAgentsMessage = document.getElementById('noAgentsMessage');
+  const pairingRequiredToggle = document.getElementById('pairingRequiredToggle');
   const checkFormatterUpdatesBtn = document.getElementById('checkFormatterUpdates');
   const formatterUpdateStatus = document.getElementById('formatterUpdateStatus');
 
@@ -94,6 +95,12 @@ document.addEventListener('DOMContentLoaded', () => {
         networkModeToggle.checked = !enabled;
       }
     });
+  });
+
+  pairingRequiredToggle.addEventListener('change', () => {
+    const enabled = pairingRequiredToggle.checked;
+    chrome.storage.local.set({ pairingRequired: enabled });
+    chrome.runtime.sendMessage({ type: 'SET_PAIRING_REQUIRED', enabled });
   });
 
   restrictedModeToggle.addEventListener('change', () => {
@@ -456,6 +463,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadPairingData() {
+    chrome.storage.local.get('pairingRequired', (result) => {
+      pairingRequiredToggle.checked = result.pairingRequired !== false; // default true
+    });
     chrome.runtime.sendMessage({ type: 'GET_PENDING_PAIRING' }, (response) => {
       renderPairingRequests(response?.requests || []);
     });
