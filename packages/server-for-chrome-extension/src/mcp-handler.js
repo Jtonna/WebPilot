@@ -32,7 +32,7 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager) {
+function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired) {
   const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
 
   const tools = [
@@ -453,7 +453,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     if (method === 'tools/call') {
       // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
       const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info';
-      if (!noAuthRequired) {
+      if (!noAuthRequired && isPairingRequired()) {
         const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
           console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
