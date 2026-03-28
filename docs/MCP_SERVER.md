@@ -73,7 +73,7 @@ Sets up the Express HTTP server and WebSocket server:
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing` is exempted from this check. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. Only `request_pairing`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` are exempted from this check. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
 - **Server-side formatting** -- For `browser_get_accessibility_tree`, the server receives raw nodes from the extension and formats them via `formatterManager.formatTree(url, nodes)`. Passing `usePlatformOptimizer: false` forces the default formatter instead of a platform-matched one. After formatting, ancestry context is built using `extractAncestryContext`, and a `store_refs` notification is pushed to the extension via `extensionBridge.notify()`.
@@ -123,7 +123,7 @@ GitHub-based auto-updater for accessibility tree formatters:
 
 ## MCP Tools
 
-Twelve tools are exposed to AI agents. All tools except `request_pairing` and `webpilot_get_formatter_info` require the Chrome extension to be connected and, by default, a valid paired API key. The API key requirement can be disabled via the extension's Pairing tab toggle. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
+Thirteen tools are exposed to AI agents. All tools except `request_pairing`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` require the Chrome extension to be connected and, by default, a valid paired API key. The API key requirement can be disabled via the extension's Pairing tab toggle. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -139,6 +139,7 @@ Twelve tools are exposed to AI agents. All tools except `request_pairing` and `w
 | `browser_type` | Type text with CDP keyboard simulation | `tab_id`, `text`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
 | `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
+| `webpilot_reload_formatters` | Reload all formatters without server restart | (none) |
 
 ### `browser_request_chain`
 

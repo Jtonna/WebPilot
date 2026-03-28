@@ -8,7 +8,7 @@ The WebPilot MCP server provides browser automation capabilities to AI agents vi
 
 ## Authentication
 
-By default, all MCP tool calls (except `request_pairing`) require a valid API key obtained by pairing with the browser extension. Users can disable this requirement in the Chrome extension's Pairing tab, after which agents can connect and call tools without authentication.
+By default, all MCP tool calls (except `request_pairing`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`) require a valid API key obtained by pairing with the browser extension. Users can disable this requirement in the Chrome extension's Pairing tab, after which agents can connect and call tools without authentication.
 
 ### Pairing Requirement Toggle
 
@@ -162,6 +162,40 @@ webpilot_get_formatter_info(platform="threads")
 - The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
 - Calling this tool also triggers a live reload of both manifests, so changes to `custom-formatters/manifest.json` are picked up immediately
 
+---
+
+### webpilot_reload_formatters
+
+Reload all formatters (both auto-updated and custom) without restarting the server. Use this after adding or modifying custom formatter files in the `custom-formatters` directory. Returns the updated formatter state.
+
+This tool does not require authentication.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "reloaded": true,
+  "version": "1.0.0",
+  "platforms": {
+    "threads": {
+      "name": "threads",
+      "match": "threads.com",
+      "description": "...",
+      "source": "auto-updated"
+    }
+  },
+  "customFormatterDir": "C:\\Users\\...\\WebPilot\\custom-formatters",
+  ...
+}
+```
+
+**Notes:**
+- This tool is unauthenticated — no API key required, even when the pairing requirement is enabled
+- Triggers a full reload of both the auto-updated formatter manifest (`formatters/`) and the custom formatter manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key.
+- Use this after dropping new formatter files into `custom-formatters/` and updating `custom-formatters/manifest.json`, rather than restarting the server
+- The returned object merges `reloaded: true` with the full `getFormatterInfo()` response, so callers see the current state of all loaded formatters immediately
+
 ### Custom Formatters
 
 Agents and users can add site-specific formatters that are never overwritten by auto-updates:
@@ -177,7 +211,7 @@ Agents and users can add site-specific formatters that are never overwritten by 
      "files": ["my-formatter.js"]
    }
    ```
-3. **Reload** by restarting the server or calling `webpilot_get_formatter_info`
+3. **Reload** by calling `webpilot_reload_formatters`, calling `webpilot_get_formatter_info`, or restarting the server
 4. Custom formatters take **priority** over auto-updated ones for the same domain
 5. The `howToCreateCustomFormatter.customFormatters` field in the response has step-by-step instructions
 
