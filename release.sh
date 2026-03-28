@@ -52,6 +52,19 @@ for FILE in package.json packages/server-for-chrome-extension/package.json packa
     echo "Updated $FILE"
 done
 
+# Update chrome extension manifest.json
+node -e "
+    const fs = require('fs');
+    const manifest = JSON.parse(fs.readFileSync('packages/chrome-extension-unpacked/manifest.json', 'utf8'));
+    manifest.version = '$NEW_VERSION';
+    fs.writeFileSync('packages/chrome-extension-unpacked/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+"
+echo "Updated packages/chrome-extension-unpacked/manifest.json"
+
+# Update MCP server version in source
+sed -i "s/serverInfo: { name: 'webpilot-browser', version: '[^']*'/serverInfo: { name: 'webpilot-browser', version: '$NEW_VERSION'/" packages/server-for-chrome-extension/src/mcp-handler.js
+echo "Updated mcp-handler.js serverInfo version"
+
 # Update lock file
 echo "Updating package-lock.json..."
 npm install --package-lock-only --silent
