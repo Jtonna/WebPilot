@@ -78,8 +78,8 @@ function formatTree(url, rawNodes) {
           const entryPath = path.join(baseDir, platformConfig.entry);
           try {
             const formatter = loadFormatter(entryPath);
-            // Platform formatters export a single format function (the main exported function)
-            const formatFn = Object.values(formatter)[0]; // Get the first exported function
+            // Support both export styles: module.exports = fn OR module.exports = { fn }
+            const formatFn = typeof formatter === 'function' ? formatter : Object.values(formatter)[0];
             const result = formatFn(rawNodes);
             return result;
           } catch (err) {
