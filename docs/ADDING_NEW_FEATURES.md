@@ -60,7 +60,7 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
 }
 ```
 
-**Note:** All tools except `request_pairing` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
+**Note:** All tools except `request_pairing` and `webpilot_get_formatter_info` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
 
 **Add case to `handleToolCall` switch:**
 
