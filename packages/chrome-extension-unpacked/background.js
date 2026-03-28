@@ -50,6 +50,14 @@ let _whitelistReady = new Promise((resolve) => {
   });
 });
 
+// Pairing required cache
+let pairingRequiredCache = true; // default: pairing required
+
+// Load pairing required state from storage on startup
+chrome.storage.local.get(['pairingRequired'], (result) => {
+  pairingRequiredCache = result.pairingRequired !== false; // default true
+});
+
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
@@ -265,6 +273,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       break;
 
+    case 'SET_PAIRING_REQUIRED': {
+      const enabled = message.enabled !== false;
+      pairingRequiredCache = enabled;
+      chrome.storage.local.set({ pairingRequired: enabled });
+      // Notify server via WebSocket
+      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled }));
+      }
+      sendResponse({ success: true });
+      return true;
+    }
+
+    case 'GET_PAIRING_REQUIRED': {
+      sendResponse({ enabled: pairingRequiredCache });
+      return true;
+    }
+
     case 'CHECK_FORMATTER_UPDATES':
       if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
         const updateCheckRequestId = `update-check-${Date.now()}`;
@@ -362,6 +387,7 @@ function connectWebSocket() {
       updateConnectionStatus('connected', null, null);
       startKeepalive();
       refreshConnectionMetadata();
+      wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled: pairingRequiredCache }));
     };
 
     wsConnection.onmessage = (event) => {
@@ -667,6 +693,9 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
     if (changes.whitelistedDomains) {
       restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
+    }
+    if (changes.pairingRequired) {
+      pairingRequiredCache = changes.pairingRequired.newValue !== false;
     }
   }
 });
