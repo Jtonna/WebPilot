@@ -121,7 +121,7 @@ GitHub-based auto-updater for accessibility tree formatters:
 
 ## MCP Tools
 
-Eleven tools are exposed to AI agents. All tools except `request_pairing` require both the Chrome extension to be connected and a valid paired API key. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
+Twelve tools are exposed to AI agents. All tools except `request_pairing` and `webpilot_get_formatter_info` require both the Chrome extension to be connected and a valid paired API key. Every tool except `request_pairing` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -136,6 +136,7 @@ Eleven tools are exposed to AI agents. All tools except `request_pairing` requir
 | `browser_scroll` | Scroll to element or by pixel amount | `tab_id`, `ref?`, `selector?`, `pixels?` |
 | `browser_type` | Type text with CDP keyboard simulation | `tab_id`, `text`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
+| `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
 
 ### `browser_request_chain`
 
