@@ -42,8 +42,16 @@ function notify(payload) {
 
     const silentAttr = sound ? '' : ' silent="true"';
 
+    // If a URL was passed, make the toast clickable: activationType="protocol"
+    // hands the launch string to the OS's default protocol handler (i.e., the
+    // default browser for http(s) URLs). Without these attributes, clicking
+    // the toast just dismisses it.
+    const launchAttrs = url
+      ? ' activationType="protocol" launch="' + xmlEscape(url) + '"'
+      : '';
+
     const toastXml = [
-      '<toast>',
+      '<toast' + launchAttrs + '>',
       '<visual>',
       '<binding template="ToastGeneric">',
       '<text>' + xmlTitle + '</text>',
