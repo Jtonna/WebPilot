@@ -1,15 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getStatus, setNetworkMode as apiSetNetworkMode } from '../../lib/api';
 
 export default function SettingsPage() {
   const [networkMode, setNetworkMode] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
-  const handleToggle = () => {
+  async function refresh() {
+    try {
+      const data = await getStatus();
+      setNetworkMode(!!data.networkMode);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const handleToggle = async () => {
     const next = !networkMode;
-    setNetworkMode(next);
-    // eslint-disable-next-line no-console
-    console.log('[settings] toggle network mode (stub)', { networkMode: next });
+    const msg = next
+      ? 'Enable network mode? This restarts the WebPilot server and binds to 0.0.0.0 (LAN reachable). Continue?'
+      : 'Disable network mode? This restarts the WebPilot server and binds to 127.0.0.1 (localhost only). Continue?';
+    if (!confirm(msg)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSetNetworkMode(next);
+      setNetworkMode(next);
+      // The server is now restarting; show a friendly message
+      setError(new Error('Server is restarting — refresh this page in a few seconds.'));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -18,6 +51,12 @@ export default function SettingsPage() {
         <h1 className="wp-page-title">Settings</h1>
         <p className="wp-page-sub">Server-wide preferences.</p>
       </div>
+
+      {error ? (
+        <div className="wp-card">
+          <div className="wp-muted">{error.message}</div>
+        </div>
+      ) : null}
 
       <div className="wp-card">
         <h2>Network mode</h2>
@@ -28,7 +67,11 @@ export default function SettingsPage() {
         <div className="wp-row">
           <div className="wp-row-grow">
             <div style={{ fontWeight: 600 }}>
-              {networkMode ? 'Network mode: ON' : 'Network mode: OFF (localhost only)'}
+              {loading
+                ? 'Loading…'
+                : networkMode
+                ? 'Network mode: ON'
+                : 'Network mode: OFF (localhost only)'}
             </div>
             <div className="wp-muted">
               {networkMode
@@ -40,8 +83,9 @@ export default function SettingsPage() {
             type="button"
             className={networkMode ? 'wp-btn wp-btn-danger' : 'wp-btn wp-btn-primary'}
             onClick={handleToggle}
+            disabled={busy || loading}
           >
-            {networkMode ? 'Disable' : 'Enable'}
+            {busy ? 'Restarting…' : networkMode ? 'Disable' : 'Enable'}
           </button>
         </div>
       </div>

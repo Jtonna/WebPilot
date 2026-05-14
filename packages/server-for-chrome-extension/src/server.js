@@ -43,6 +43,186 @@ function getLocalIP() {
   return 'localhost';
 }
 
+/**
+ * Locate the built web-ui static directory. Resolves both dev mode
+ * (packages/server-web-ui/out) and pkg mode (bundled into the snapshot via
+ * `pkg.assets`).
+ */
+function resolveWebUiDir() {
+  // Candidate paths in order of preference
+  const candidates = [
+    path.join(__dirname, '..', '..', 'server-web-ui', 'out'),
+    path.join(__dirname, '..', 'server-web-ui', 'out'),
+    // When running from a pkg snapshot, __dirname is something like /snapshot/...
+    // pkg bundles the relative path so the first candidate usually works.
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) {
+        console.log(`[web-ui] static dir resolved: ${c}`);
+        return c;
+      }
+    } catch (e) { /* ignore */ }
+  }
+  console.log('[web-ui] no static dir found, will serve 404 for /ui — run `npm run build:web-ui`');
+  return null;
+}
+
+function mountWebUiStatic(app) {
+  const dir = resolveWebUiDir();
+  if (!dir) {
+    app.get('/ui', (req, res) => {
+      res.status(503).type('text/plain').send(
+        'WebPilot UI is not built. Run `npm run build:web-ui` in packages/server-web-ui.'
+      );
+    });
+    return;
+  }
+  app.use('/ui', express.static(dir, { extensions: ['html'] }));
+  // Fallback: Next.js static export uses trailing-slash subdirs
+  app.get('/ui', (req, res) => {
+    try {
+      res.sendFile(path.join(dir, 'index.html'));
+    } catch (e) {
+      res.status(500).send('UI load failed: ' + e.message);
+    }
+  });
+}
+
+/**
+ * Authentication for /api/ui/* routes: localhost OR valid X-API-Key header.
+ */
+function makeUiAuth(apiKey) {
+  return function uiAuth(req, res, next) {
+    const remote = req.socket && req.socket.remoteAddress;
+    const isLocal = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    const headerKey = req.headers['x-api-key'];
+    if (isLocal || headerKey === apiKey) {
+      return next();
+    }
+    return res.status(401).json({ error: 'Unauthorized: localhost or X-API-Key required' });
+  };
+}
+
+function mountWebUiRoutes(app, deps) {
+  const { apiKey, chromeManager, extensionBridge, pairedKeys, setNetworkMode } = deps;
+  const auth = makeUiAuth(apiKey);
+
+  app.get('/api/ui/status', auth, async (req, res) => {
+    try {
+      const chromeStatus = await chromeManager.getStatus();
+      const profiles = chromeStatus.knownProfiles || [];
+      res.json({
+        chrome: chromeStatus,
+        profiles,
+        connectedProfiles: extensionBridge.getConnectedProfiles(),
+        pendingPairings: pairedKeys.listPendingPairings(),
+        pairedAgents: pairedKeys.listKeys(),
+        networkMode: (() => {
+          try {
+            const fp = path.join(getDataDir(), 'network.enabled');
+            return fs.existsSync(fp) && fs.readFileSync(fp, 'utf8').trim() === '1';
+          } catch (e) { return false; }
+        })(),
+      });
+    } catch (e) {
+      console.error('[ui-api] /status failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/pairings/:id/approve', auth, express.json(), (req, res) => {
+    try {
+      const id = req.params.id;
+      console.log(`[ui-api] approve pairing id=${id}`);
+      const entry = pairedKeys.approvePairing(id);
+      if (!entry) return res.status(404).json({ error: 'pairing not found' });
+      res.json({ pairing: entry, agents: pairedKeys.listKeys() });
+    } catch (e) {
+      console.error('[ui-api] approve failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/pairings/:id/deny', auth, express.json(), (req, res) => {
+    try {
+      const id = req.params.id;
+      console.log(`[ui-api] deny pairing id=${id}`);
+      const entry = pairedKeys.denyPairing(id);
+      if (!entry) return res.status(404).json({ error: 'pairing not found' });
+      res.json({ pairing: entry });
+    } catch (e) {
+      console.error('[ui-api] deny failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/profiles', auth, express.json(), (req, res) => {
+    try {
+      const name = (req.body && req.body.name && String(req.body.name).trim()) || '';
+      if (!name) return res.status(400).json({ error: 'name required' });
+      console.log(`[ui-api] create profile: "${name}"`);
+      const { launchChromeProfile } = require('./chrome');
+      const launchRes = launchChromeProfile({
+        userDataDir: chromeManager.userDataDir,
+        profileDirectory: name,
+        withFlag: true,
+      });
+      res.json({
+        ok: true,
+        profile: { directoryName: name },
+        instructions:
+          'Chrome should now be open on the new profile. Load the WebPilot ' +
+          'unpacked extension in this profile via chrome://extensions ' +
+          '(Developer mode > Load unpacked).',
+        launch: launchRes,
+      });
+    } catch (e) {
+      console.error('[ui-api] create profile failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/agents/:key/rename', auth, express.json(), (req, res) => {
+    try {
+      const key = req.params.key;
+      const newName = req.body && req.body.newName;
+      if (!newName) return res.status(400).json({ error: 'newName required' });
+      const ok = pairedKeys.renameKey(key, newName);
+      if (!ok) return res.status(404).json({ error: 'agent not found' });
+      res.json({ ok: true, agents: pairedKeys.listKeys() });
+    } catch (e) {
+      console.error('[ui-api] rename failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/ui/agents/:key', auth, (req, res) => {
+    try {
+      const key = req.params.key;
+      const ok = pairedKeys.revokeKey(key);
+      if (!ok) return res.status(404).json({ error: 'agent not found' });
+      res.json({ ok: true, agents: pairedKeys.listKeys() });
+    } catch (e) {
+      console.error('[ui-api] revoke failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/settings/network-mode', auth, express.json(), (req, res) => {
+    try {
+      const enabled = !!(req.body && req.body.enabled);
+      console.log(`[ui-api] settings/network-mode enabled=${enabled}`);
+      res.json({ ok: true, restarting: true });
+      // Trigger restart-spawn after the response is flushed.
+      setImmediate(() => setNetworkMode({ enabled }));
+    } catch (e) {
+      console.error('[ui-api] network-mode failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+}
+
 function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
   let host = initialHost;
   let publicHost = initialPublicHost;
@@ -348,6 +528,39 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
+
+  // ---- Web UI static mount + REST ----
+  mountWebUiStatic(app);
+  mountWebUiRoutes(app, {
+    apiKey,
+    chromeManager,
+    extensionBridge,
+    pairedKeys,
+    server,
+    setNetworkMode: ({ enabled }) => {
+      // Persist + restart-spawn approach (Section 4.6)
+      try {
+        fs.writeFileSync(path.join(getDataDir(), 'network.enabled'), enabled ? '1' : '0', 'utf8');
+      } catch (e) {
+        console.error('[network] Failed to persist network.enabled:', e.message);
+      }
+      console.log(`[network] Network mode toggled to ${enabled ? 'on' : 'off'}; restarting daemon`);
+      // Spawn a fresh detached copy of self before exiting so the user is not stranded.
+      try {
+        const { spawn } = require('child_process');
+        const args = process.argv.slice(1);
+        const env = { ...process.env, WEBPILOT_FOREGROUND: '1' };
+        const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env });
+        child.unref();
+      } catch (e) {
+        console.error('[network] Failed to spawn replacement daemon:', e.message);
+      }
+      setTimeout(() => {
+        try { cleanupPidAndPortFiles(); } catch (e) { /* ignore */ }
+        process.exit(0);
+      }, 500);
+    },
+  });
 
   app.get('/health', (req, res) => {
     res.json({

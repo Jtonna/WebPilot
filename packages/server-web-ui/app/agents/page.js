@@ -1,25 +1,62 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import AgentRow from '../../components/AgentRow';
-
-const PLACEHOLDER_AGENTS = [
-  {
-    key: 'a1b2c3d4e5f6g7h8i9j0',
-    name: 'claude-code (laptop)',
-    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 3,
-    lastActive: Date.now() - 1000 * 60 * 5,
-  },
-  {
-    key: 'z9y8x7w6v5u4t3s2r1q0',
-    name: 'cursor (desktop)',
-    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 14,
-    lastActive: Date.now() - 1000 * 60 * 60 * 6,
-  },
-];
+import { getStatus, renameAgent, revokeAgent } from '../../lib/api';
+import { createUiEventsClient } from '../../lib/ws';
 
 export default function AgentsPage() {
-  const [agents] = useState(PLACEHOLDER_AGENTS);
+  const [agents, setAgents] = useState([]);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      const data = await getStatus();
+      // Normalize server shape (agentName/key/createdAt/lastAccessed) -> UI shape (name/key/createdAt/lastActive)
+      const normalized = (data.pairedAgents || []).map((a) => ({
+        key: a.key,
+        name: a.agentName,
+        createdAt: a.createdAt,
+        lastActive: a.lastAccessed,
+      }));
+      setAgents(normalized);
+      setError(null);
+    } catch (err) {
+      setError(err);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const client = createUiEventsClient();
+    client.connect();
+    const u1 = client.subscribe('agents_changed', () => refresh());
+    const u2 = client.subscribe('pairing_approved', () => refresh());
+    return () => {
+      u1 && u1();
+      u2 && u2();
+      client.disconnect();
+    };
+  }, []);
+
+  async function handleRename(agent, newName) {
+    try {
+      await renameAgent(agent.key, newName);
+      await refresh();
+    } catch (e) {
+      setError(e);
+    }
+  }
+
+  async function handleRevoke(agent) {
+    if (!confirm(`Revoke key for "${agent.name}"? This is permanent.`)) return;
+    try {
+      await revokeAgent(agent.key);
+      await refresh();
+    } catch (e) {
+      setError(e);
+    }
+  }
 
   return (
     <>
@@ -30,12 +67,20 @@ export default function AgentsPage() {
         </p>
       </div>
 
+      {error ? (
+        <div className="wp-card">
+          <div className="wp-muted">Error: {error.message}</div>
+        </div>
+      ) : null}
+
       <div className="wp-card">
         <h2>Active agents</h2>
         {agents.length === 0 ? (
           <div className="wp-muted">No agents paired yet.</div>
         ) : (
-          agents.map((a) => <AgentRow key={a.key} agent={a} />)
+          agents.map((a) => (
+            <AgentRow key={a.key} agent={a} onRename={handleRename} onRevoke={handleRevoke} />
+          ))
         )}
       </div>
     </>

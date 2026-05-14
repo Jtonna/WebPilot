@@ -13,6 +13,7 @@ export default function PairingPromptCard({
   profileOptions = DEFAULT_PROFILE_OPTIONS,
   onApprove,
   onDeny,
+  disabled = false,
 }) {
   const [selectedProfile, setSelectedProfile] = useState(profileOptions[0]?.value || 'Default');
 
@@ -46,15 +47,16 @@ export default function PairingPromptCard({
         className="wp-select"
         value={selectedProfile}
         onChange={(e) => setSelectedProfile(e.target.value)}
+        disabled={disabled}
       >
         {profileOptions.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
-      <button type="button" className="wp-btn wp-btn-primary" onClick={handleApprove}>
+      <button type="button" className="wp-btn wp-btn-primary" onClick={handleApprove} disabled={disabled}>
         Approve
       </button>
-      <button type="button" className="wp-btn wp-btn-danger" onClick={handleDeny}>
+      <button type="button" className="wp-btn wp-btn-danger" onClick={handleDeny} disabled={disabled}>
         Deny
       </button>
     </div>

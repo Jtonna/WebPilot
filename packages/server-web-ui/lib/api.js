@@ -45,3 +45,50 @@ export async function apiFetch(path, options = {}) {
 
   return payload;
 }
+
+// Convenience wrappers used by pages
+
+export function getStatus() {
+  return apiFetch('/api/ui/status');
+}
+
+export function approvePairing(pairingId, profileId) {
+  return apiFetch(`/api/ui/pairings/${encodeURIComponent(pairingId)}/approve`, {
+    method: 'POST',
+    body: { profileId: profileId || null },
+  });
+}
+
+export function denyPairing(pairingId) {
+  return apiFetch(`/api/ui/pairings/${encodeURIComponent(pairingId)}/deny`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
+export function createProfile(name) {
+  return apiFetch('/api/ui/profiles', {
+    method: 'POST',
+    body: { name },
+  });
+}
+
+export function renameAgent(key, newName) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}/rename`, {
+    method: 'POST',
+    body: { newName },
+  });
+}
+
+export function revokeAgent(key) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function setNetworkMode(enabled) {
+  return apiFetch('/api/ui/settings/network-mode', {
+    method: 'POST',
+    body: { enabled },
+  });
+}

@@ -2,43 +2,53 @@
 
 import { useEffect, useState } from 'react';
 import StatusCard from '../components/StatusCard';
-import { apiFetch } from '../lib/api';
+import { getStatus } from '../lib/api';
+import { createUiEventsClient } from '../lib/ws';
 
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
 
+  async function refresh() {
+    try {
+      const data = await getStatus();
+      setStatus(data);
+      setError(null);
+    } catch (err) {
+      setError(err);
+      setStatus(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      try {
-        const data = await apiFetch('/api/ui/status');
-        if (!cancelled) {
-          setStatus(data);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          // Endpoint doesn't exist yet — show a friendly placeholder.
-          setError(err);
-          setStatus(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+    refresh();
 
-    load();
+    const client = createUiEventsClient();
+    client.connect();
+    const unsubs = [
+      client.subscribe('pairing_requested', () => !cancelled && refresh()),
+      client.subscribe('pairing_approved', () => !cancelled && refresh()),
+      client.subscribe('pairing_denied', () => !cancelled && refresh()),
+      client.subscribe('agents_changed', () => !cancelled && refresh()),
+      client.subscribe('extension_connected', () => !cancelled && refresh()),
+      client.subscribe('extension_disconnected', () => !cancelled && refresh()),
+    ];
+
     return () => {
       cancelled = true;
+      unsubs.forEach((u) => u && u());
+      client.disconnect();
     };
   }, []);
 
   const pendingPairings = status?.pendingPairings?.length ?? 0;
   const chromeRunning = status?.chrome?.running;
-  const extensionsConnected = status?.connectedExtensions ?? 0;
+  const extensionsConnected = (status?.connectedProfiles?.length) ?? 0;
 
   return (
     <>
@@ -54,8 +64,7 @@ export default function HomePage() {
       {!loading && error ? (
         <div className="wp-card">
           <div className="wp-muted">
-            Live status unavailable (the <code>/api/ui/status</code> endpoint
-            isn&apos;t wired up yet). Showing placeholder values.
+            Live status unavailable: <code>{error.message}</code>
           </div>
         </div>
       ) : null}
@@ -66,19 +75,19 @@ export default function HomePage() {
             title="Server"
             value="Running"
             state="ok"
-            detail="Listening on localhost"
+            detail={status?.networkMode ? 'LAN reachable' : 'Localhost only'}
           />
           <StatusCard
             title="Chrome"
             value={chromeRunning === undefined ? 'Unknown' : chromeRunning ? 'Running' : 'Not running'}
             state={chromeRunning === undefined ? 'unknown' : chromeRunning ? 'ok' : 'warn'}
-            detail={status?.chrome?.hasFlag ? 'Launched with debug flag' : 'Flag status unknown'}
+            detail={status?.chrome?.hasFlag ? 'Launched with debug flag' : (chromeRunning ? 'Missing debug flag' : 'Flag status unknown')}
           />
           <StatusCard
             title="Connected extensions"
             value={String(extensionsConnected)}
             state={extensionsConnected > 0 ? 'ok' : 'warn'}
-            detail="One per Chrome profile"
+            detail={status?.connectedProfiles?.join(', ') || 'No profiles connected'}
           />
           <StatusCard
             title="Pending pairings"
