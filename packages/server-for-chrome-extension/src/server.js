@@ -77,23 +77,118 @@ function resolveWebUiDir() {
   return null;
 }
 
+// Minimal extension->mime map for the file types Next.js static export
+// emits. `mime-types` is not a runtime dependency; hand-rolled to keep the
+// pkg bundle lean.
+const WEB_UI_MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+};
+
+function _webUiMimeFor(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return WEB_UI_MIME[ext] || 'application/octet-stream';
+}
+
+/**
+ * Map a URL request path to a file under the resolved web-ui-out directory,
+ * keeping the traversal scoped inside that directory. Returns the absolute
+ * filesystem path, or null if the requested resource cannot be served.
+ *
+ * Handles Next.js static-export conventions:
+ *   /ui          -> index.html
+ *   /ui/         -> index.html
+ *   /ui/pairings -> pairings.html or pairings/index.html
+ *   /ui/_next/.. -> _next/..
+ */
+function _resolveWebUiFile(rootDir, urlPath) {
+  // Strip "/ui" prefix
+  let rel = urlPath.replace(/^\/ui\/?/, '');
+  // Decode percent-escapes (e.g. spaces). Tolerate malformed URIs.
+  try {
+    rel = decodeURIComponent(rel);
+  } catch (_) { /* keep raw */ }
+  // Reject any traversal attempts (".." segments)
+  if (rel.split(/[\\/]/).some((seg) => seg === '..')) return null;
+
+  // Default empty/dir paths to index.html
+  if (rel === '' || rel.endsWith('/')) rel = rel + 'index.html';
+
+  // Compose candidate paths to try in order
+  const candidates = [path.join(rootDir, rel)];
+  if (!path.extname(rel)) {
+    candidates.push(path.join(rootDir, rel + '.html'));
+    candidates.push(path.join(rootDir, rel, 'index.html'));
+  }
+
+  for (const candidate of candidates) {
+    // Containment check — abort if any candidate escaped rootDir
+    const resolved = path.resolve(candidate);
+    const resolvedRoot = path.resolve(rootDir);
+    if (!resolved.startsWith(resolvedRoot)) {
+      console.log(`[web-ui] rejecting out-of-root path: ${resolved}`);
+      continue;
+    }
+    try {
+      if (fs.existsSync(resolved)) {
+        const stat = fs.statSync(resolved);
+        if (stat.isFile()) return resolved;
+      }
+    } catch (e) { /* ignore */ }
+  }
+  return null;
+}
+
 function mountWebUiStatic(app) {
   const dir = resolveWebUiDir();
   if (!dir) {
-    app.get('/ui', (req, res) => {
+    app.get(/^\/ui($|\/)/, (req, res) => {
       res.status(503).type('text/plain').send(
         'WebPilot UI is not built. Run `npm run build:web-ui` in packages/server-web-ui.'
       );
     });
     return;
   }
-  app.use('/ui', express.static(dir, { extensions: ['html'] }));
-  // Fallback: Next.js static export uses trailing-slash subdirs
-  app.get('/ui', (req, res) => {
+
+  // Manual file handler — replaces `express.static` so that pkg snapshot
+  // reads go through `fs.readFileSync` (which pkg patches). See QOL fix-up F8.
+  app.get(/^\/ui($|\/.*)/, (req, res) => {
+    const filePath = _resolveWebUiFile(dir, req.path);
+    if (!filePath) {
+      console.log(`[web-ui] 404 for ${req.path}`);
+      res.status(404).type('text/plain').send('Not found');
+      return;
+    }
     try {
-      res.sendFile(path.join(dir, 'index.html'));
+      const body = fs.readFileSync(filePath);
+      res.setHeader('Content-Type', _webUiMimeFor(filePath));
+      // Aggressive caching only for the immutable Next chunks; everything
+      // else stays fresh so dev iterations show up immediately.
+      if (filePath.includes(`${path.sep}_next${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+      console.log(`[web-ui] serving ${req.path} -> ${filePath} (${body.length}B)`);
+      res.status(200).end(body);
     } catch (e) {
-      res.status(500).send('UI load failed: ' + e.message);
+      console.log(`[web-ui] read failed for ${filePath}: ${e.message}`);
+      res.status(500).type('text/plain').send('UI load failed: ' + e.message);
     }
   });
 }
