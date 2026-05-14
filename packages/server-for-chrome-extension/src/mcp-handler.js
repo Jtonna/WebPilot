@@ -860,11 +860,9 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     let commandParams;
 
     switch (name) {
-      case 'browser_create_tab':
-        // handled above
-        commandType = 'create_tab';
-        commandParams = { url: args.url };
-        break;
+      // NOTE: browser_create_tab is handled earlier in this function via the
+      // ChromeManager readiness path and an early `return`. It must NOT appear
+      // in this switch — its presence would be misleading dead code.
 
       case 'browser_close_tab':
         commandType = 'close_tab';
