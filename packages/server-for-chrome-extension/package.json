@@ -10,15 +10,17 @@
     "dev:network": "node --watch index.js --network",
     "start:network": "node index.js --network",
     "build": "echo Use build:win, build:mac, or build:linux && exit 1",
-    "build:win": "pkg . --target node18-win-x64 --out-path dist",
-    "build:mac": "pkg . --target node18-macos-x64 --out-path dist",
-    "build:linux": "pkg . --target node18-linux-x64 --out-path dist"
+    "build:web-ui": "cd ../server-web-ui && npm run build",
+    "build:win": "npm run build:web-ui && pkg . --target node18-win-x64 --out-path dist",
+    "build:mac": "npm run build:web-ui && pkg . --target node18-macos-x64 --out-path dist",
+    "build:linux": "npm run build:web-ui && pkg . --target node18-linux-x64 --out-path dist"
   },
   "pkg": {
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
-      "index.js"
+      "index.js",
+      "../server-web-ui/out/**/*"
     ]
   },
   "keywords": [

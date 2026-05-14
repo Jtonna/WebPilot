@@ -46,16 +46,25 @@ function getLocalIP() {
 /**
  * Locate the built web-ui static directory. Resolves both dev mode
  * (packages/server-web-ui/out) and pkg mode (bundled into the snapshot via
- * `pkg.assets`).
+ * `pkg.assets`). When running from pkg the __dirname is rooted at
+ * /snapshot/... and the relative path resolution still finds the assets
+ * bundled by `pkg.assets`.
  */
 function resolveWebUiDir() {
+  const inPkg = !!process.pkg;
   // Candidate paths in order of preference
   const candidates = [
     path.join(__dirname, '..', '..', 'server-web-ui', 'out'),
     path.join(__dirname, '..', 'server-web-ui', 'out'),
-    // When running from a pkg snapshot, __dirname is something like /snapshot/...
-    // pkg bundles the relative path so the first candidate usually works.
   ];
+  if (inPkg) {
+    // pkg snapshot root — the assets glob "../server-web-ui/out/**/*" places
+    // the files at <snapshot>/packages/server-web-ui/out/. __dirname is
+    // <snapshot>/packages/server-for-chrome-extension/src so the first
+    // candidate above is the correct snapshot path. Express.static + pkg's
+    // patched fs accept reads from /snapshot.
+    console.log('[web-ui] running inside pkg snapshot');
+  }
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) {
@@ -64,7 +73,7 @@ function resolveWebUiDir() {
       }
     } catch (e) { /* ignore */ }
   }
-  console.log('[web-ui] no static dir found, will serve 404 for /ui — run `npm run build:web-ui`');
+  console.log('[web-ui] no static dir found, will serve 503 for /ui — run `npm run build:web-ui`');
   return null;
 }
 
