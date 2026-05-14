@@ -194,6 +194,84 @@ function mountWebUiStatic(app) {
 }
 
 /**
+ * Validate a profile-directory name supplied by a UI client before passing it
+ * into a Chrome `--profile-directory=` arg and a filesystem path. See QOL
+ * review C1.
+ *
+ * Rules:
+ *  - non-empty string after trim
+ *  - length 1..60
+ *  - allowed chars: [A-Za-z0-9 _-] only (no slashes, dots, colons, quotes,
+ *    `<>|*?`, control chars)
+ *  - reject Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9),
+ *    case-insensitive
+ *  - reject names starting with `.` or ending with `.` or a space
+ *  - reject if `<userDataDir>/<name>` already exists (case-insensitive on
+ *    Windows)
+ *
+ * @param {string} name
+ * @param {string} userDataDir
+ * @returns {{ ok: true, name: string } | { ok: false, reason: string }}
+ */
+function validateProfileName(name, userDataDir) {
+  if (typeof name !== 'string') {
+    return { ok: false, reason: 'name must be a string' };
+  }
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, reason: 'name must be non-empty after trim' };
+  }
+  if (trimmed.length > 60) {
+    return { ok: false, reason: 'name must be 60 characters or fewer' };
+  }
+  if (!/^[A-Za-z0-9 _-]+$/.test(trimmed)) {
+    return {
+      ok: false,
+      reason:
+        'name may only contain letters, digits, spaces, underscores, and hyphens',
+    };
+  }
+  if (trimmed.startsWith('.')) {
+    return { ok: false, reason: 'name must not start with a dot' };
+  }
+  if (trimmed.endsWith('.') || trimmed.endsWith(' ')) {
+    return { ok: false, reason: 'name must not end with a dot or space' };
+  }
+  const upper = trimmed.toUpperCase();
+  const reserved = new Set([
+    'CON', 'PRN', 'AUX', 'NUL',
+    'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+  ]);
+  if (reserved.has(upper)) {
+    return { ok: false, reason: `name "${trimmed}" is a Windows reserved name` };
+  }
+  // Collision check against the user-data-dir. Case-insensitive on Windows
+  // because NTFS treats `Default` and `default` as the same directory.
+  if (userDataDir) {
+    try {
+      const entries = fs.readdirSync(userDataDir);
+      const lower = trimmed.toLowerCase();
+      const collides = entries.some((entry) =>
+        process.platform === 'win32'
+          ? entry.toLowerCase() === lower
+          : entry === trimmed
+      );
+      if (collides) {
+        return {
+          ok: false,
+          reason: `a profile directory named "${trimmed}" already exists`,
+        };
+      }
+    } catch (e) {
+      // userDataDir not readable — fall through; the launch attempt will
+      // surface a clearer error than blocking on this check.
+    }
+  }
+  return { ok: true, name: trimmed };
+}
+
+/**
  * Authentication for /api/ui/* routes: LOCALHOST ONLY.
  *
  * The web UI dashboard intentionally requires NO API key. It is bound to the
@@ -274,8 +352,13 @@ function mountWebUiRoutes(app, deps) {
 
   app.post('/api/ui/profiles', auth, express.json(), (req, res) => {
     try {
-      const name = (req.body && req.body.name && String(req.body.name).trim()) || '';
-      if (!name) return res.status(400).json({ error: 'name required' });
+      const rawName = req.body && req.body.name;
+      const v = validateProfileName(rawName, chromeManager.userDataDir);
+      if (!v.ok) {
+        console.log(`[ui-api:profiles] rejected profile name: ${v.reason}`);
+        return res.status(400).json({ error: 'invalid profile name', reason: v.reason });
+      }
+      const name = v.name;
       console.log(`[ui-api] create profile: "${name}"`);
       const { launchChromeProfile } = require('./chrome');
       const launchRes = launchChromeProfile({
