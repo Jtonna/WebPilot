@@ -54,8 +54,17 @@ function notify(payload) {
       '</toast>',
     ].join('');
 
+    // Windows 10/11 silently drop toasts whose AppUserModelID is not registered
+    // in HKCU\Software\Classes\AppUserModelId\. Self-register on every call —
+    // it's a cheap idempotent registry write and means users don't have to run
+    // a separate setup step. Without this, Show($toast) returns success but no
+    // toast ever appears.
     const psScript = [
       "$ErrorActionPreference = 'Stop';",
+      "$appIdPath = 'HKCU:\\Software\\Classes\\AppUserModelId\\" + APP_ID + "';",
+      'if (-not (Test-Path $appIdPath)) { New-Item -Path $appIdPath -Force | Out-Null }',
+      "Set-ItemProperty -Path $appIdPath -Name 'DisplayName' -Value 'WebPilot' -Type String;",
+      "Set-ItemProperty -Path $appIdPath -Name 'ShowInSettings' -Value 1 -Type DWord;",
       '[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime] | Out-Null;',
       '[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime] | Out-Null;',
       "$xml = '" + psSingleQuote(toastXml) + "';",
