@@ -675,26 +675,15 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
         }
 
         if (message.type === 'set_network_mode') {
-          const networkEnabled = message.enabled;
-          host = networkEnabled ? '0.0.0.0' : '127.0.0.1';
-          publicHost = networkEnabled ? getLocalIP() : 'localhost';
-
-          // Persist preference so it survives server restarts
-          try {
-            fs.writeFileSync(path.join(getDataDir(), 'network.enabled'), networkEnabled ? '1' : '0', 'utf8');
-          } catch (e) {
-            console.error('Failed to save network mode:', e.message);
-          }
-
-          console.log(`[network] Switching to ${networkEnabled ? 'network' : 'local'} mode, restarting listener on ${host}:${port}`);
-
-          // Force-close all connections so server.close() completes immediately
-          server.closeAllConnections();
-          server.close(() => {
-            server.listen(port, host, () => {
-              console.log(`[network] Now listening on ${host}:${port}`);
-            });
-          });
+          // DEPRECATED: this in-process rebind path was replaced by the
+          // POST /api/ui/settings/network-mode REST endpoint which uses a
+          // spawn-then-exit restart. Keeping the WS handler alive would race
+          // with that flow. The WebPilot extension no longer sends this
+          // message — log and ignore so any stragglers are visible.
+          console.log(
+            '[network] received deprecated set_network_mode WS message — ignored; ' +
+              'use POST /api/ui/settings/network-mode'
+          );
           return;
         }
 
