@@ -333,7 +333,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'request_pairing',
-      description: 'Initiate pairing. **Asynchronous flow**: returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', or \'denied\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm.',
+      description: 'Initiate pairing. **Asynchronous flow**: returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', \'denied\', or \'expired\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back, **unless** the existing pending entry has expired (pending pairings expire after 24 hours of inactivity), in which case a fresh `pairing_id` is minted. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -347,7 +347,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'check_pairing_status',
-      description: 'Poll the status of a pending pairing request. Pass the `pairing_id` you received from `request_pairing`. Returns one of: status=\'pending\' (user has not yet approved — wait, then call this tool again on a later turn), status=\'approved\' (response includes your `api_key` — store it and use it for all future tool calls via the X-API-Key header or `api_key` argument), or status=\'denied\' (the user rejected this pairing — do not retry automatically; ask the human if they want to try again with a different agent_name).',
+      description: 'Poll the status of a pending pairing request. Pass the `pairing_id` you received from `request_pairing`. Returns one of: status=\'pending\' (user has not yet approved — wait, then call this tool again on a later turn), status=\'approved\' (response includes your `api_key` — store it and use it for all future tool calls via the X-API-Key header or `api_key` argument), status=\'denied\' (the user rejected this pairing — do not retry automatically; ask the human if they want to try again with a different agent_name), or status=\'expired\' (the pending pairing aged out — pending requests expire after 24 hours of inactivity; call `request_pairing` again with the same `agent_name` to mint a fresh `pairing_id`).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -781,6 +781,22 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
         };
       }
 
+      if (status.status === 'expired') {
+        console.log(`[pairing] check_pairing_status: pairingId=${pairingId} is expired`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `status: expired\n\n` +
+                `This pending pairing aged out (pending pairings expire after 24 hours ` +
+                `of inactivity). Call request_pairing again with the same agent_name ` +
+                `to mint a fresh pairing_id.`,
+            },
+          ],
+        };
+      }
+
       // pending
       console.log(`[pairing] check_pairing_status: pairingId=${pairingId} is still pending`);
       return {
@@ -790,7 +806,8 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
             text:
               `status: pending\n\n` +
               `The user has not yet approved this pairing. ` +
-              `Tell the human to approve it at ${webUiUrl}, then call this tool again on a later turn.`,
+              `Tell the human to approve it at ${webUiUrl}, then call this tool again on a later turn. ` +
+              `Pending pairings expire after 24 hours of inactivity.`,
           },
         ],
       };

@@ -519,6 +519,24 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     3600000
   );
 
+  // Pending-pairings housekeeping: lazy-expire entries past 24h, hard-drop
+  // anything older than 7d. Runs once at startup and then hourly.
+  try {
+    const initial = pairedKeys.cleanupExpiredPairings();
+    console.log(
+      `[pairing:cleanup] startup pass: expired=${initial.expired} dropped=${initial.dropped} kept=${initial.kept}`
+    );
+  } catch (e) {
+    console.log(`[pairing:cleanup] startup pass failed: ${e.message}`);
+  }
+  setInterval(() => {
+    try {
+      pairedKeys.cleanupExpiredPairings();
+    } catch (e) {
+      console.log(`[pairing:cleanup] hourly pass failed: ${e.message}`);
+    }
+  }, 3600 * 1000);
+
   // Bridge async-pairing events back to the extension's WS so existing
   // `paired_agents_list` listeners in background.js keep working even though
   // approval now happens via the web UI rather than the extension popup.

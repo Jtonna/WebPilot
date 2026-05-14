@@ -14,6 +14,13 @@ function getPendingPairingsPath() {
   return path.join(getDataDir(), 'config', 'pending-pairings.json');
 }
 
+// Pending-pairing TTL: pending entries become "expired" after this many ms of
+// inactivity. The agent can simply call request_pairing again to mint a fresh
+// pairingId. See QOL review server I6.
+const PENDING_PAIRING_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+// Garbage-collect terminal / very-old entries after this many ms.
+const PAIRING_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+
 /**
  * Listener registry. Other modules (server.js) can subscribe to pairing events
  * so they can broadcast `paired_agents_list` to the extension over WS, push
@@ -212,12 +219,33 @@ function savePendingPairings(pairings) {
  */
 function requestPairing(agentName) {
   const pairings = loadPendingPairings();
-  const existing = pairings.find(
-    (p) => p.agentName === agentName && (p.status === 'pending' || p.status === 'approved')
-  );
+  const now = Date.now();
+  let dirty = false;
+  const existing = pairings.find((p) => {
+    if (p.agentName !== agentName) return false;
+    if (p.status === 'approved') return true;
+    if (p.status === 'pending') {
+      // Skip pending entries that have aged past the TTL — they should be
+      // treated as if absent. Mark them expired in-place so the store
+      // reflects reality.
+      if (p.expiresAt && p.expiresAt < now) {
+        console.log(
+          `[pairing:requestPairing] expiring stale pending entry for "${agentName}" ` +
+            `(pairingId=${p.pairingId}, expiresAt=${new Date(p.expiresAt).toISOString()})`
+        );
+        p.status = 'expired';
+        p.decidedAt = new Date(now).toISOString();
+        dirty = true;
+        return false;
+      }
+      return true;
+    }
+    return false;
+  });
   if (existing) {
+    if (dirty) savePendingPairings(pairings);
     console.log(
-      `[pairing] requestPairing: returning existing ${existing.status} entry ` +
+      `[pairing:requestPairing] returning existing ${existing.status} entry ` +
         `for agent "${agentName}" (pairingId=${existing.pairingId})`
     );
     return {
@@ -231,13 +259,14 @@ function requestPairing(agentName) {
     pairingId: crypto.randomUUID(),
     agentName,
     status: 'pending',
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(now).toISOString(),
+    expiresAt: now + PENDING_PAIRING_TTL_MS,
   };
   pairings.push(entry);
   savePendingPairings(pairings);
   console.log(
-    `[pairing] requestPairing: created new pending entry for agent "${agentName}" ` +
-      `(pairingId=${entry.pairingId})`
+    `[pairing:requestPairing] created new pending entry for agent "${agentName}" ` +
+      `(pairingId=${entry.pairingId}, expiresAt=${new Date(entry.expiresAt).toISOString()})`
   );
   emitPairingEvent('requested', entry);
   return { pairingId: entry.pairingId, status: entry.status, created: true };
@@ -253,11 +282,22 @@ function checkPairingStatus(pairingId) {
   const pairings = loadPendingPairings();
   const entry = pairings.find((p) => p.pairingId === pairingId);
   if (!entry) {
-    console.log(`[pairing] checkPairingStatus: pairingId=${pairingId} not found`);
+    console.log(`[pairing:checkPairingStatus] pairingId=${pairingId} not found`);
     return null;
   }
+  // Lazy expiration: a pending entry past expiresAt becomes 'expired' on read.
+  if (entry.status === 'pending' && entry.expiresAt && entry.expiresAt < Date.now()) {
+    console.log(
+      `[pairing:checkPairingStatus] pairingId=${pairingId} expired ` +
+        `(expiresAt=${new Date(entry.expiresAt).toISOString()}) — marking expired`
+    );
+    entry.status = 'expired';
+    entry.decidedAt = new Date().toISOString();
+    savePendingPairings(pairings);
+    return { status: 'expired' };
+  }
   console.log(
-    `[pairing] checkPairingStatus: pairingId=${pairingId} status=${entry.status}`
+    `[pairing:checkPairingStatus] pairingId=${pairingId} status=${entry.status}`
   );
   const result = { status: entry.status };
   if (entry.apiKey) result.apiKey = entry.apiKey;
@@ -345,6 +385,45 @@ function listAllPairings() {
   return loadPendingPairings();
 }
 
+/**
+ * Walk the pending-pairings store and:
+ *   1. Mark any 'pending' entry past expiresAt as 'expired'.
+ *   2. Drop any entry older than PAIRING_HARD_TTL_MS (terminal states).
+ *
+ * Designed to be called periodically (e.g. once an hour) and once at startup.
+ * Returns a small summary for logging.
+ */
+function cleanupExpiredPairings() {
+  const pairings = loadPendingPairings();
+  const now = Date.now();
+  const cutoff = now - PAIRING_HARD_TTL_MS;
+  let expired = 0;
+  let dropped = 0;
+  const kept = [];
+  for (const entry of pairings) {
+    // Hard drop: anything created longer ago than the hard TTL is purged.
+    const created = entry.createdAt ? Date.parse(entry.createdAt) : NaN;
+    if (Number.isFinite(created) && created < cutoff) {
+      dropped += 1;
+      continue;
+    }
+    // Lazy expire: pending past expiresAt becomes 'expired'.
+    if (entry.status === 'pending' && entry.expiresAt && entry.expiresAt < now) {
+      entry.status = 'expired';
+      entry.decidedAt = new Date(now).toISOString();
+      expired += 1;
+    }
+    kept.push(entry);
+  }
+  if (expired || dropped || kept.length !== pairings.length) {
+    savePendingPairings(kept);
+    console.log(
+      `[pairing:cleanup] expired=${expired} dropped=${dropped} kept=${kept.length}`
+    );
+  }
+  return { expired, dropped, kept: kept.length };
+}
+
 module.exports = {
   loadKeys,
   saveKeys,
@@ -362,5 +441,6 @@ module.exports = {
   denyPairing,
   listPendingPairings,
   listAllPairings,
+  cleanupExpiredPairings,
   onPairingEvent,
 };
