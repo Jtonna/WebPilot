@@ -19,7 +19,6 @@
     <!-- Tab Bar -->
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-      <button class="tab-btn" data-tab="pairing">Pairing</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
 
@@ -144,34 +143,6 @@
         </div>
 
         <button class="reconnect-btn" id="retryBtn" style="width:100%">Retry</button>
-      </div>
-    </div>
-
-    <!-- Pairing Tab -->
-    <div class="tab-content" id="tab-pairing">
-      <!-- Pairing Required Toggle -->
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">Require Pairing Approval</span>
-          <span class="setting-desc">When disabled, all agents can connect without approval</span>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="pairingRequiredToggle" checked>
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <!-- Pairing Requests Section -->
-      <div id="pairingRequestsSection" class="section" style="display: none;">
-        <div class="section-header">Pairing Requests</div>
-        <div id="pairingRequestsList"></div>
-      </div>
-
-      <!-- Paired Agents Section -->
-      <div id="pairedAgentsSection" class="section">
-        <div class="section-header">Paired Agents</div>
-        <div id="pairedAgentsList"></div>
-        <div id="noAgentsMessage" class="empty-message">No paired agents</div>
       </div>
     </div>
 
