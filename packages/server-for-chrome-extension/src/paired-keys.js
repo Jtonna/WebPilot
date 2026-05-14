@@ -91,12 +91,20 @@ function generateKey() {
  * Generates a new key for the given agent name, appends it to the store, saves, and returns the key string.
  *
  * @param {string} agentName
+ * @param {string|null} [profileId] Optional Chrome profile directory name to
+ *   bind to this key. Used by v1.5+ for per-agent profile routing; stored as
+ *   `null` for legacy entries.
  * @returns {string} The generated key
  */
-function addKey(agentName) {
+function addKey(agentName, profileId = null) {
   const keys = loadKeys();
   const key = generateKey();
-  keys.push({ key, agentName, createdAt: new Date().toISOString() });
+  keys.push({
+    key,
+    agentName,
+    createdAt: new Date().toISOString(),
+    profileId: profileId || null,
+  });
   saveKeys(keys);
   return key;
 }
@@ -174,6 +182,7 @@ function listKeys() {
     lastAccessed: entry.lastAccessed || null,
     key: entry.key,
     keyDisplay: entry.key.slice(0, 8) + '...',
+    profileId: entry.profileId || null,
   }));
 }
 
@@ -307,12 +316,18 @@ function checkPairingStatus(pairingId) {
 /**
  * Approve a pending pairing. Mints a real API key via addKey(), sets status='approved',
  * stamps apiKey + decidedAt, persists, and returns the updated entry.
- * If the pairing is already approved, returns it unchanged.
+ * If the pairing is already approved, returns it unchanged (idempotent).
  *
  * @param {string} pairingId
- * @returns {object | null} The entry, or null if not found / cannot be approved.
+ * @param {{ profileId?: string|null }} [options] Optional approval metadata.
+ *   `profileId` — Chrome profile-directory name that the operator chose for
+ *   this agent in the UI. Persisted on both the pending-pairings entry and
+ *   the minted paired-keys entry so v1.5+ per-agent routing can use it.
+ * @returns {object | null} The approved entry, or null when the pairing is in
+ *   a terminal non-approved state (denied / expired) or does not exist.
  */
-function approvePairing(pairingId) {
+function approvePairing(pairingId, options = {}) {
+  const profileId = (options && options.profileId) || null;
   const pairings = loadPendingPairings();
   const entry = pairings.find((p) => p.pairingId === pairingId);
   if (!entry) {
@@ -331,14 +346,15 @@ function approvePairing(pairingId) {
     );
     return entry;
   }
-  const key = addKey(entry.agentName);
+  const key = addKey(entry.agentName, profileId);
   entry.status = 'approved';
   entry.apiKey = key;
+  entry.profileId = profileId;
   entry.decidedAt = new Date().toISOString();
   savePendingPairings(pairings);
   console.log(
     `[pairing] approvePairing: pairingId=${pairingId} approved for agent "${entry.agentName}", ` +
-      `key=${key.slice(0, 8)}...`
+      `key=${key.slice(0, 8)}..., profileId="${profileId || ''}"`
   );
   emitPairingEvent('approved', entry);
   return entry;

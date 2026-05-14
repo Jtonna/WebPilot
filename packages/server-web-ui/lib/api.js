@@ -52,10 +52,14 @@ export function getStatus() {
   return apiFetch('/api/ui/status');
 }
 
-export function approvePairing(pairingId, profileId) {
+export function approvePairing(pairingId, profileId, newProfileName) {
+  const body = { profileId: profileId || null };
+  if (profileId === '__new__' && newProfileName) {
+    body.newProfileName = newProfileName;
+  }
   return apiFetch(`/api/ui/pairings/${encodeURIComponent(pairingId)}/approve`, {
     method: 'POST',
-    body: { profileId: profileId || null },
+    body,
   });
 }
 

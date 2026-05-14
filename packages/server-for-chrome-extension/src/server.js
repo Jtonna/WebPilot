@@ -327,8 +327,57 @@ function mountWebUiRoutes(app, deps) {
   app.post('/api/ui/pairings/:id/approve', auth, express.json(), (req, res) => {
     try {
       const id = req.params.id;
-      console.log(`[ui-api] approve pairing id=${id}`);
-      const entry = pairedKeys.approvePairing(id);
+      const body = req.body || {};
+      const profileIdRaw = body.profileId;
+      console.log(`[ui-api] approve pairing id=${id} profileId=${JSON.stringify(profileIdRaw)}`);
+
+      if (profileIdRaw === undefined || profileIdRaw === null || profileIdRaw === '') {
+        return res.status(400).json({ error: 'profileId required', reason: 'profileId required' });
+      }
+      if (typeof profileIdRaw !== 'string') {
+        return res.status(400).json({ error: 'profileId must be a string', reason: 'profileId must be a string' });
+      }
+
+      let resolvedProfileId = null;
+
+      if (profileIdRaw === '__new__') {
+        // Caller is creating a fresh sandbox profile.
+        const v = validateProfileName(body.newProfileName, chromeManager.userDataDir);
+        if (!v.ok) {
+          console.log(`[ui-api:profiles] rejected profile name: ${v.reason}`);
+          return res.status(400).json({ error: 'invalid newProfileName', reason: v.reason });
+        }
+        try {
+          const { launchChromeProfile } = require('./chrome');
+          launchChromeProfile({
+            userDataDir: chromeManager.userDataDir,
+            profileDirectory: v.name,
+            withFlag: true,
+          });
+        } catch (e) {
+          console.error('[ui-api] approve: failed to launch new profile:', e.message);
+          return res.status(500).json({ error: 'failed to launch new profile: ' + e.message });
+        }
+        resolvedProfileId = v.name;
+      } else {
+        // Verify the chosen profileId matches a known profile in Local State.
+        let known = [];
+        try {
+          known = readProfiles(chromeManager.userDataDir);
+        } catch (e) {
+          console.log(`[ui-api] approve: readProfiles failed: ${e.message}`);
+        }
+        const match = known.find((p) => p.directoryName === profileIdRaw);
+        if (!match) {
+          return res.status(400).json({
+            error: 'unknown profileId',
+            reason: "profileId did not match a known profile and is not '__new__'",
+          });
+        }
+        resolvedProfileId = match.directoryName;
+      }
+
+      const entry = pairedKeys.approvePairing(id, { profileId: resolvedProfileId });
       if (!entry) return res.status(404).json({ error: 'pairing not found' });
       res.json({ pairing: entry, agents: pairedKeys.listKeys() });
     } catch (e) {

@@ -16,13 +16,22 @@ export default function PairingPromptCard({
   disabled = false,
 }) {
   const [selectedProfile, setSelectedProfile] = useState(profileOptions[0]?.value || 'Default');
+  const [newProfileName, setNewProfileName] = useState('');
+
+  const isNew = selectedProfile === '__new__';
+  const trimmedNewName = newProfileName.trim();
+  const approveDisabled = disabled || (isNew && trimmedNewName.length === 0);
 
   const handleApprove = () => {
     if (onApprove) {
-      onApprove(pairing, selectedProfile);
+      onApprove(pairing, selectedProfile, isNew ? trimmedNewName : undefined);
     } else {
       // eslint-disable-next-line no-console
-      console.log('[pairing] approve (stub)', { pairing, profileId: selectedProfile });
+      console.log('[pairing] approve (stub)', {
+        pairing,
+        profileId: selectedProfile,
+        newProfileName: isNew ? trimmedNewName : undefined,
+      });
     }
   };
 
@@ -53,7 +62,22 @@ export default function PairingPromptCard({
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
-      <button type="button" className="wp-btn wp-btn-primary" onClick={handleApprove} disabled={disabled}>
+      {isNew ? (
+        <input
+          type="text"
+          className="wp-input"
+          placeholder="New profile name"
+          value={newProfileName}
+          onChange={(e) => setNewProfileName(e.target.value)}
+          disabled={disabled}
+        />
+      ) : null}
+      <button
+        type="button"
+        className="wp-btn wp-btn-primary"
+        onClick={handleApprove}
+        disabled={approveDisabled}
+      >
         Approve
       </button>
       <button type="button" className="wp-btn wp-btn-danger" onClick={handleDeny} disabled={disabled}>

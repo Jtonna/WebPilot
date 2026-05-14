@@ -58,11 +58,10 @@ export default function PairingsPage() {
     profileOptions.unshift({ value: 'Default', label: 'Default' });
   }
 
-  async function handleApprove(pairing, selectedProfile) {
+  async function handleApprove(pairing, selectedProfile, newProfileName) {
     setBusy(true);
     try {
-      const profile = selectedProfile === '__new__' ? null : selectedProfile;
-      await approvePairing(pairing.pairingId, profile);
+      await approvePairing(pairing.pairingId, selectedProfile, newProfileName);
       await refresh();
     } catch (e) {
       setError(e);
