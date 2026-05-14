@@ -43,7 +43,13 @@ function createExtensionBridge(apiKey) {
   }
 
   function clearConnection(profileIdOrWs) {
-    // Accept either a profileId string or a ws instance (for ws.on('close'))
+    // Accept either a profileId string or a ws instance (for ws.on('close')).
+    //
+    // Critical contract: this MUST only act on the ONE entry that matches.
+    // The old version's fallback (`!removedProfileId` branch) iterated EVERY
+    // pending command and rejected them all on any anonymous disconnect —
+    // an extension that opened a WS and dropped before completing hello would
+    // wipe out every other profile's in-flight commands. See server I12.
     let removedProfileId = null;
     if (typeof profileIdOrWs === 'string') {
       if (connections.has(profileIdOrWs)) {
@@ -60,23 +66,32 @@ function createExtensionBridge(apiKey) {
       }
     }
 
-    if (removedProfileId) {
+    if (!removedProfileId) {
+      // Anonymous disconnect (WS that was never identified via hello). Nothing
+      // to clear, nothing to reject. DO NOT iterate other profiles' pending
+      // commands.
       console.log(
-        `[extension-bridge] cleared connection for profile="${removedProfileId}" ` +
-          `(total=${connections.size})`
+        '[bridge] clearConnection(ws): no matching profile, ignoring ' +
+          '(this WebSocket never completed hello)'
       );
-    } else {
-      console.log('[extension-bridge] clearConnection: no matching connection found');
+      return;
     }
 
-    // Reject any pending commands routed to a now-disconnected profile
+    // Count + reject only pending commands that targeted this specific profile.
+    let pendingCleared = 0;
     for (const [id, pending] of pendingCommands) {
-      if (!removedProfileId || pending.profileId === removedProfileId) {
+      if (pending.profileId === removedProfileId) {
         pending.reject(new Error('Extension disconnected'));
         clearTimeout(pending.timeout);
         pendingCommands.delete(id);
+        pendingCleared += 1;
       }
     }
+
+    console.log(
+      `[bridge] clearConnection: profileId=${removedProfileId} removed ` +
+        `(had ${pendingCleared} pending; total connections=${connections.size})`
+    );
   }
 
   function _wsAlive(ws) {
