@@ -378,7 +378,13 @@ function mountWebUiRoutes(app, deps) {
       }
 
       const entry = pairedKeys.approvePairing(id, { profileId: resolvedProfileId });
-      if (!entry) return res.status(404).json({ error: 'pairing not found' });
+      if (!entry) {
+        const exists = pairedKeys.listAllPairings().some((p) => p.pairingId === id);
+        if (!exists) return res.status(404).json({ error: 'pairing not found' });
+        return res.status(409).json({
+          error: 'pairing is in a terminal state (denied/expired) or does not exist',
+        });
+      }
       res.json({ pairing: entry, agents: pairedKeys.listKeys() });
     } catch (e) {
       console.error('[ui-api] approve failed:', e.message);
@@ -391,7 +397,13 @@ function mountWebUiRoutes(app, deps) {
       const id = req.params.id;
       console.log(`[ui-api] deny pairing id=${id}`);
       const entry = pairedKeys.denyPairing(id);
-      if (!entry) return res.status(404).json({ error: 'pairing not found' });
+      if (!entry) {
+        const exists = pairedKeys.listAllPairings().some((p) => p.pairingId === id);
+        if (!exists) return res.status(404).json({ error: 'pairing not found' });
+        return res.status(409).json({
+          error: 'pairing is in a terminal state (approved/expired) or does not exist',
+        });
+      }
       res.json({ pairing: entry });
     } catch (e) {
       console.error('[ui-api] deny failed:', e.message);

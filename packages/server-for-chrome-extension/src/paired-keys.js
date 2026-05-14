@@ -344,7 +344,13 @@ function approvePairing(pairingId, options = {}) {
     console.log(
       `[pairing] approvePairing: pairingId=${pairingId} is denied, cannot approve`
     );
-    return entry;
+    return null;
+  }
+  if (entry.status === 'expired') {
+    console.log(
+      `[pairing] approvePairing: pairingId=${pairingId} is expired, cannot approve`
+    );
+    return null;
   }
   const key = addKey(entry.agentName, profileId);
   entry.status = 'approved';
@@ -363,6 +369,9 @@ function approvePairing(pairingId, options = {}) {
 /**
  * Deny a pending pairing. Sets status='denied', stamps decidedAt, persists.
  *
+ * Idempotent on `denied`. Returns null when the pairing is in a non-deny-able
+ * terminal state (approved / expired) or does not exist.
+ *
  * @param {string} pairingId
  * @returns {object | null}
  */
@@ -376,6 +385,18 @@ function denyPairing(pairingId) {
   if (entry.status === 'denied') {
     console.log(`[pairing] denyPairing: pairingId=${pairingId} already denied`);
     return entry;
+  }
+  if (entry.status === 'approved') {
+    console.log(
+      `[pairing] denyPairing: pairingId=${pairingId} is approved, cannot deny`
+    );
+    return null;
+  }
+  if (entry.status === 'expired') {
+    console.log(
+      `[pairing] denyPairing: pairingId=${pairingId} is expired, cannot deny`
+    );
+    return null;
   }
   entry.status = 'denied';
   entry.decidedAt = new Date().toISOString();
