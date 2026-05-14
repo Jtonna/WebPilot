@@ -57,13 +57,11 @@ let _whitelistReady = new Promise((resolve) => {
   });
 });
 
-// Pairing required cache
-let pairingRequiredCache = true; // default: pairing required
-
-// Load pairing required state from storage on startup
-chrome.storage.local.get(['pairingRequired'], (result) => {
-  pairingRequiredCache = result.pairingRequired !== false; // default true
-});
+// NOTE: `pairingRequiredCache` and the related SET/GET_PAIRING_REQUIRED
+// messaging used to live here. With pairing config owned by the web UI it
+// became a zombie — the extension was sending `set_pairing_required` on
+// every reconnect from a stale local cache (the popup no longer has any UI
+// to mutate it). Removed entirely. See QOL review extension/C1.
 
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
@@ -238,22 +236,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    case 'SET_PAIRING_REQUIRED': {
-      const enabled = message.enabled !== false;
-      pairingRequiredCache = enabled;
-      chrome.storage.local.set({ pairingRequired: enabled });
-      // Notify server via WebSocket
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled }));
-      }
-      sendResponse({ success: true });
-      return true;
-    }
-
-    case 'GET_PAIRING_REQUIRED': {
-      sendResponse({ enabled: pairingRequiredCache });
-      return true;
-    }
+    // SET_PAIRING_REQUIRED / GET_PAIRING_REQUIRED removed (web UI owns this).
+    // See QOL review extension/C1 and CLAUDE-driven fix-up F3.
 
     case 'GET_PROFILE_IDENTITY': {
       chrome.storage.local.get(['webpilot.profileId', 'webpilot.knownProfiles'], (data) => {
@@ -779,9 +763,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.whitelistedDomains) {
       restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
-    if (changes.pairingRequired) {
-      pairingRequiredCache = changes.pairingRequired.newValue !== false;
-    }
+    // pairingRequired key intentionally not mirrored — see F3 removal note.
   }
 });
 

@@ -472,8 +472,16 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
         }
 
         if (message.type === 'set_pairing_required') {
+          // DEPRECATED: the WebPilot extension no longer sends this message
+          // (pairing config is owned by the web UI). Kept for forward/backward
+          // compatibility with older clients; logs a one-line warning so
+          // operators notice if some legacy thing is still pushing it.
           pairingRequired = message.enabled !== false;
-          console.log(`[config] Pairing requirement ${pairingRequired ? 'enabled' : 'disabled'}`);
+          console.log(
+            `[config] DEPRECATED set_pairing_required received from extension; ` +
+              `accepting value=${pairingRequired} for compatibility. Source clients ` +
+              `should manage pairing via the web UI instead.`
+          );
           return;
         }
 
