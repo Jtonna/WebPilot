@@ -47,6 +47,50 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
   const serverPort = Number(resolvedPort) || 3456;
   const webUiUrl = `http://localhost:${serverPort}/ui`;
   const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
+  const chromeManager = options.chromeManager || null;
+
+  /**
+   * v1 profile routing: read managedProfile from server.json (defaults to "Default").
+   * Per-agent profile binding is out of scope.
+   */
+  function resolveTargetProfile() {
+    try {
+      const { loadConfig } = require('./service/paths');
+      const cfg = loadConfig() || {};
+      const profile = cfg.managedProfile || 'Default';
+      return profile;
+    } catch (e) {
+      console.log(`[mcp-handler] resolveTargetProfile fallback to "Default" (${e.message})`);
+      return 'Default';
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /**
+   * After ChromeManager restarts Chrome, the extension's WebSocket needs a moment
+   * to reconnect. Poll until isConnected(profile) or timeout.
+   */
+  async function waitForExtensionConnection(profileId, timeoutMs) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (extensionBridge.isConnected(profileId)) {
+        console.log(
+          `[mcp-handler] extension reconnected for profile="${profileId}" ` +
+            `after ${Date.now() - start}ms`
+        );
+        return true;
+      }
+      await sleep(250);
+    }
+    console.log(
+      `[mcp-handler] timed out waiting for extension reconnect profile="${profileId}" ` +
+        `after ${timeoutMs}ms`
+    );
+    return false;
+  }
 
   const tools = [
     {
@@ -763,8 +807,53 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       return { content: [{ type: 'text', text: JSON.stringify({ reloaded: true, ...info }, null, 2) }] };
     }
 
-    if (!extensionBridge.isConnected()) {
-      throw new Error('Browser extension not connected');
+    // From here down all tools require a connected extension for the target profile.
+    const targetProfile = resolveTargetProfile();
+
+    // browser_create_tab is the readiness gate: it may launch/restart Chrome.
+    if (name === 'browser_create_tab') {
+      if (chromeManager) {
+        console.log(`[mcp-handler] browser_create_tab readiness gate for profile="${targetProfile}"`);
+        let ensureResult;
+        try {
+          ensureResult = await chromeManager.ensureReady([targetProfile]);
+          console.log(`[mcp-handler] chromeManager.ensureReady result:`, ensureResult);
+        } catch (e) {
+          console.log(`[mcp-handler] chromeManager.ensureReady threw: ${e.message}`);
+          throw new Error(`Failed to ensure Chrome readiness: ${e.message}`);
+        }
+
+        // If Chrome was restarted or freshly launched, wait for the extension to (re)connect.
+        if (ensureResult && (ensureResult.action === 'restart' || ensureResult.action === 'launch')) {
+          console.log(
+            `[mcp-handler] waiting up to 10s for extension WS profile="${targetProfile}" (action=${ensureResult.action})`
+          );
+          const ok = await waitForExtensionConnection(targetProfile, 10000);
+          if (!ok) {
+            throw new Error(
+              `Chrome was ${ensureResult.action}ed for profile "${targetProfile}" but the WebPilot extension ` +
+                `did not (re)connect within 10s. Ensure the extension is installed and loaded in this profile.`
+            );
+          }
+        }
+      }
+
+      if (!extensionBridge.isConnected(targetProfile)) {
+        throw new Error(
+          `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
+        );
+      }
+
+      const result = await extensionBridge.sendCommand(targetProfile, 'create_tab', { url: args.url });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+
+    if (!extensionBridge.isConnected(targetProfile)) {
+      throw new Error(
+        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
+      );
     }
 
     let commandType;
@@ -772,6 +861,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 
     switch (name) {
       case 'browser_create_tab':
+        // handled above
         commandType = 'create_tab';
         commandParams = { url: args.url };
         break;
@@ -791,7 +881,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
           tab_id: args.tab_id,
           usePlatformOptimizer: args.usePlatformOptimizer ?? true
         };
-        const rawResult = await extensionBridge.sendCommand('get_accessibility_tree', a11yParams);
+        const rawResult = await extensionBridge.sendCommand(targetProfile, 'get_accessibility_tree', a11yParams);
         const { nodes, url, tabId, usePlatformOptimizer } = rawResult;
 
         // Determine URL for formatter: if usePlatformOptimizer is explicitly false, pass null to force default
@@ -838,7 +928,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
             }
 
             // Send ref mappings and contexts to extension
-            extensionBridge.notify({
+            extensionBridge.notify(targetProfile, {
               type: 'store_refs',
               tabId,
               refs,
@@ -847,7 +937,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
           } catch (err) {
             console.warn('[mcp-handler] Failed to build ref contexts:', err.message);
             // Still send refs without contexts
-            extensionBridge.notify({
+            extensionBridge.notify(targetProfile, {
               type: 'store_refs',
               tabId,
               refs,
@@ -989,7 +1079,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
         throw new Error(`Unknown tool: ${name}`);
     }
 
-    const result = await extensionBridge.sendCommand(commandType, commandParams);
+    const result = await extensionBridge.sendCommand(targetProfile, commandType, commandParams);
 
     return {
       content: [
