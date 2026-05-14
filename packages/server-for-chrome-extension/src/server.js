@@ -99,23 +99,34 @@ function mountWebUiStatic(app) {
 }
 
 /**
- * Authentication for /api/ui/* routes: localhost OR valid X-API-Key header.
+ * Authentication for /api/ui/* routes: LOCALHOST ONLY.
+ *
+ * The web UI dashboard intentionally requires NO API key. It is bound to the
+ * loopback interface of the machine hosting WebPilot. Network mode binds the
+ * extension WS endpoint to 0.0.0.0, but the UI surface stays loopback-only
+ * (this middleware rejects everything that does not arrive over 127.0.0.1
+ * / ::1 with HTTP 403). The MCP and extension WS endpoints have their own
+ * API-key auth and are untouched.
  */
-function makeUiAuth(apiKey) {
+function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
   return function uiAuth(req, res, next) {
     const remote = req.socket && req.socket.remoteAddress;
-    const isLocal = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-    const headerKey = req.headers['x-api-key'];
-    if (isLocal || headerKey === apiKey) {
+    const isLocal =
+      remote === '127.0.0.1' ||
+      remote === '::1' ||
+      remote === '::ffff:127.0.0.1';
+    if (isLocal) {
       return next();
     }
-    return res.status(401).json({ error: 'Unauthorized: localhost or X-API-Key required' });
+    console.log(`[ui-auth] rejecting non-local request to ${req.method} ${req.url} from ${remote}`);
+    return res.status(403).json({ error: 'Forbidden: web UI is localhost-only' });
   };
 }
 
 function mountWebUiRoutes(app, deps) {
-  const { apiKey, chromeManager, extensionBridge, pairedKeys, setNetworkMode } = deps;
-  const auth = makeUiAuth(apiKey);
+  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode } = deps;
+  // Web UI is localhost-only — no API key involved. See makeUiAuth().
+  const auth = makeUiAuth();
 
   app.get('/api/ui/status', auth, async (req, res) => {
     try {
@@ -267,16 +278,17 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
-    // Route web UI events WebSocket — auth: localhost or valid X-API-Key (header
-    // not available on WS handshake from browsers, so localhost-only by default)
+    // Route web UI events WebSocket — LOCALHOST ONLY (no API key).
+    // The web UI dashboard is unauthenticated by design and bound to loopback.
     if (url.pathname === '/api/ui/events') {
       const remoteAddr = request.socket.remoteAddress || '';
-      const isLocal = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
-      const clientApiKey = url.searchParams.get('apiKey');
-      const apiKeyOk = clientApiKey && clientApiKey === apiKey;
-      if (!isLocal && !apiKeyOk) {
-        console.log(`[ui-ws] rejecting non-local UI WS from ${remoteAddr} (no api key)`);
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      const isLocal =
+        remoteAddr === '127.0.0.1' ||
+        remoteAddr === '::1' ||
+        remoteAddr === '::ffff:127.0.0.1';
+      if (!isLocal) {
+        console.log(`[ui-ws] rejecting non-local UI WS upgrade from ${remoteAddr}`);
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
       }
@@ -541,7 +553,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   // ---- Web UI static mount + REST ----
   mountWebUiStatic(app);
   mountWebUiRoutes(app, {
-    apiKey,
+    // NOTE: apiKey intentionally omitted — web UI is localhost-only (no key).
     chromeManager,
     extensionBridge,
     pairedKeys,
