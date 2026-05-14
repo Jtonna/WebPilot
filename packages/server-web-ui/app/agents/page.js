@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import AgentRow from '../../components/AgentRow';
+import ConfirmModal from '../../components/ConfirmModal';
 import { getStatus, renameAgent, revokeAgent } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState([]);
   const [error, setError] = useState(null);
+  // Pending revoke confirmation. `null` = modal closed; otherwise the agent
+  // whose key is about to be revoked.
+  const [revokeTarget, setRevokeTarget] = useState(null);
 
   async function refresh() {
     try {
@@ -48,8 +52,16 @@ export default function AgentsPage() {
     }
   }
 
-  async function handleRevoke(agent) {
-    if (!confirm(`Revoke key for "${agent.name}"? This is permanent.`)) return;
+  function handleRevoke(agent) {
+    // Custom themed modal — see ConfirmModal & QOL fix-up F7.
+    console.log('[agents] queueing revoke confirmation for', agent && agent.name);
+    setRevokeTarget(agent);
+  }
+
+  async function confirmRevoke() {
+    const agent = revokeTarget;
+    setRevokeTarget(null);
+    if (!agent) return;
     try {
       await revokeAgent(agent.key);
       await refresh();
@@ -83,6 +95,20 @@ export default function AgentsPage() {
           ))
         )}
       </div>
+
+      <ConfirmModal
+        open={!!revokeTarget}
+        title="Revoke API key?"
+        body={
+          revokeTarget
+            ? `This permanently revokes the API key for "${revokeTarget.name || '(unnamed)'}". The agent will need to re-pair to reconnect.`
+            : ''
+        }
+        confirmLabel="Revoke"
+        confirmDanger
+        onConfirm={confirmRevoke}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </>
   );
 }

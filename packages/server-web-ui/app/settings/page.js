@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ConfirmModal from '../../components/ConfirmModal';
 import { getStatus, setNetworkMode as apiSetNetworkMode } from '../../lib/api';
 
 export default function SettingsPage() {
@@ -8,6 +9,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // null = modal closed; otherwise the next target value (true/false).
+  const [pendingToggle, setPendingToggle] = useState(null);
 
   async function refresh() {
     try {
@@ -25,12 +28,17 @@ export default function SettingsPage() {
     refresh();
   }, []);
 
-  const handleToggle = async () => {
+  const handleToggle = () => {
+    // Open the themed confirm modal — replaces window.confirm() per F7.
     const next = !networkMode;
-    const msg = next
-      ? 'Enable network mode? This restarts the WebPilot server and binds to 0.0.0.0 (LAN reachable). Continue?'
-      : 'Disable network mode? This restarts the WebPilot server and binds to 127.0.0.1 (localhost only). Continue?';
-    if (!confirm(msg)) return;
+    console.log(`[settings] queueing network-mode toggle confirmation: next=${next}`);
+    setPendingToggle(next);
+  };
+
+  const confirmToggle = async () => {
+    const next = pendingToggle;
+    setPendingToggle(null);
+    if (next === null || next === undefined) return;
     setBusy(true);
     setError(null);
     try {
@@ -89,6 +97,20 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      <ConfirmModal
+        open={pendingToggle !== null}
+        title={pendingToggle ? 'Enable network mode?' : 'Disable network mode?'}
+        body={
+          pendingToggle
+            ? 'This restarts the WebPilot server and binds it to 0.0.0.0 so other devices on your LAN can connect. Continue?'
+            : 'This restarts the WebPilot server and binds it to 127.0.0.1 (localhost only). Continue?'
+        }
+        confirmLabel={pendingToggle ? 'Enable' : 'Disable'}
+        confirmDanger={!pendingToggle}
+        onConfirm={confirmToggle}
+        onCancel={() => setPendingToggle(null)}
+      />
     </>
   );
 }
