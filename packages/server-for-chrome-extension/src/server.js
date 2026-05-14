@@ -169,7 +169,28 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     3600000
   );
 
-  const mcpHandler = createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, () => pairingRequired);
+  // Bridge async-pairing events back to the extension's WS so existing
+  // `paired_agents_list` listeners in background.js keep working even though
+  // approval now happens via the web UI rather than the extension popup.
+  pairedKeys.onPairingEvent('approved', (entry) => {
+    try {
+      console.log(
+        `[pairing] broadcasting paired_agents_list after approve of pairingId=${entry.pairingId}`
+      );
+      extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
+    } catch (e) {
+      console.log(`[pairing] failed to broadcast paired_agents_list: ${e.message}`);
+    }
+  });
+
+  const mcpHandler = createMcpHandler(
+    extensionBridge,
+    apiKey,
+    pairedKeys,
+    formatterManager,
+    () => pairingRequired,
+    { port }
+  );
 
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);

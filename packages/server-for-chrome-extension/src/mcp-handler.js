@@ -32,7 +32,20 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired) {
+function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired, options = {}) {
+  // Resolve the server port for embedding into pairing notifications / responses.
+  // Preference order: explicit option → env var → paths config getter → hard fallback.
+  let resolvedPort = options.port || process.env.PORT;
+  if (!resolvedPort) {
+    try {
+      const { getPort } = require('./service/paths');
+      resolvedPort = getPort();
+    } catch (e) {
+      resolvedPort = 3456;
+    }
+  }
+  const serverPort = Number(resolvedPort) || 3456;
+  const webUiUrl = `http://localhost:${serverPort}/ui`;
   const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
 
   const tools = [
@@ -276,7 +289,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'request_pairing',
-      description: 'Request pairing with the browser extension. A human will see an approve/deny prompt in the Chrome extension popup. If approved, you will receive an API key to use for all subsequent requests.',
+      description: 'Initiate pairing. **Asynchronous flow**: returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', or \'denied\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -286,6 +299,20 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           }
         },
         required: ['agent_name']
+      }
+    },
+    {
+      name: 'check_pairing_status',
+      description: 'Poll the status of a pending pairing request. Pass the `pairing_id` you received from `request_pairing`. Returns one of: status=\'pending\' (user has not yet approved — wait, then call this tool again on a later turn), status=\'approved\' (response includes your `api_key` — store it and use it for all future tool calls via the X-API-Key header or `api_key` argument), or status=\'denied\' (the user rejected this pairing — do not retry automatically; ask the human if they want to try again with a different agent_name).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pairing_id: {
+            type: 'string',
+            description: 'The pairing_id returned from a previous call to request_pairing.'
+          }
+        },
+        required: ['pairing_id']
       }
     },
     {
@@ -460,7 +487,11 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 
     if (method === 'tools/call') {
       // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
-      const noAuthRequired = params.name === 'request_pairing' || params.name === 'webpilot_get_formatter_info' || params.name === 'webpilot_reload_formatters';
+      const noAuthRequired =
+        params.name === 'request_pairing' ||
+        params.name === 'check_pairing_status' ||
+        params.name === 'webpilot_get_formatter_info' ||
+        params.name === 'webpilot_reload_formatters';
       if (!noAuthRequired && isPairingRequired()) {
         const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
@@ -545,38 +576,180 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 
     if (name === 'request_pairing') {
       const agentName = params.arguments?.agent_name || 'Unknown Agent';
-      console.log(`[pairing] Pairing request from agent: "${agentName}"`);
-      try {
-        const response = await extensionBridge.sendCommand('pairing_request', { agentName }, { timeout: 120000 });
-        if (response.approved) {
-          const key = pairedKeys.addKey(agentName);
-          console.log(`[pairing] Approved agent "${agentName}", key: ${key.slice(0, 8)}...`);
-          extensionBridge.notify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
-          return {
-            content: [{
-              type: 'text',
-              text: `Pairing approved! Your API key: ${key}\n\nIMPORTANT: To use this key immediately in this session, include api_key: "${key}" as a parameter in your tool calls.\n\nTo persist this key for future sessions so you don't need to pass api_key every time, update your MCP server configuration. For Claude Code, update your .mcp.json file:\n\n{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:3456/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`
-            }]
-          };
-        } else {
-          console.log(`[pairing] Denied agent "${agentName}"`);
-          return {
-            content: [{
-              type: 'text',
-              text: 'Pairing denied by the user. The human chose not to approve this agent for browser access.'
-            }]
-          };
+      console.log(`[pairing] request_pairing tool called for agent: "${agentName}"`);
+
+      const result = pairedKeys.requestPairing(agentName);
+      console.log(
+        `[pairing] requestPairing returned pairingId=${result.pairingId} status=${result.status} created=${result.created}`
+      );
+
+      // Fire a server-side native notification if a fresh pending entry was just created.
+      // Lazy-require so this code keeps working before the notifications module lands.
+      if (result.created && result.status === 'pending') {
+        try {
+          const { notify } = require('./notifications');
+          console.log(
+            `[pairing] firing native notification for new pairing pairingId=${result.pairingId}`
+          );
+          notify({
+            title: 'WebPilot pairing request',
+            body: `Agent "${agentName}" is requesting access. Open WebPilot to approve.`,
+            url: webUiUrl,
+          }).catch((err) => {
+            console.log(`[pairing] notify() rejected: ${err && err.message}`);
+          });
+        } catch (e) {
+          console.log(
+            `[pairing] notifications module not available yet (${e.message}) — skipping toast`
+          );
         }
-      } catch (err) {
-        console.log(`[pairing] Failed for agent "${agentName}": ${err.message}`);
+      }
+
+      if (result.status === 'approved') {
+        const key = result.apiKey;
+        console.log(
+          `[pairing] request_pairing returning already-approved key for "${agentName}" ` +
+            `(key=${key.slice(0, 8)}...)`
+        );
         return {
-          content: [{
-            type: 'text',
-            text: `Pairing request failed: ${err.message}. The browser extension may not be connected, or the request timed out waiting for human approval.`
-          }],
-          isError: true
+          content: [
+            {
+              type: 'text',
+              text:
+                `Pairing already approved for agent "${agentName}".\n\n` +
+                `pairing_id: ${result.pairingId}\n` +
+                `status: approved\n` +
+                `api_key: ${key}\n\n` +
+                `Use this api_key for all subsequent tool calls, either via the X-API-Key ` +
+                `header in your MCP client config, or as the api_key argument on each tool call.\n\n` +
+                `Example .mcp.json for Claude Code:\n\n` +
+                `{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:${serverPort}/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`,
+            },
+          ],
         };
       }
+
+      if (result.status === 'denied') {
+        console.log(`[pairing] request_pairing returning denied status for "${agentName}"`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `Pairing for agent "${agentName}" was previously denied by the user.\n\n` +
+                `pairing_id: ${result.pairingId}\n` +
+                `status: denied\n\n` +
+                `Do not retry automatically. Ask the human whether to try again with a different agent_name.`,
+            },
+          ],
+        };
+      }
+
+      // status === 'pending'
+      console.log(
+        `[pairing] request_pairing returning pending status for "${agentName}" ` +
+          `pairingId=${result.pairingId}`
+      );
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `Pairing requested for agent "${agentName}".\n\n` +
+              `pairing_id: ${result.pairingId}\n` +
+              `status: pending\n\n` +
+              `ACTION REQUIRED FROM THE HUMAN: open ${webUiUrl} in a browser and approve this pairing. ` +
+              `A system notification has been sent.\n\n` +
+              `NEXT STEPS FOR THE AGENT:\n` +
+              `1. Surface the approval URL to the human and stop making other tool calls.\n` +
+              `2. After the human confirms approval, call check_pairing_status with pairing_id="${result.pairingId}" to retrieve your api_key.\n` +
+              `3. Calling request_pairing again with the same agent_name is safe — it is idempotent and will return this same pairing_id.`,
+          },
+        ],
+      };
+    }
+
+    if (name === 'check_pairing_status') {
+      const pairingId = params.arguments?.pairing_id;
+      console.log(`[pairing] check_pairing_status tool called for pairingId=${pairingId}`);
+      if (!pairingId || typeof pairingId !== 'string') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'Missing required argument: pairing_id (string).',
+            },
+          ],
+          isError: true,
+        };
+      }
+      const status = pairedKeys.checkPairingStatus(pairingId);
+      if (!status) {
+        console.log(`[pairing] check_pairing_status: pairingId=${pairingId} not found`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `No pairing found for pairing_id="${pairingId}". ` +
+                `Either it has never been requested or has been cleaned up. ` +
+                `Call request_pairing again to start a new pairing.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      if (status.status === 'approved') {
+        const key = status.apiKey;
+        console.log(
+          `[pairing] check_pairing_status: returning approved key for pairingId=${pairingId} ` +
+            `(key=${key ? key.slice(0, 8) + '...' : 'MISSING'})`
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `status: approved\n` +
+                `api_key: ${key}\n\n` +
+                `Store this api_key and use it for all future tool calls. ` +
+                `Recommended: update your MCP client config so it is sent via the X-API-Key header.\n\n` +
+                `Example .mcp.json for Claude Code:\n\n` +
+                `{\n  "mcpServers": {\n    "webpilot": {\n      "url": "http://localhost:${serverPort}/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`,
+            },
+          ],
+        };
+      }
+
+      if (status.status === 'denied') {
+        console.log(`[pairing] check_pairing_status: pairingId=${pairingId} is denied`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `status: denied\n\n` +
+                `The user denied this pairing request. Do not retry automatically — ` +
+                `ask the human if they want to start a new pairing.`,
+            },
+          ],
+        };
+      }
+
+      // pending
+      console.log(`[pairing] check_pairing_status: pairingId=${pairingId} is still pending`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `status: pending\n\n` +
+              `The user has not yet approved this pairing. ` +
+              `Tell the human to approve it at ${webUiUrl}, then call this tool again on a later turn.`,
+          },
+        ],
+      };
     }
 
     if (name === 'webpilot_get_formatter_info') {
