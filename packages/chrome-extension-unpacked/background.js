@@ -302,6 +302,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
+    case 'GET_PROFILE_IDENTITY': {
+      chrome.storage.local.get(['webpilot.profileId', 'webpilot.knownProfiles'], (data) => {
+        sendResponse({
+          profileId: data['webpilot.profileId'] || null,
+          knownProfiles: data['webpilot.knownProfiles'] || []
+        });
+      });
+      return true;
+    }
+
+    case 'SET_PROFILE_ID': {
+      const chosen = message.profileId;
+      if (!chosen) {
+        sendResponse({ success: false, error: 'profileId required' });
+        return true;
+      }
+      chrome.storage.local.set({ 'webpilot.profileId': chosen }, () => {
+        console.log('[hello] user picked profileId=' + chosen + ', retrying handshake');
+        // Retry hello handshake using the now-stored id
+        sendHelloHandshake().then(() => {
+          sendResponse({ success: true });
+        }).catch((err) => {
+          sendResponse({ success: false, error: err && err.message });
+        });
+      });
+      return true;
+    }
+
     case 'CHECK_FORMATTER_UPDATES':
       if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
         const updateCheckRequestId = `update-check-${Date.now()}`;
@@ -400,6 +428,10 @@ function connectWebSocket() {
       startKeepalive();
       refreshConnectionMetadata();
       wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled: pairingRequiredCache }));
+      // Profile self-identification handshake
+      sendHelloHandshake().catch((err) =>
+        console.log('[hello] handshake failed:', err && err.message)
+      );
     };
 
     wsConnection.onmessage = (event) => {
@@ -409,10 +441,31 @@ function connectWebSocket() {
 
         // Handle non-command messages from server
         if (message.type === 'paired_agents_list') {
+          // Pairing is now web-UI-only; the popup no longer renders this list,
+          // but we still stash it in storage in case future tooling consumes it.
           chrome.storage.local.set({ pairedAgents: message.agents });
+          return;
+        }
+
+        if (message.type === 'identify_required') {
+          // Server cannot determine which profile this extension belongs to.
+          // Store the known-profiles list and notify the popup to show a picker.
+          const knownProfiles = message.knownProfiles || [];
+          chrome.storage.local.set({
+            'webpilot.knownProfiles': knownProfiles,
+            'webpilot.profileId': null
+          });
           try {
-            chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
+            chrome.runtime.sendMessage({ type: 'IDENTIFY_REQUIRED', knownProfiles });
           } catch (_) { /* popup may not be open */ }
+          console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
+          return;
+        }
+
+        if (message.type === 'hello_ack') {
+          console.log('[hello] handshake acknowledged, profileId=' + message.profileId);
+          // Persist the resolved profileId for future connects
+          chrome.storage.local.set({ 'webpilot.profileId': message.profileId });
           return;
         }
 
@@ -490,6 +543,54 @@ function connectWebSocket() {
   } catch (e) {
     console.error('Failed to connect:', e);
     updateConnectionStatus('error', e.message || 'Failed to connect', 'connection_failed');
+  }
+}
+
+/**
+ * Send the hello handshake to the server so it can route commands by Chrome
+ * profile directory name. We prefer a previously-stored profileId; otherwise
+ * we try chrome.identity.getProfileUserInfo() to surface an email the server
+ * can match against `Local State`. If neither is available, the server will
+ * reply with `identify_required` and the user picks via popup.
+ */
+async function sendHelloHandshake() {
+  if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return;
+
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(['webpilot.profileId', 'webpilot.profileDisplayName'], (data) => resolve(data));
+  });
+
+  const profileId = stored['webpilot.profileId'] || null;
+  const profileDisplayName = stored['webpilot.profileDisplayName'] || null;
+
+  let gaiaEmail = null;
+  if (!profileId) {
+    try {
+      gaiaEmail = await new Promise((resolve) => {
+        if (chrome.identity && chrome.identity.getProfileUserInfo) {
+          chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
+            resolve(info && info.email ? info.email : null);
+          });
+        } else {
+          resolve(null);
+        }
+      });
+    } catch (e) {
+      console.log('[hello] getProfileUserInfo failed: ' + (e && e.message));
+    }
+  }
+
+  const helloMsg = {
+    type: 'hello',
+    profileId,
+    profileDisplayName,
+    gaiaEmail,
+  };
+  console.log('[hello] sending handshake', helloMsg);
+  try {
+    wsConnection.send(JSON.stringify(helloMsg));
+  } catch (e) {
+    console.log('[hello] send failed: ' + (e && e.message));
   }
 }
 

@@ -11,7 +11,9 @@
     "debugger",
     "scripting",
     "webNavigation",
-    "windows"
+    "windows",
+    "identity",
+    "identity.email"
   ],
   "host_permissions": [
     "<all_urls>"

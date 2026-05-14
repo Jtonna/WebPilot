@@ -25,6 +25,25 @@
 
     <!-- Dashboard Tab -->
     <div class="tab-content active" id="tab-dashboard">
+      <!-- Profile Identification View -->
+      <div id="profileIdentifyView" class="view hidden">
+        <div class="status-card connecting">
+          <div class="status-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div class="status-content">
+            <span class="status-title">Profile identification needed</span>
+            <span class="status-subtitle">Which Chrome profile is this?</span>
+          </div>
+        </div>
+        <select id="profileIdSelect" class="setting-select" style="width:100%; margin-top:12px;"></select>
+        <button id="profileIdConfirmBtn" class="reconnect-btn" style="width:100%; margin-top:8px;">I am this profile</button>
+      </div>
+
       <!-- Connected View -->
       <div id="connectedView" class="view hidden">
         <div class="status-card connected">

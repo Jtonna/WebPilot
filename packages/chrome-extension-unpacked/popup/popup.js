@@ -6,6 +6,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const connectedView = document.getElementById('connectedView');
   const connectingView = document.getElementById('connectingView');
   const disconnectedView = document.getElementById('disconnectedView');
+  const profileIdentifyView = document.getElementById('profileIdentifyView');
+  const profileIdSelect = document.getElementById('profileIdSelect');
+  const profileIdConfirmBtn = document.getElementById('profileIdConfirmBtn');
   const disconnectBtn = document.getElementById('disconnectBtn');
   const retryBtn = document.getElementById('retryBtn');
   const connectingError = document.getElementById('connectingError');
@@ -129,6 +132,8 @@ document.addEventListener('DOMContentLoaded', () => {
       addPairingRequest({ commandId: msg.commandId, agentName: msg.agentName });
     } else if (msg.type === 'PAIRED_AGENTS_UPDATED') {
       renderPairedAgents(msg.agents || []);
+    } else if (msg.type === 'IDENTIFY_REQUIRED') {
+      renderProfilePicker(msg.knownProfiles || []);
     }
   });
 
@@ -717,6 +722,7 @@ document.addEventListener('DOMContentLoaded', () => {
     connectedView.classList.add('hidden');
     connectingView.classList.add('hidden');
     disconnectedView.classList.add('hidden');
+    if (profileIdentifyView) profileIdentifyView.classList.add('hidden');
 
     if (viewName === 'connected') {
       connectedView.classList.remove('hidden');
@@ -724,8 +730,46 @@ document.addEventListener('DOMContentLoaded', () => {
       connectingView.classList.remove('hidden');
     } else if (viewName === 'disconnected') {
       disconnectedView.classList.remove('hidden');
+    } else if (viewName === 'identify' && profileIdentifyView) {
+      profileIdentifyView.classList.remove('hidden');
     }
   }
+
+  function renderProfilePicker(knownProfiles) {
+    if (!profileIdSelect) return;
+    profileIdSelect.innerHTML = '';
+    (knownProfiles || []).forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = p.directoryName;
+      const label = p.displayName ? p.displayName + ' (' + p.directoryName + ')' : p.directoryName;
+      opt.textContent = p.gaiaEmail ? label + ' — ' + p.gaiaEmail : label;
+      profileIdSelect.appendChild(opt);
+    });
+    showView('identify');
+  }
+
+  if (profileIdConfirmBtn) {
+    profileIdConfirmBtn.addEventListener('click', () => {
+      const chosen = profileIdSelect && profileIdSelect.value;
+      if (!chosen) return;
+      profileIdConfirmBtn.disabled = true;
+      profileIdConfirmBtn.textContent = 'Saving...';
+      chrome.runtime.sendMessage({ type: 'SET_PROFILE_ID', profileId: chosen }, (response) => {
+        profileIdConfirmBtn.disabled = false;
+        profileIdConfirmBtn.textContent = 'I am this profile';
+        if (response && response.success) {
+          showView('connecting');
+        }
+      });
+    });
+  }
+
+  // Check on popup open whether the server has asked us to pick a profile
+  chrome.runtime.sendMessage({ type: 'GET_PROFILE_IDENTITY' }, (resp) => {
+    if (resp && !resp.profileId && resp.knownProfiles && resp.knownProfiles.length > 0) {
+      renderProfilePicker(resp.knownProfiles);
+    }
+  });
 
   function showError(element, message) {
     element.textContent = message;
