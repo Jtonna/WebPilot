@@ -28,6 +28,13 @@ let manuallyDisconnected = false;
 let keepaliveInterval = null;
 let autoConnectInterval = null;
 const KEEPALIVE_INTERVAL_MS = 15000;
+// Tracks whether the current WebSocket has completed the hello handshake.
+// Reset to false on every (re)connect; flipped true on `hello_ack`. Used to
+// gate the popup "Connected" affordance so the user sees "Identifying..."
+// during the brief window between TCP open and server-side profile bind.
+let helloAcked = false;
+const HELLO_TIMEOUT_MS = 8000;
+let helloTimeoutTimer = null;
 let config = {
   apiKey: null,
   serverUrl: null
@@ -369,15 +376,34 @@ function connectWebSocket() {
     wsConnection = new WebSocket(wsUrl.toString());
 
     wsConnection.onopen = () => {
-      console.log('WebSocket connected');
-      updateConnectionStatus('connected', null, null);
+      console.log('[ws:open] WebSocket TCP/WS handshake complete — sending hello FIRST');
+      // Per server protocol, the server gates ALL non-hello messages until
+      // identification completes. The very first frame on this WS MUST be
+      // `hello`. Any state-pushes (pairing config, etc.) belong AFTER
+      // `hello_ack` arrives. The popup connection-status stays in an
+      // "identifying" sub-state until then so users do not see a misleading
+      // green "Connected" during a hello that may still fail/timeout.
+      helloAcked = false;
+      if (helloTimeoutTimer) {
+        clearTimeout(helloTimeoutTimer);
+        helloTimeoutTimer = null;
+      }
+      updateConnectionStatus('connecting', 'Identifying...', null);
       startKeepalive();
       refreshConnectionMetadata();
-      wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled: pairingRequiredCache }));
-      // Profile self-identification handshake
+      // Fire-and-forget — sendHelloHandshake handles its own send failure.
       sendHelloHandshake().catch((err) =>
         console.log('[hello] handshake failed:', err && err.message)
       );
+      // Watchdog: if hello_ack never arrives, surface to popup.
+      helloTimeoutTimer = setTimeout(() => {
+        if (!helloAcked && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+          console.log(
+            `[hello] timeout: hello_ack not received within ${HELLO_TIMEOUT_MS}ms`
+          );
+          updateConnectionStatus('error', 'Identification failed', 'identify_timeout');
+        }
+      }, HELLO_TIMEOUT_MS);
     };
 
     wsConnection.onmessage = (event) => {
@@ -410,8 +436,15 @@ function connectWebSocket() {
 
         if (message.type === 'hello_ack') {
           console.log('[hello] handshake acknowledged, profileId=' + message.profileId);
+          helloAcked = true;
+          if (helloTimeoutTimer) {
+            clearTimeout(helloTimeoutTimer);
+            helloTimeoutTimer = null;
+          }
           // Persist the resolved profileId for future connects
           chrome.storage.local.set({ 'webpilot.profileId': message.profileId });
+          // Now (and only now) is the WS safe to consider fully connected.
+          updateConnectionStatus('connected', null, null);
           return;
         }
 
@@ -440,8 +473,13 @@ function connectWebSocket() {
     };
 
     wsConnection.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
+      console.log('[ws:close] WebSocket closed:', event.code, event.reason);
       wsConnection = null;
+      helloAcked = false;
+      if (helloTimeoutTimer) {
+        clearTimeout(helloTimeoutTimer);
+        helloTimeoutTimer = null;
+      }
       stopKeepalive();
 
       let errorMsg = null;
