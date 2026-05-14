@@ -75,10 +75,19 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 function loadConfig() {
-  chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl'], (result) => {
+  chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl', 'manuallyDisconnected'], (result) => {
     isEnabled = result.enabled || false;
     config.apiKey = result.apiKey || null;
     config.serverUrl = result.serverUrl || null;
+    manuallyDisconnected = result.manuallyDisconnected === true;
+
+    if (manuallyDisconnected) {
+      // User explicitly disconnected before Chrome closed. Stay disconnected
+      // until they click Retry/Reconnect in the popup.
+      console.log('Skipping auto-connect: user manually disconnected.');
+      updateConnectionStatus('disconnected', null, null);
+      return;
+    }
 
     if (isEnabled && config.apiKey && config.serverUrl) {
       // Already have config, reconnect
@@ -190,6 +199,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'DISCONNECT':
       manuallyDisconnected = true;
+      chrome.storage.local.set({ manuallyDisconnected: true });
       disconnectWebSocket();
       sendResponse({ success: true });
       break;
@@ -197,7 +207,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'RECONNECT':
       manuallyDisconnected = false;
       isEnabled = true;
-      chrome.storage.local.set({ enabled: true });
+      chrome.storage.local.set({ enabled: true, manuallyDisconnected: false });
       connectWebSocket();
       sendResponse({ success: true });
       break;
@@ -205,7 +215,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'FORGET_CONFIG':
       manuallyDisconnected = false;
       disconnectWebSocket();
-      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
+      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled', 'manuallyDisconnected']);
       config.apiKey = null;
       config.serverUrl = null;
       isEnabled = false;
@@ -215,6 +225,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'RETRY_AUTO_CONNECT':
+      manuallyDisconnected = false;
+      chrome.storage.local.set({ manuallyDisconnected: false });
       attemptAutoConnect();
       sendResponse({ success: true });
       break;

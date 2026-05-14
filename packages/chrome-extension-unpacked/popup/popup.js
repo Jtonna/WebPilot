@@ -169,6 +169,12 @@ document.addEventListener('DOMContentLoaded', () => {
         updateEndpointDisplay();
         loadPairingData();
         loadRestrictedModeSettings();
+      } else if (response && response.manuallyDisconnected) {
+        // User manually disconnected — show the disconnected view so they have a Retry button.
+        showView('disconnected');
+        chrome.storage.local.get(['serverUrl'], (result) => {
+          disconnectedUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
+        });
       } else if (response && (response.connectionStatus === 'connecting' || response.connectionStatus === 'error')) {
         showView('connecting');
         chrome.storage.local.get(['serverUrl'], (result) => {
