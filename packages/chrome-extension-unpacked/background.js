@@ -72,12 +72,48 @@ chrome.runtime.onInstalled.addListener(() => {
       chrome.storage.local.set({ restrictedModeEnabled: true });
     }
   });
+  // Mint a persistent installId on first install so the server can map this
+  // extension install to a Chrome profileId independently of
+  // extension-storage state. Idempotent — only set if not already present.
+  ensureInstallId();
   loadConfig();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  // Migration path: an extension installed before installIds shipped will
+  // not have one. If we already know a profileId (i.e. the user has paired
+  // before) backfill an installId now so subsequent connects benefit from
+  // the new resolution path without forcing the user through the picker.
+  ensureInstallId();
   loadConfig();
 });
+
+/**
+ * Ensure chrome.storage.local has a `webpilot.installId`. Generates one with
+ * crypto.randomUUID() (available globally in MV3 service workers) if missing.
+ * Safe to call repeatedly — the write is gated on absence.
+ */
+function ensureInstallId() {
+  chrome.storage.local.get(['webpilot.installId', 'webpilot.profileId'], (data) => {
+    if (data && typeof data['webpilot.installId'] === 'string' && data['webpilot.installId'].length > 0) {
+      return;
+    }
+    let installId;
+    try {
+      installId = crypto.randomUUID();
+    } catch (e) {
+      console.log('[hello] crypto.randomUUID() failed: ' + (e && e.message));
+      return;
+    }
+    chrome.storage.local.set({ 'webpilot.installId': installId }, () => {
+      const hadProfile = !!(data && data['webpilot.profileId']);
+      console.log(
+        '[hello] minted installId=' + installId.slice(0, 8) + '... ' +
+        (hadProfile ? '(backfilled for pre-existing install)' : '(fresh install)')
+      );
+    });
+  });
+}
 
 function loadConfig() {
   chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl', 'manuallyDisconnected'], (result) => {
@@ -222,6 +258,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       disconnectWebSocket();
       // Also clear the stored profile identification so the user is forced
       // back through the identify flow on next connect. See QOL extension C2/C3.
+      // NOTE: `webpilot.installId` is intentionally NOT cleared — it is bound
+      // to the extension installation, not the pairing config, and persists
+      // across config resets so the server's installId->profileId mapping
+      // can still re-identify this install automatically.
       chrome.storage.local.remove([
         'apiKey',
         'serverUrl',
@@ -244,6 +284,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // server-side), and reconnect — the server will reply with
       // `identify_required` and the popup will show the picker view again.
       console.log('[hello] RESET_PROFILE_ID — clearing profileId and reconnecting');
+      // NOTE: `webpilot.installId` is intentionally NOT cleared — it is
+      // install-bound, not pairing-bound. The user is rebinding which
+      // profile this install corresponds to; the server-side installs
+      // store will be updated when the new hello resolves.
       chrome.storage.local.remove(['webpilot.profileId'], () => {
         disconnectWebSocket();
         // Restore auto-reconnect semantics: pretend the connection just
@@ -557,11 +601,15 @@ async function sendHelloHandshake() {
   if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return;
 
   const stored = await new Promise((resolve) => {
-    chrome.storage.local.get(['webpilot.profileId', 'webpilot.profileDisplayName'], (data) => resolve(data));
+    chrome.storage.local.get(
+      ['webpilot.profileId', 'webpilot.profileDisplayName', 'webpilot.installId'],
+      (data) => resolve(data)
+    );
   });
 
   const profileId = stored['webpilot.profileId'] || null;
   const profileDisplayName = stored['webpilot.profileDisplayName'] || null;
+  const installId = stored['webpilot.installId'] || null;
 
   let gaiaEmail = null;
   if (!profileId) {
@@ -585,6 +633,7 @@ async function sendHelloHandshake() {
     profileId,
     profileDisplayName,
     gaiaEmail,
+    installId,
   };
   console.log('[hello] sending handshake', helloMsg);
   try {
