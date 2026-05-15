@@ -110,11 +110,13 @@ export default function AgentsPage() {
         )}
       </div>
 
+      <FirstTimeSetupCard port={port} />
+
       <div className="wp-card">
-        <h2>Wire WebPilot into your project</h2>
+        <h2>Already-paired agents</h2>
         <p className="wp-muted" style={{ marginTop: 0 }}>
-          Use a paired agent's <strong>Copy MCP config</strong> button to copy a
-          ready-to-paste <code>.mcp.json</code> snippet. The snippet uses the
+          For an agent that already has a key, use its <strong>Copy MCP config</strong> button
+          above to copy a ready-to-paste <code>.mcp.json</code> snippet. The snippet uses the
           current server port (
           <span className="wp-mono">{port ? String(port) : 'unknown'}</span>) and
           the agent's API key as <code>X-API-Key</code>.
@@ -174,5 +176,124 @@ export default function AgentsPage() {
         onCancel={() => setRevokeTarget(null)}
       />
     </>
+  );
+}
+
+// ---- First-time-setup card -------------------------------------------------
+// Shows the URL-only .mcp.json snippet plus a copyable agent prompt for a
+// brand-new MCP client that does not yet have a paired API key. The flow:
+//   1. user drops the URL-only config into their project
+//   2. user pastes the agent prompt into their AI client
+//   3. agent calls request_pairing → pairing request appears in this UI
+//   4. user approves → agent retrieves api_key via check_pairing_status
+//   5. agent stores key (either as a tool argument or via .mcp.json header)
+
+function FirstTimeSetupCard({ port }) {
+  const portStr = port ? String(port) : '<port>';
+
+  const urlOnlyConfig = `{
+  "mcpServers": {
+    "webpilot": {
+      "url": "http://localhost:${portStr}/sse"
+    }
+  }
+}`;
+
+  const agentPrompt =
+    "You have access to a WebPilot MCP server but no API key yet. " +
+    "Call request_pairing with a memorable agent_name (e.g. the project " +
+    "or your client name). The tool returns a pairing_id and instructions; " +
+    "follow them — surface the approval URL to me, wait for me to approve, " +
+    "then call check_pairing_status with the pairing_id to retrieve your " +
+    "api_key. Once you have the key, include it as the api_key parameter on " +
+    "each tool call, or tell me to paste it into .mcp.json under " +
+    "headers.\"X-API-Key\" and restart this client.";
+
+  return (
+    <div className="wp-card">
+      <h2>First-time setup (new agent, no key yet)</h2>
+      <p className="wp-muted" style={{ marginTop: 0 }}>
+        For an MCP client that has never paired with this server. The agent
+        will pair itself using the tools the server exposes — you only need
+        to approve the request when it appears here.
+      </p>
+
+      <p style={{ marginBottom: 6 }}>
+        <strong>1.</strong> Add WebPilot to your project&apos;s
+        {' '}<code>.mcp.json</code> (URL only, no key yet):
+      </p>
+      <CopyableBlock text={urlOnlyConfig} />
+
+      <p style={{ marginTop: 16, marginBottom: 6 }}>
+        <strong>2.</strong> Paste this prompt into the agent to kick off pairing:
+      </p>
+      <CopyableBlock text={agentPrompt} />
+
+      <p style={{ marginTop: 16 }}>
+        <strong>3.</strong> A pairing request will appear at the top of this
+        page (with a system notification + sound). Approve it, picking the
+        Chrome profile the agent is allowed to drive.
+      </p>
+
+      <p>
+        <strong>4.</strong> Once approved, the agent appears under{' '}
+        <strong>Active agents</strong> above. Use its{' '}
+        <strong>Copy MCP config</strong> button for the keyed snippet that
+        lets future sessions skip step 2.
+      </p>
+    </div>
+  );
+}
+
+// ---- Inline copyable code block --------------------------------------------
+// Renders a <pre> with a small "Copy" button that flips to "Copied!" for 2s.
+
+function CopyableBlock({ text }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.error('[agents] clipboard write failed', e);
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <pre
+        className="wp-mono wp-code-block"
+        style={{
+          background: 'var(--wp-bg-elevated)',
+          border: '1px solid var(--wp-border)',
+          borderRadius: 6,
+          padding: 12,
+          paddingRight: 88,
+          overflowX: 'auto',
+          margin: '4px 0',
+          color: 'var(--wp-fg)',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      >
+        {text}
+      </pre>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="wp-btn"
+        style={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          fontSize: '0.75rem',
+          padding: '4px 10px',
+        }}
+      >
+        {copied ? 'Copied!' : 'Copy'}
+      </button>
+    </div>
   );
 }

@@ -536,6 +536,8 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           serverInfo: { name: 'webpilot-browser', version: '0.5.4' },
           instructions: `WebPilot is an MCP server that controls a real Chrome browser via a paired Chrome extension. All browser interactions happen in the user's actual browser, not a headless instance.
 
+**Authentication — read this first.** Every browser_* tool requires a paired API key. If you do NOT already have one for this server (i.e., your client config has no X-API-Key header / api_key parameter): your FIRST action must be to call \`request_pairing\` with a memorable agent_name. That tool returns immediately with a pairing_id and status — read its description and follow the async flow (surface the approval URL to the human, stop calling browser_* tools, poll \`check_pairing_status\` later). Skipping this step means every browser tool call will fail with an authentication error. The tools \`request_pairing\`, \`check_pairing_status\`, \`webpilot_get_formatter_info\`, and \`webpilot_reload_formatters\` do NOT require a key.
+
 Tool workflow: Use browser_get_tabs to find open tabs, then browser_get_accessibility_tree to read page content, then use the refs returned (e1, e2, etc.) with browser_click, browser_scroll, and browser_type for precise element targeting. Chain these operations to navigate and interact with pages.
 
 Accessibility tree: The tree from browser_get_accessibility_tree is already heavily pre-filtered and optimized for LLM consumption — roughly 97% smaller than raw CDP output. Do not use browser_execute_js to filter or extract data from pages. The tree already contains what you need.
