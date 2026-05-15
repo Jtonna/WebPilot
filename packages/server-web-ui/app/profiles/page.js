@@ -63,78 +63,105 @@ export default function ProfilesPage() {
 
   return (
     <>
-      <div>
-        <h1 className="wp-page-title">Chrome profiles</h1>
+      <header className="wp-page-head">
+        <div className="wp-page-kicker">
+          <span className="wp-page-kicker-accent">§ 03</span>
+          <span style={{ marginLeft: 12 }}>chrome user-data inventory</span>
+        </div>
+        <h1 className="wp-page-title">Profiles.</h1>
         <p className="wp-page-sub">
-          Profiles WebPilot knows about, plus sandbox profiles you can create.
+          Chrome profiles WebPilot knows about, plus a launcher for fresh
+          sandbox profiles you can hand to a new agent.
         </p>
-      </div>
+      </header>
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-muted">Error: {error.message}</div>
+          <div className="wp-section-head" style={{ marginBottom: 8 }}>
+            <span className="wp-section-num">!!</span>
+            <span style={{ color: 'var(--wp-danger)' }}>ERROR</span>
+          </div>
+          <div className="wp-mono wp-secondary">{error.message}</div>
         </div>
       ) : null}
 
-      <div className="wp-card">
-        <h2>Known profiles</h2>
-        {profiles.length === 0 ? (
-          <div className="wp-muted">No profiles found.</div>
-        ) : (
-          profiles.map((p) => (
-            <div className="wp-row" key={p.directoryName}>
-              <div className="wp-row-grow">
-                <div style={{ fontWeight: 600 }}>{p.displayName || p.directoryName}</div>
-                <div className="wp-muted">
-                  {p.gaiaEmail || 'No Google account linked'}
-                  {' • '}
-                  <span className="wp-mono">{p.directoryName}</span>
-                </div>
-                {p.webPilotStatus === 'needs_setup' ? (
-                  <div className="wp-muted" style={{ marginTop: 4 }}>
-                    {NEEDS_SETUP_HINT}
-                  </div>
-                ) : null}
-              </div>
-              <ProfileStatusBadge status={p.webPilotStatus} />
-            </div>
-          ))
-        )}
-      </div>
-
-      <div className="wp-card">
-        <h2>Create new sandbox profile</h2>
-        <p className="wp-muted" style={{ marginTop: 0 }}>
-          Launches Chrome with a fresh <code>--profile-directory</code>. After
-          Chrome opens, load the WebPilot unpacked extension via
-          chrome://extensions (Developer mode → Load unpacked).
-        </p>
-        <div className="wp-row">
-          <input
-            className="wp-input wp-row-grow"
-            value={newName}
-            placeholder="Profile directory name (e.g. WebPilot Sandbox)"
-            onChange={(e) => setNewName(e.target.value)}
-            disabled={creating}
-          />
-          <button
-            type="button"
-            className="wp-btn wp-btn-primary"
-            onClick={handleCreate}
-            disabled={creating}
-          >
-            {creating ? 'Launching...' : 'Create sandbox profile'}
-          </button>
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <span className="wp-section-num">§ 01</span>
+          <span>KNOWN PROFILES</span>
+          <span className="wp-section-rule" />
+          <span className="wp-section-aside">
+            {profiles.length > 0 ? `${profiles.length} TOTAL` : 'EMPTY'}
+          </span>
         </div>
-        {createMsg ? (
-          <div
-            className="wp-muted"
-            style={{ marginTop: 8, color: createMsg.kind === 'err' ? '#dc2626' : undefined }}
-          >
-            {createMsg.text}
+        <div className="wp-card">
+          {profiles.length === 0 ? (
+            <div className="wp-empty">no profiles — waiting</div>
+          ) : (
+            profiles.map((p) => (
+              <div className="wp-row" key={p.directoryName}>
+                <div className="wp-row-grow">
+                  <div className="wp-row-title">{p.displayName || p.directoryName}</div>
+                  <div className="wp-row-sub">
+                    {p.gaiaEmail || 'NO GOOGLE ACCOUNT'} · DIR {p.directoryName}
+                  </div>
+                  {p.webPilotStatus === 'needs_setup' ? (
+                    <div className="wp-mono wp-muted" style={{ marginTop: 6, fontSize: 11, letterSpacing: '0.04em' }}>
+                      {NEEDS_SETUP_HINT}
+                    </div>
+                  ) : null}
+                </div>
+                <ProfileStatusBadge status={p.webPilotStatus} />
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <span className="wp-section-num">§ 02</span>
+          <span>NEW SANDBOX</span>
+          <span className="wp-section-rule" />
+          <span className="wp-section-aside">spawn</span>
+        </div>
+        <div className="wp-card">
+          <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 20, maxWidth: '60ch' }}>
+            Launches Chrome with a fresh <code>--profile-directory</code>. After
+            Chrome opens, load the WebPilot unpacked extension via
+            chrome://extensions (Developer mode → Load unpacked).
+          </p>
+          <div className="wp-row">
+            <input
+              className="wp-input wp-row-grow"
+              value={newName}
+              placeholder='Profile directory name (e.g. "WebPilot Sandbox")'
+              onChange={(e) => setNewName(e.target.value)}
+              disabled={creating}
+            />
+            <button
+              type="button"
+              className="wp-btn wp-btn-primary"
+              onClick={handleCreate}
+              disabled={creating}
+            >
+              {creating ? 'Launching…' : 'Create sandbox'}
+            </button>
           </div>
-        ) : null}
-      </div>
+          {createMsg ? (
+            <div
+              className="wp-mono"
+              style={{
+                marginTop: 16,
+                fontSize: 12,
+                color: createMsg.kind === 'err' ? 'var(--wp-danger)' : 'var(--wp-success)',
+              }}
+            >
+              {createMsg.text}
+            </div>
+          ) : null}
+        </div>
+      </section>
     </>
   );
 }

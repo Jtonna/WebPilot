@@ -8,6 +8,12 @@ const DEFAULT_PROFILE_OPTIONS = [
   { value: '__new__', label: '+ New sandbox profile' },
 ];
 
+function shortPairingId(id) {
+  if (!id) return '';
+  const s = String(id);
+  return s.length > 12 ? `${s.slice(0, 8)}…${s.slice(-4)}` : s;
+}
+
 export default function PairingPromptCard({
   pairing,
   profileOptions = DEFAULT_PROFILE_OPTIONS,
@@ -47,9 +53,13 @@ export default function PairingPromptCard({
   return (
     <div className="wp-row">
       <div className="wp-row-grow">
-        <div style={{ fontWeight: 600 }}>{pairing.agentName}</div>
-        <div className="wp-muted">
-          Requested {pairing.createdAt ? new Date(pairing.createdAt).toLocaleString() : 'just now'}
+        <div className="wp-row-title">{pairing.agentName || 'unnamed agent'}</div>
+        <div className="wp-row-sub">
+          <span title={pairing.pairingId}>ID {shortPairingId(pairing.pairingId)}</span>
+          <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
+          <span>
+            REQ {pairing.createdAt ? new Date(pairing.createdAt).toLocaleTimeString() : 'JUST NOW'}
+          </span>
         </div>
       </div>
       <select

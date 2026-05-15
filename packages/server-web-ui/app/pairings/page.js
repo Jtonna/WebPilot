@@ -22,7 +22,6 @@ export default function PairingsPage() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
       setPairings(data.pendingPairings || []);
-      // History: client-side only — we don't get historical entries from /status
       setProfiles(data.profiles || []);
       setError(null);
     } catch (err) {
@@ -60,7 +59,6 @@ export default function PairingsPage() {
     { value: '__new__', label: '+ New sandbox profile' },
   ];
   if (profileOptions.length === 1) {
-    // Only the __new__ option present — add a fallback Default
     profileOptions.unshift({ value: 'Default', label: 'Default' });
   }
 
@@ -90,52 +88,86 @@ export default function PairingsPage() {
 
   return (
     <>
-      <div>
-        <h1 className="wp-page-title">Pending pairings</h1>
+      <header className="wp-page-head">
+        <div className="wp-page-kicker">
+          <span className="wp-page-kicker-accent">§ 02</span>
+          <span style={{ marginLeft: 12 }}>pairing handshake queue</span>
+        </div>
+        <h1 className="wp-page-title">Pairings.</h1>
         <p className="wp-page-sub">
-          Approve or deny pairing requests from MCP agents.
+          Approve or deny pairing requests from MCP agents. Each approval mints
+          an API key and binds the agent to a Chrome profile of your choosing.
         </p>
-      </div>
+      </header>
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-muted">Error: {error.message}</div>
+          <div className="wp-section-head" style={{ marginBottom: 8 }}>
+            <span className="wp-section-num">!!</span>
+            <span style={{ color: 'var(--wp-danger)' }}>ERROR</span>
+          </div>
+          <div className="wp-mono wp-secondary">{error.message}</div>
         </div>
       ) : null}
 
-      <div className="wp-card">
-        <h2>Waiting for review</h2>
-        {pairings.length === 0 ? (
-          <div className="wp-muted">No pairings waiting.</div>
-        ) : (
-          pairings.map((p) => (
-            <PairingPromptCard
-              key={p.pairingId}
-              pairing={p}
-              profileOptions={profileOptions}
-              onApprove={handleApprove}
-              onDeny={handleDeny}
-              disabled={busy}
-            />
-          ))
-        )}
-      </div>
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <span className="wp-section-num">§ 01</span>
+          <span>AWAITING REVIEW</span>
+          <span className="wp-section-rule" />
+          <span className="wp-section-aside">
+            {pairings.length > 0 ? `${pairings.length} PENDING` : 'EMPTY'}
+          </span>
+        </div>
+        <div className="wp-card">
+          {pairings.length === 0 ? (
+            <div className="wp-empty">no pairings — waiting</div>
+          ) : (
+            pairings.map((p) => (
+              <PairingPromptCard
+                key={p.pairingId}
+                pairing={p}
+                profileOptions={profileOptions}
+                onApprove={handleApprove}
+                onDeny={handleDeny}
+                disabled={busy}
+              />
+            ))
+          )}
+        </div>
+      </section>
 
-      <div className="wp-card">
-        <h2>History (this session)</h2>
-        {history.length === 0 ? (
-          <div className="wp-muted">No prior decisions in this session.</div>
-        ) : (
-          history.map((h, i) => (
-            <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
-              <div className="wp-row-grow">
-                <div style={{ fontWeight: 600 }}>{h.agentName}</div>
-                <div className="wp-muted">{h.decision} at {h.decidedAt || 'just now'}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <span className="wp-section-num">§ 02</span>
+          <span>SESSION LOG</span>
+          <span className="wp-section-rule" />
+          <span className="wp-section-aside">
+            {history.length > 0 ? `${history.length} ENTRIES` : 'EMPTY'}
+          </span>
+        </div>
+        <div className="wp-card">
+          {history.length === 0 ? (
+            <div className="wp-empty">no decisions yet — this session</div>
+          ) : (
+            history.map((h, i) => {
+              const ok = h.decision === 'approved';
+              return (
+                <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
+                  <div className="wp-row-grow">
+                    <div className="wp-row-title">{h.agentName || 'unnamed agent'}</div>
+                    <div className="wp-row-sub">{h.decidedAt || 'just now'}</div>
+                  </div>
+                  <span className="wp-pill" data-state={ok ? 'active' : 'danger'}>
+                    <span className="wp-pill-dot" />
+                    {ok ? 'Approved' : 'Denied'}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
     </>
   );
 }

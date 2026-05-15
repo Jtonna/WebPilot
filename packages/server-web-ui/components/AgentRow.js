@@ -4,14 +4,20 @@ import { useState } from 'react';
 
 function shortKey(key) {
   if (!key) return '';
-  return `${String(key).slice(0, 8)}...`;
+  return `${String(key).slice(0, 10)}…`;
 }
 
 function formatDate(value) {
   if (!value) return 'never';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
+  return d.toLocaleString(undefined, {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 /**
@@ -37,7 +43,6 @@ function buildMcpConfigSnippet({ port, apiKey }) {
 export default function AgentRow({ agent, onRename, onRevoke, port }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name || '');
-  // 'idle' | 'copied' | 'error' — drives the inline "Copied!" confirmation.
   const [copyState, setCopyState] = useState('idle');
 
   const commitRename = () => {
@@ -78,6 +83,9 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
     setTimeout(() => setCopyState('idle'), 2000);
   };
 
+  const copyLabel =
+    copyState === 'copied' ? 'COPIED' : copyState === 'error' ? 'COPY FAILED' : 'COPY .MCP.JSON';
+
   return (
     <div className="wp-row">
       <div className="wp-row-grow">
@@ -97,22 +105,25 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
             }}
           />
         ) : (
-          <span
-            style={{ fontWeight: 600, cursor: 'text' }}
-            title="Click to rename"
-            onClick={() => setEditing(true)}
-          >
-            {agent.name || '(unnamed)'}
-          </span>
+          <>
+            <div
+              className="wp-row-title"
+              title="Click to rename"
+              style={{ cursor: 'text' }}
+              onClick={() => setEditing(true)}
+            >
+              {agent.name || <span className="wp-empty" style={{ fontSize: 15 }}>unnamed agent</span>}
+            </div>
+            <div className="wp-row-sub">
+              <span title={agent.key}>KEY {shortKey(agent.key)}</span>
+              <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
+              <span>ISSUED {formatDate(agent.createdAt)}</span>
+              <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
+              <span>LAST {formatDate(agent.lastActive)}</span>
+            </div>
+          </>
         )}
       </div>
-      <span className="wp-mono wp-muted" title={agent.key}>{shortKey(agent.key)}</span>
-      <span className="wp-muted" style={{ minWidth: 140 }}>
-        created {formatDate(agent.createdAt)}
-      </span>
-      <span className="wp-muted" style={{ minWidth: 140 }}>
-        last active {formatDate(agent.lastActive)}
-      </span>
       <button
         type="button"
         className="wp-btn"
@@ -120,7 +131,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
         disabled={!port || !agent.key}
         title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}
       >
-        {copyState === 'copied' ? 'Copied!' : copyState === 'error' ? 'Copy failed' : 'Copy MCP config'}
+        {copyLabel}
       </button>
       <button type="button" className="wp-btn wp-btn-danger" onClick={handleRevoke}>
         Revoke

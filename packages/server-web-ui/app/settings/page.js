@@ -29,7 +29,6 @@ export default function SettingsPage() {
   }, []);
 
   const handleToggle = () => {
-    // Open the themed confirm modal — replaces window.confirm() per F7.
     const next = !networkMode;
     console.log(`[settings] queueing network-mode toggle confirmation: next=${next}`);
     setPendingToggle(next);
@@ -44,7 +43,6 @@ export default function SettingsPage() {
     try {
       await apiSetNetworkMode(next);
       setNetworkMode(next);
-      // The server is now restarting; show a friendly message
       setError(new Error('Server is restarting — refresh this page in a few seconds.'));
     } catch (e) {
       setError(e);
@@ -55,48 +53,66 @@ export default function SettingsPage() {
 
   return (
     <>
-      <div>
-        <h1 className="wp-page-title">Settings</h1>
-        <p className="wp-page-sub">Server-wide preferences.</p>
-      </div>
+      <header className="wp-page-head">
+        <div className="wp-page-kicker">
+          <span className="wp-page-kicker-accent">§ 05</span>
+          <span style={{ marginLeft: 12 }}>server-wide configuration</span>
+        </div>
+        <h1 className="wp-page-title">Settings.</h1>
+        <p className="wp-page-sub">
+          Configuration that affects the whole WebPilot server. Toggling some
+          values requires a server restart.
+        </p>
+      </header>
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-muted">{error.message}</div>
+          <div className="wp-mono wp-secondary">{error.message}</div>
         </div>
       ) : null}
 
-      <div className="wp-card">
-        <h2>Network mode</h2>
-        <p className="wp-muted" style={{ marginTop: 0 }}>
-          When enabled, the WebPilot server binds to all interfaces so other
-          devices on your LAN can connect. Toggling this restarts the server.
-        </p>
-        <div className="wp-row">
-          <div className="wp-row-grow">
-            <div style={{ fontWeight: 600 }}>
-              {loading
-                ? 'Loading…'
-                : networkMode
-                ? 'Network mode: ON'
-                : 'Network mode: OFF (localhost only)'}
-            </div>
-            <div className="wp-muted">
-              {networkMode
-                ? 'Bind address: 0.0.0.0 (LAN reachable)'
-                : 'Bind address: 127.0.0.1 (this machine only)'}
-            </div>
-          </div>
-          <button
-            type="button"
-            className={networkMode ? 'wp-btn wp-btn-danger' : 'wp-btn wp-btn-primary'}
-            onClick={handleToggle}
-            disabled={busy || loading}
-          >
-            {busy ? 'Restarting…' : networkMode ? 'Disable' : 'Enable'}
-          </button>
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <span className="wp-section-num">§ 01</span>
+          <span>NETWORK MODE</span>
+          <span className="wp-section-rule" />
+          <span className="wp-section-aside">bind address</span>
         </div>
-      </div>
+        <div className="wp-card">
+          <p className="wp-secondary" style={{ marginTop: 0, maxWidth: '60ch' }}>
+            When enabled, the WebPilot server binds to all interfaces so other
+            devices on your LAN can connect. Toggling this restarts the server.
+          </p>
+          <div className="wp-row">
+            <div className="wp-row-grow">
+              <div className="wp-row-title">
+                {loading
+                  ? 'Loading…'
+                  : networkMode
+                  ? 'Network mode · ON'
+                  : 'Network mode · OFF'}
+              </div>
+              <div className="wp-row-sub">
+                {networkMode
+                  ? 'BIND 0.0.0.0 · LAN REACHABLE'
+                  : 'BIND 127.0.0.1 · LOCALHOST ONLY'}
+              </div>
+            </div>
+            <span className="wp-pill" data-state={networkMode ? 'warn' : 'active'}>
+              <span className="wp-pill-dot" />
+              {networkMode ? 'LAN' : 'LOCAL'}
+            </span>
+            <button
+              type="button"
+              className={networkMode ? 'wp-btn wp-btn-danger' : 'wp-btn wp-btn-primary'}
+              onClick={handleToggle}
+              disabled={busy || loading}
+            >
+              {busy ? 'Restarting…' : networkMode ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        </div>
+      </section>
 
       <ConfirmModal
         open={pendingToggle !== null}
