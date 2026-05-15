@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import RuntimeClock from './RuntimeClock';
 import { getStatus } from '../lib/api';
 
@@ -32,6 +32,10 @@ export default function AppShell({ children }) {
   const rawPath = usePathname() || '/ui/';
   const pathname = normalizePath(rawPath);
   const [strip, setStrip] = useState({ port: null, host: '127.0.0.1', ok: null, networkMode: false });
+  // When the OK/DOWN bit flips we briefly paint the indicator with a flash
+  // class. The class is removed by setTimeout so the keyframe runs once.
+  const [statusFlash, setStatusFlash] = useState(false);
+  const prevOkRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,10 +62,26 @@ export default function AppShell({ children }) {
     };
   }, []);
 
+  // Watch the OK bit and trigger the flash on transitions (not first paint).
+  useEffect(() => {
+    if (strip.ok === null) return;
+    if (prevOkRef.current !== null && prevOkRef.current !== strip.ok) {
+      setStatusFlash(true);
+      const t = setTimeout(() => setStatusFlash(false), 220);
+      prevOkRef.current = strip.ok;
+      return () => clearTimeout(t);
+    }
+    prevOkRef.current = strip.ok;
+    return undefined;
+  }, [strip.ok]);
+
   const portStr = strip.port ? `${strip.host}:${strip.port}` : `${strip.host}:----`;
   const statusLabel =
     strip.ok === null ? 'BOOTING' : strip.ok ? 'STATUS OK' : 'STATUS DOWN';
-  const statusClass = strip.ok ? 'wp-strip-status-ok' : '';
+  const statusClass = [
+    strip.ok ? 'wp-strip-status-ok' : '',
+    statusFlash ? 'wp-strip-status-flash' : '',
+  ].filter(Boolean).join(' ');
 
   return (
     <div className="wp-shell">

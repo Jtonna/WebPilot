@@ -1,22 +1,17 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * Mission Control confirmation modal. Hairline rectangular card with an
- * accent-orange top edge, italic serif title, mono kicker. Backdrop click
- * cancels; Escape cancels; Enter confirms.
+ * accent-orange top edge, italic serif title, mono kicker.
  *
- * Props:
- *   open         — boolean; modal visible iff true
- *   title        — short header text (rendered in italic serif)
- *   body         — string or React node for the message
- *   confirmLabel — defaults to "Confirm"
- *   cancelLabel  — defaults to "Cancel"
- *   confirmDanger — if true, the Confirm button uses the danger style
- *   onConfirm    — called when the user clicks Confirm or hits Enter
- *   onCancel     — called when the user clicks Cancel, hits Escape, or
- *                  clicks the backdrop
+ * Behavior:
+ *   - Backdrop click cancels; Escape cancels; Enter confirms.
+ *   - Opens with a vertical iris (clip-path) + backdrop fade.
+ *   - Closes with the iris reversed (faster), driven by an `is-closing`
+ *     class. The component keeps the modal mounted for ~200ms after `open`
+ *     flips to false so the close keyframe can play before unmount.
  *
  * Replaces window.confirm() usage in the web UI — see QOL fix-up F7.
  */
@@ -31,9 +26,25 @@ export default function ConfirmModal({
   onCancel,
 }) {
   const cancelRef = useRef(null);
+  // True while the close animation is in flight. We stay rendered, with the
+  // is-closing class, until the keyframe finishes.
+  const [closing, setClosing] = useState(false);
+  // Latched copy of the props so the close animation has stable content even
+  // after the parent zeroes out `title`/`body`.
+  const lastPropsRef = useRef({ title, body, confirmLabel, cancelLabel, confirmDanger });
+  useEffect(() => {
+    if (open) {
+      lastPropsRef.current = { title, body, confirmLabel, cancelLabel, confirmDanger };
+    }
+  }, [open, title, body, confirmLabel, cancelLabel, confirmDanger]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (open && closing) {
+      // Re-opened while closing — cancel the close.
+      setClosing(false);
+    }
+    if (!open && !closing) return undefined;
+
     function handleKey(e) {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -42,18 +53,34 @@ export default function ConfirmModal({
         if (typeof onConfirm === 'function') onConfirm();
       }
     }
-    window.addEventListener('keydown', handleKey);
-    if (cancelRef.current) {
-      try { cancelRef.current.focus(); } catch (_) { /* ignore */ }
+    if (open) {
+      window.addEventListener('keydown', handleKey);
+      if (cancelRef.current) {
+        try { cancelRef.current.focus(); } catch (_) { /* ignore */ }
+      }
+      // eslint-disable-next-line no-console
+      console.log('[confirm-modal] opened:', title);
     }
-    // eslint-disable-next-line no-console
-    console.log('[confirm-modal] opened:', title);
     return () => {
       window.removeEventListener('keydown', handleKey);
     };
-  }, [open, onCancel, onConfirm, title]);
+  }, [open, closing, onCancel, onConfirm, title]);
 
-  if (!open) return null;
+  // When `open` flips from true → false we delay unmount so the close
+  // animation can run.
+  const wasOpenRef = useRef(open);
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      setClosing(true);
+      const id = setTimeout(() => setClosing(false), 220);
+      wasOpenRef.current = open;
+      return () => clearTimeout(id);
+    }
+    wasOpenRef.current = open;
+    return undefined;
+  }, [open]);
+
+  if (!open && !closing) return null;
 
   const handleBackdrop = (e) => {
     if (e.target === e.currentTarget && typeof onCancel === 'function') {
@@ -61,9 +88,11 @@ export default function ConfirmModal({
     }
   };
 
+  const view = open ? { title, body, confirmLabel, cancelLabel, confirmDanger } : lastPropsRef.current;
+
   return (
     <div
-      className="wp-modal-backdrop"
+      className={`wp-modal-backdrop${closing && !open ? ' is-closing' : ''}`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="wp-confirm-title"
@@ -71,8 +100,8 @@ export default function ConfirmModal({
     >
       <div className="wp-modal">
         <div className="wp-modal-kicker">§ confirm · action required</div>
-        <h2 id="wp-confirm-title" className="wp-modal-title">{title}</h2>
-        <div className="wp-modal-body">{body}</div>
+        <h2 id="wp-confirm-title" className="wp-modal-title">{view.title}</h2>
+        <div className="wp-modal-body">{view.body}</div>
         <div className="wp-modal-actions">
           <button
             ref={cancelRef}
@@ -80,14 +109,14 @@ export default function ConfirmModal({
             className="wp-btn"
             onClick={onCancel}
           >
-            {cancelLabel}
+            {view.cancelLabel}
           </button>
           <button
             type="button"
-            className={confirmDanger ? 'wp-btn wp-btn-danger' : 'wp-btn wp-btn-primary'}
+            className={view.confirmDanger ? 'wp-btn wp-btn-danger' : 'wp-btn wp-btn-primary'}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {view.confirmLabel}
           </button>
         </div>
       </div>

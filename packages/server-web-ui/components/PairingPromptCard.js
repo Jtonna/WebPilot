@@ -20,6 +20,7 @@ export default function PairingPromptCard({
   onApprove,
   onDeny,
   disabled = false,
+  justArrived = false,
 }) {
   const [selectedProfile, setSelectedProfile] = useState(profileOptions[0]?.value || 'Default');
   const [newProfileName, setNewProfileName] = useState('');
@@ -51,7 +52,7 @@ export default function PairingPromptCard({
   };
 
   return (
-    <div className="wp-row">
+    <div className={`wp-row${justArrived ? ' wp-row-enter' : ''}`}>
       <div className="wp-row-grow">
         <div className="wp-row-title">{pairing.agentName || 'unnamed agent'}</div>
         <div className="wp-row-sub">

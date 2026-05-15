@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useFlashOnChange } from '../lib/reveal';
 
 function shortKey(key) {
   if (!key) return '';
@@ -40,10 +41,13 @@ function buildMcpConfigSnippet({ port, apiKey }) {
   return JSON.stringify(config, null, 2);
 }
 
-export default function AgentRow({ agent, onRename, onRevoke, port }) {
+export default function AgentRow({ agent, onRename, onRevoke, port, leaving = false }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name || '');
   const [copyState, setCopyState] = useState('idle');
+  // Briefly highlights the "LAST" timestamp whenever the underlying value
+  // changes. Skips the initial mount so static rows don't flash on load.
+  const lastActiveFlash = useFlashOnChange(agent.lastActive);
 
   const commitRename = () => {
     setEditing(false);
@@ -87,7 +91,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
     copyState === 'copied' ? 'COPIED' : copyState === 'error' ? 'COPY FAILED' : 'COPY .MCP.JSON';
 
   return (
-    <div className="wp-row">
+    <div className={`wp-row${leaving ? ' wp-row-leave' : ''}`}>
       <div className="wp-row-grow">
         {editing ? (
           <input
@@ -119,14 +123,16 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
               <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
               <span>ISSUED {formatDate(agent.createdAt)}</span>
               <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
-              <span>LAST {formatDate(agent.lastActive)}</span>
+              <span className={lastActiveFlash ? 'wp-flash' : undefined}>
+                LAST {formatDate(agent.lastActive)}
+              </span>
             </div>
           </>
         )}
       </div>
       <button
         type="button"
-        className="wp-btn"
+        className={`wp-btn${copyState === 'copied' ? ' is-copied' : ''}`}
         onClick={handleCopyMcpConfig}
         disabled={!port || !agent.key}
         title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}

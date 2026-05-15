@@ -25,10 +25,13 @@ const STATE_META = {
 export default function ProfileStatusBadge({ status }) {
   const meta = STATE_META[status] || { label: 'Unknown' };
   const state = STATE_META[status] ? status : 'unknown';
+  // Re-key the label span on state change so the small fade-in keyframe runs.
+  // This is the "fade out, swap, fade in" trick — but trimmed to a single
+  // fade-in on the new value (the old one disappears in the React unmount).
   return (
     <span className="wp-pill" data-state={state}>
       <span className="wp-pill-dot" />
-      {meta.label}
+      <span className="wp-pill-label" key={state}>{meta.label}</span>
     </span>
   );
 }

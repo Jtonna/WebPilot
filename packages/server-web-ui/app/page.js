@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import StatusCard from '../components/StatusCard';
 import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../components/ProfileStatusBadge';
+import RevealSection from '../components/RevealSection';
 import { createSequencedFetcher, getStatus } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
@@ -120,7 +121,8 @@ export default function HomePage() {
             />
             <StatusCard
               title="EXTENSIONS"
-              value={String(extensionsConnected).padStart(2, '0')}
+              value={extensionsConnected}
+              padWidth={2}
               state={extensionsConnected > 0 ? 'ok' : 'warn'}
               mono
               detail={extensionsConnected > 0
@@ -129,7 +131,8 @@ export default function HomePage() {
             />
             <StatusCard
               title="PAIRINGS"
-              value={String(pendingPairings).padStart(2, '0')}
+              value={pendingPairings}
+              padWidth={2}
               state={pendingPairings > 0 ? 'accent' : 'ok'}
               mono
               detail={pendingPairings > 0 ? 'AWAITING · APPROVAL' : 'QUEUE · EMPTY'}
@@ -196,7 +199,7 @@ export default function HomePage() {
       ) : null}
 
       {!loading && profiles.length > 0 ? (
-        <section className="wp-section">
+        <RevealSection className="wp-section">
           <div className="wp-section-head">
             <span className="wp-section-num">§ 04</span>
             <span>ALL PROFILES</span>
@@ -219,11 +222,11 @@ export default function HomePage() {
               </div>
             ))}
           </div>
-        </section>
+        </RevealSection>
       ) : null}
 
       {!loading ? (
-        <section className="wp-section">
+        <RevealSection className="wp-section">
           <div className="wp-section-head">
             <span className="wp-section-num">§ 05</span>
             <span>PAIRINGS</span>
@@ -246,7 +249,7 @@ export default function HomePage() {
               </>
             )}
           </div>
-        </section>
+        </RevealSection>
       ) : null}
     </>
   );

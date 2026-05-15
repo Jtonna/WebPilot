@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import AgentRow from '../../components/AgentRow';
 import ConfirmModal from '../../components/ConfirmModal';
+import RevealSection from '../../components/RevealSection';
 import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
@@ -13,6 +14,10 @@ export default function AgentsPage() {
   // Pending revoke confirmation. `null` = modal closed; otherwise the agent
   // whose key is about to be revoked.
   const [revokeTarget, setRevokeTarget] = useState(null);
+  // Set of agent keys that are currently playing the leave animation. While
+  // a key is here we keep the row mounted but with the `wp-row-leave` class,
+  // then unmount it once the keyframe finishes (~220ms).
+  const [leavingKeys, setLeavingKeys] = useState(() => new Set());
   // See QOL Wave 6 H2 — REST/WS refresh race guard.
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
@@ -70,11 +75,31 @@ export default function AgentsPage() {
     const agent = revokeTarget;
     setRevokeTarget(null);
     if (!agent) return;
+    // Play the leave animation before the row disappears. We mark the key
+    // as leaving, fire the actual revoke + refresh, and the row will unmount
+    // naturally when the refresh completes — by which time the keyframe will
+    // already be visible.
+    setLeavingKeys((prev) => {
+      const next = new Set(prev);
+      next.add(agent.key);
+      return next;
+    });
     try {
+      // Wait one frame for the class flip to paint before the network call.
+      await new Promise((r) => setTimeout(r, 220));
       await revokeAgent(agent.key);
       await refresh();
     } catch (e) {
       setError(e);
+    } finally {
+      // Drop the key from the leaving set even if the row is now unmounted —
+      // keeps the set bounded.
+      setLeavingKeys((prev) => {
+        if (!prev.has(agent.key)) return prev;
+        const next = new Set(prev);
+        next.delete(agent.key);
+        return next;
+      });
     }
   }
 
@@ -122,6 +147,7 @@ export default function AgentsPage() {
                 onRename={handleRename}
                 onRevoke={handleRevoke}
                 port={port}
+                leaving={leavingKeys.has(a.key)}
               />
             ))
           )}
@@ -130,7 +156,7 @@ export default function AgentsPage() {
 
       <FirstTimeSetupCard port={port} />
 
-      <section className="wp-section">
+      <RevealSection className="wp-section">
         <div className="wp-section-head">
           <span className="wp-section-num">§ 03</span>
           <span>EXISTING KEY · MANUAL WIRE-UP</span>
@@ -176,7 +202,7 @@ export default function AgentsPage() {
             </li>
           </ol>
         </div>
-      </section>
+      </RevealSection>
 
       <ConfirmModal
         open={!!revokeTarget}
@@ -289,7 +315,7 @@ function CopyableBlock({ text }) {
       <button
         type="button"
         onClick={handleCopy}
-        className="wp-btn wp-btn-ghost wp-code-copy"
+        className={`wp-btn wp-btn-ghost wp-code-copy${copied ? ' is-copied' : ''}`}
       >
         {copied ? 'COPIED' : 'COPY'}
       </button>

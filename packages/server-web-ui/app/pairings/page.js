@@ -11,17 +11,50 @@ export default function PairingsPage() {
   const [profiles, setProfiles] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Tracks which pairing IDs have already been seen so we can flag freshly-
+  // arrived rows for the slide-in + accent pulse animation. Cleared after the
+  // animation duration so re-renders don't loop the effect.
+  const [arrivingIds, setArrivingIds] = useState(() => new Set());
+  const seenIdsRef = useRef(new Set());
   // See QOL Wave 6 H2 — guards REST refresh against WS-event clobber.
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
   }
 
+  function markArrivals(newList) {
+    const nextSeen = new Set();
+    const arrivals = new Set();
+    for (const p of newList) {
+      if (!p || !p.pairingId) continue;
+      nextSeen.add(p.pairingId);
+      if (!seenIdsRef.current.has(p.pairingId)) {
+        arrivals.add(p.pairingId);
+      }
+    }
+    seenIdsRef.current = nextSeen;
+    if (arrivals.size > 0) {
+      setArrivingIds(arrivals);
+      // Clear after the slide-in + pulse duration so subsequent updates don't
+      // replay the animation.
+      setTimeout(() => {
+        setArrivingIds((curr) => {
+          // Only clear the IDs we set this round.
+          const next = new Set(curr);
+          for (const id of arrivals) next.delete(id);
+          return next;
+        });
+      }, 1500);
+    }
+  }
+
   async function refresh() {
     try {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
-      setPairings(data.pendingPairings || []);
+      const list = data.pendingPairings || [];
+      markArrivals(list);
+      setPairings(list);
       setProfiles(data.profiles || []);
       setError(null);
     } catch (err) {
@@ -131,6 +164,7 @@ export default function PairingsPage() {
                 onApprove={handleApprove}
                 onDeny={handleDeny}
                 disabled={busy}
+                justArrived={arrivingIds.has(p.pairingId)}
               />
             ))
           )}

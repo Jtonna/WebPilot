@@ -61,29 +61,68 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Subtle grain — pure CSS noise via radial gradient, no image asset. */
+/* Subtle SVG turbulence grain — Mission Control consoles weren't pristine.
+ * Inline data-URI so no extra HTTP request, and a tiny radial-grain layer
+ * on top to keep things crisp at 1x. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.025;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.9  0 0 0 0 0.85  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 200px 200px;
+  mix-blend-mode: overlay;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.02;
   background-image: radial-gradient(rgba(255, 255, 255, 0.7) 1px, transparent 1px);
   background-size: 3px 3px;
 }
 
+/* Animated dotted underline — drawn from left on hover, then settles. */
 a {
   color: var(--wp-fg);
-  text-decoration: underline dotted;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--wp-fg-muted);
-  transition: color 120ms linear, text-decoration-color 120ms linear;
+  text-decoration: none;
+  background-image: linear-gradient(
+    to right,
+    var(--wp-fg-muted) 30%,
+    transparent 30%
+  );
+  background-repeat: repeat-x;
+  background-size: 4px 1px;
+  background-position: 0 100%;
+  padding-bottom: 2px;
+  transition: color 160ms linear, background-image 160ms linear;
 }
 
 a:hover {
   color: var(--wp-accent);
-  text-decoration-color: var(--wp-accent);
+  background-image: linear-gradient(
+    to right,
+    var(--wp-accent) 30%,
+    transparent 30%
+  );
+}
+
+/* When a link uses .wp-link-draw, the underline draws in from the left
+ * rather than fading. Used for editorial links where the draw is louder. */
+.wp-link-draw {
+  background-size: 0% 1px !important;
+  background-repeat: no-repeat;
+  background-image: linear-gradient(to right, var(--wp-accent), var(--wp-accent)) !important;
+  transition: background-size 220ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms linear;
+}
+
+.wp-link-draw:hover {
+  background-size: 100% 1px !important;
 }
 
 button,
@@ -407,6 +446,7 @@ hr {
   gap: 16px;
   padding: 14px 0;
   border-bottom: 1px solid var(--wp-border);
+  position: relative;
 }
 
 .wp-row:first-child {
@@ -535,6 +575,18 @@ hr {
   background: var(--wp-bg-elevated);
   white-space: nowrap;
   line-height: 1;
+  transform: translateY(0);
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms linear, background-color 180ms linear;
+}
+
+.wp-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--wp-fg-secondary);
+}
+
+.wp-pill:hover .wp-pill-dot {
+  transform: scale(1.15);
 }
 
 .wp-pill-dot {
@@ -542,6 +594,42 @@ hr {
   height: 6px;
   border-radius: 50%;
   background: var(--wp-fg-muted);
+  position: relative;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms linear;
+}
+
+/* Ignition burst — when a dot becomes active, fire a one-shot ring expansion.
+ * The ring is a ::before pseudo-element that scales from 1 → 3.2 and fades
+ * out in 420ms. Implemented via animation so it plays exactly once when the
+ * data-state value is set to "active" on initial mount or after a swap. */
+.wp-pill[data-state="active"] .wp-pill-dot::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid var(--wp-accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: wp-ignition 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes wp-ignition {
+  0% { transform: scale(1); opacity: 1; }
+  60% { transform: scale(2.4); opacity: 0.45; }
+  100% { transform: scale(3.4); opacity: 0; }
+}
+
+/* Pill text crossfade on state changes. The text span gets keyed by content
+ * so React unmounts/remounts it, triggering this enter animation. */
+.wp-pill-label {
+  display: inline-block;
+  animation: wp-pill-label 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes wp-pill-label {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .wp-pill[data-state="active"] .wp-pill-dot {
@@ -586,14 +674,28 @@ hr {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
-  transition: background-color 120ms linear, color 120ms linear,
-    border-color 120ms linear;
+  position: relative;
+  transform: translateY(0);
+  box-shadow: 0 0 0 0 transparent;
+  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 140ms linear, border-color 140ms linear,
+    transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
 }
 
 .wp-btn:hover:not(:disabled) {
   background: var(--wp-fg);
   color: var(--wp-bg);
   border-color: var(--wp-fg);
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 0 var(--wp-accent);
+}
+
+.wp-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 0 0 0 transparent;
+  transition-duration: 60ms;
 }
 
 .wp-btn:disabled {
@@ -794,31 +896,64 @@ hr {
   }
 }
 
+/* Default cascade — applies to sections that follow the page-head.
+ * The page-head block has its own choreographed sub-sequence (see below),
+ * so we start the section delays at 240ms so they begin AFTER the title
+ * has landed and the lede has come in. */
 .wp-main > * {
   opacity: 0;
   transform: translateY(8px);
   animation: wp-enter 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.wp-main > *:nth-child(1) { animation-delay: 0ms; }
-.wp-main > *:nth-child(2) { animation-delay: 60ms; }
-.wp-main > *:nth-child(3) { animation-delay: 120ms; }
-.wp-main > *:nth-child(4) { animation-delay: 180ms; }
-.wp-main > *:nth-child(5) { animation-delay: 240ms; }
-.wp-main > *:nth-child(6) { animation-delay: 300ms; }
-.wp-main > *:nth-child(7) { animation-delay: 360ms; }
-.wp-main > *:nth-child(8) { animation-delay: 420ms; }
-.wp-main > *:nth-child(n+9) { animation-delay: 480ms; }
+.wp-main > *:nth-child(1) { animation: none; opacity: 1; transform: none; }
+.wp-main > *:nth-child(2) { animation-delay: 240ms; }
+.wp-main > *:nth-child(3) { animation-delay: 300ms; }
+.wp-main > *:nth-child(4) { animation-delay: 360ms; }
+.wp-main > *:nth-child(5) { animation-delay: 420ms; }
+.wp-main > *:nth-child(6) { animation-delay: 480ms; }
+.wp-main > *:nth-child(7) { animation-delay: 540ms; }
+.wp-main > *:nth-child(8) { animation-delay: 600ms; }
+.wp-main > *:nth-child(n+9) { animation-delay: 660ms; }
+
+/* When a section is below the fold on first paint we hold it hidden and
+ * let the IntersectionObserver flip .wp-reveal-on-scroll → .is-revealed. */
+.wp-reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: none !important;
+  transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wp-reveal-on-scroll.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .wp-main > * {
-    animation: none;
-    opacity: 1;
-    transform: none;
+  .wp-main > *,
+  .wp-reveal-on-scroll,
+  .wp-page-head,
+  .wp-page-kicker,
+  .wp-page-title,
+  .wp-page-sub,
+  .wp-section-rule,
+  .wp-strip-caret,
+  .wp-modal,
+  .wp-modal-backdrop,
+  .wp-modal-title,
+  .wp-modal-actions > .wp-btn {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    clip-path: none !important;
   }
   .wp-strip-status-ok::before,
-  .wp-pill[data-state="active"] .wp-pill-dot {
-    animation: none;
+  .wp-pill[data-state="active"] .wp-pill-dot,
+  .wp-pill[data-state="active"] .wp-pill-dot::before {
+    animation: none !important;
   }
 }
 
@@ -868,12 +1003,21 @@ hr {
   justify-content: center;
   z-index: 1000;
   backdrop-filter: blur(2px);
-  animation: wp-modal-fade 200ms ease-out forwards;
+  animation: wp-modal-fade 220ms ease-out forwards;
+}
+
+.wp-modal-backdrop.is-closing {
+  animation: wp-modal-fade-out 200ms ease-in forwards;
 }
 
 @keyframes wp-modal-fade {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes wp-modal-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .wp-modal {
@@ -883,6 +1027,23 @@ hr {
   padding: 32px 36px 28px;
   width: min(520px, calc(100% - 48px));
   position: relative;
+  /* Iris open: vertical clip-path inset closes from middle outward. */
+  clip-path: inset(50% 0 50% 0);
+  animation: wp-modal-iris 320ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.wp-modal-backdrop.is-closing .wp-modal {
+  animation: wp-modal-iris-close 200ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+
+@keyframes wp-modal-iris {
+  from { clip-path: inset(50% 0 50% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@keyframes wp-modal-iris-close {
+  from { clip-path: inset(0 0 0 0); }
+  to { clip-path: inset(50% 0 50% 0); }
 }
 
 .wp-modal::before {
@@ -902,6 +1063,8 @@ hr {
   text-transform: uppercase;
   color: var(--wp-accent);
   margin-bottom: 14px;
+  opacity: 0;
+  animation: wp-modal-fade 200ms ease-out 240ms forwards;
 }
 
 .wp-modal-title {
@@ -912,6 +1075,8 @@ hr {
   line-height: 1;
   margin: 0 0 20px;
   letter-spacing: -0.01em;
+  opacity: 0;
+  animation: wp-modal-fade 240ms ease-out 320ms forwards;
 }
 
 .wp-modal-body {
@@ -920,10 +1085,331 @@ hr {
   line-height: 1.6;
   color: var(--wp-fg-secondary);
   margin-bottom: 28px;
+  opacity: 0;
+  animation: wp-modal-fade 220ms ease-out 400ms forwards;
 }
 
 .wp-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+/* Buttons cascade in 40ms apart, starting at 480ms. */
+.wp-modal-actions > .wp-btn {
+  opacity: 0;
+  animation: wp-enter 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.wp-modal-actions > .wp-btn:nth-child(1) { animation-delay: 480ms; }
+.wp-modal-actions > .wp-btn:nth-child(2) { animation-delay: 520ms; }
+.wp-modal-actions > .wp-btn:nth-child(3) { animation-delay: 560ms; }
+
+/* ===========================================================================
+ * MOTION PASS — second pass: entrances, hover, status transitions, scanners
+ *
+ * Restraint principle: the page breathes — it does not vibrate. Every effect
+ * has a single purpose and a short duration. Anything looping (the active
+ * pulse, the runtime caret) is slow enough to read as ambient.
+ * ========================================================================= */
+
+/* ---- Page-head choreography --------------------------------------------- */
+
+/* The page-head is the first child of .wp-main and we disable the generic
+ * cascade animation on it (see nth-child(1) override above). Each of its
+ * inner pieces — kicker, title, sub — runs its own keyframe so the title
+ * "lands". */
+
+.wp-page-kicker {
+  opacity: 0;
+  letter-spacing: 0.4em;
+  animation: wp-kicker-settle 700ms cubic-bezier(0.16, 1, 0.3, 1) 0ms forwards;
+}
+
+@keyframes wp-kicker-settle {
+  from {
+    opacity: 0;
+    letter-spacing: 0.4em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.18em;
+  }
+}
+
+.wp-page-title {
+  opacity: 0;
+  /* Clip-path swipe left → right. We start clipped on the right (100% inset
+   * right). The animation reveals from left to right, expo-out. */
+  clip-path: inset(0 100% 0 0);
+  animation: wp-title-swipe 760ms cubic-bezier(0.16, 1, 0.3, 1) 50ms forwards;
+}
+
+@keyframes wp-title-swipe {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.wp-page-sub {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: wp-enter 600ms cubic-bezier(0.16, 1, 0.3, 1) 280ms forwards;
+}
+
+/* ---- Section rule draw-in ----------------------------------------------- */
+
+/* The hairline rule that fills the remaining width on every section head.
+ * We animate scaleX from 0 → 1, transform-origin: left, expo-out. The
+ * animation fires when the section is revealed; the cascade timing on the
+ * parent .wp-main > * keeps the rule in sync. */
+
+.wp-section-rule {
+  transform-origin: left center;
+  transform: scaleX(0);
+  animation: wp-rule-draw 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: inherit;
+}
+
+/* When the section is gated by the scroll-reveal observer we restart the
+ * draw-in only after the section reveals. */
+.wp-reveal-on-scroll .wp-section-rule {
+  transform: scaleX(0);
+  animation: none;
+  transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wp-reveal-on-scroll.is-revealed .wp-section-rule {
+  transform: scaleX(1);
+  transition-delay: 200ms;
+}
+
+@keyframes wp-rule-draw {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* ---- Sidebar nav hover -------------------------------------------------- */
+
+.wp-nav-item {
+  /* Tracking nudges on hover are very Mission Control. */
+  transition: color 160ms linear, border-left-color 200ms linear,
+    letter-spacing 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wp-nav-item:hover {
+  letter-spacing: 0.1em;
+}
+
+.wp-nav-item.is-active {
+  /* The accent left bar grows slightly on hover. */
+  transition: color 160ms linear, border-left-color 200ms linear,
+    letter-spacing 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-left-width 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wp-nav-item.is-active:hover {
+  border-left-width: 3px;
+  margin-left: -15px; /* compensate so layout doesn't reflow */
+}
+
+/* ---- Row hover (agents, profiles, pairings) ----------------------------- */
+
+/* Apply via .wp-row inside a .wp-card. We negative-margin the hover surface
+ * so the highlight sits flush with the card padding without reflowing the
+ * content. */
+.wp-row {
+  margin: 0 -28px;
+  padding-left: 28px;
+  padding-right: 28px;
+  transition: background-color 160ms linear;
+}
+
+.wp-card-tight .wp-row {
+  margin: 0 -20px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.wp-row:hover {
+  background-color: var(--wp-bg-elevated);
+}
+
+/* ---- Instrument hover --------------------------------------------------- */
+
+.wp-instrument {
+  transition: background-color 200ms linear;
+}
+
+.wp-instrument:hover {
+  background-color: var(--wp-bg-elevated);
+}
+
+/* ---- Code block scanner reveal ------------------------------------------ */
+
+/* On first render, the code block reveals top-to-bottom with a 1px accent
+ * line that scans down the block. The text appears under it as the scan
+ * passes. Implemented via two layers:
+ *   - the <pre> contents fade in from top to bottom via a clip-path
+ *   - a ::after pseudo-element is the accent scanline that translates down
+ */
+.wp-code-wrap {
+  position: relative;
+}
+
+.wp-code-block {
+  /* The reveal: clip from the bottom upward, then settle. */
+  clip-path: inset(0 0 100% 0);
+  animation: wp-code-reveal 320ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
+}
+
+@keyframes wp-code-reveal {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+.wp-code-wrap::after {
+  /* Accent scanline. */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--wp-accent);
+  pointer-events: none;
+  opacity: 0;
+  animation: wp-code-scan 340ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
+}
+
+@keyframes wp-code-scan {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+/* Copy-button "copied" feedback: brief scale bump + accent border flash.
+ * Works for both the code-block ghost copy button and the inline AgentRow
+ * COPY .MCP.JSON button. */
+.wp-code-copy.is-copied,
+.wp-btn.is-copied {
+  animation: wp-copy-bump 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-color: var(--wp-accent) !important;
+  color: var(--wp-accent) !important;
+}
+
+@keyframes wp-copy-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.96); }
+  100% { transform: scale(1); }
+}
+
+/* ---- Runtime strip — terminal caret + status flash ---------------------- */
+
+.wp-strip-caret {
+  display: inline-block;
+  width: 6px;
+  height: 11px;
+  margin-left: 8px;
+  background: var(--wp-accent);
+  vertical-align: -1px;
+  animation: wp-blink 1s steps(2, end) infinite;
+}
+
+@keyframes wp-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* When the status indicator transitions OK↔DOWN we play a one-shot inversion
+ * flash. The .is-flashing modifier is toggled by JS for ~140ms. */
+.wp-strip-status-flash {
+  animation: wp-strip-flash 200ms steps(2, end);
+}
+
+@keyframes wp-strip-flash {
+  0%, 100% { background: transparent; color: inherit; }
+  50% { background: var(--wp-fg); color: var(--wp-bg); }
+}
+
+/* ---- Value-change flash (live data acknowledgment) ---------------------- */
+
+.wp-flash {
+  animation: wp-value-flash 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes wp-value-flash {
+  0% { color: var(--wp-accent); }
+  100% { color: inherit; }
+}
+
+/* ---- Pairing-row enter (new request arrives) ---------------------------- */
+
+.wp-row-enter {
+  animation: wp-row-enter 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.wp-row-enter::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--wp-accent);
+  animation: wp-row-pulse 1000ms cubic-bezier(0.4, 0, 0.2, 1) 400ms forwards;
+}
+
+@keyframes wp-row-enter {
+  from {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes wp-row-pulse {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---- Agent-row leave (revoke) ------------------------------------------ */
+
+.wp-row-leave {
+  animation: wp-row-leave 220ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+  pointer-events: none;
+}
+
+@keyframes wp-row-leave {
+  from {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(50% 0 50% 0);
+    opacity: 0;
+  }
+}
+
+/* ---- Mobile responsive: keep the choreography contained ----------------- */
+
+@media (max-width: 880px) {
+  .wp-row {
+    margin: 0 -20px;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
 }
