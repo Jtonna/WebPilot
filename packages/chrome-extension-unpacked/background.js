@@ -220,7 +220,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'FORGET_CONFIG':
       manuallyDisconnected = false;
       disconnectWebSocket();
-      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled', 'manuallyDisconnected']);
+      // Also clear the stored profile identification so the user is forced
+      // back through the identify flow on next connect. See QOL extension C2/C3.
+      chrome.storage.local.remove([
+        'apiKey',
+        'serverUrl',
+        'enabled',
+        'manuallyDisconnected',
+        'webpilot.profileId',
+        'webpilot.knownProfiles'
+      ]);
       config.apiKey = null;
       config.serverUrl = null;
       isEnabled = false;
@@ -228,6 +237,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       attemptAutoConnect();
       sendResponse({ success: true });
       break;
+
+    case 'RESET_PROFILE_ID': {
+      // User picked the wrong profile or wants to switch. Clear the stored
+      // profileId, close the current WS (it's bound to the previous profile
+      // server-side), and reconnect — the server will reply with
+      // `identify_required` and the popup will show the picker view again.
+      console.log('[hello] RESET_PROFILE_ID — clearing profileId and reconnecting');
+      chrome.storage.local.remove(['webpilot.profileId'], () => {
+        disconnectWebSocket();
+        // Restore auto-reconnect semantics: pretend the connection just
+        // dropped naturally so the existing reconnect path takes over.
+        manuallyDisconnected = false;
+        chrome.storage.local.set({ manuallyDisconnected: false });
+        if (config.apiKey && config.serverUrl) {
+          isEnabled = true;
+          connectWebSocket();
+        } else {
+          attemptAutoConnect();
+        }
+        sendResponse({ success: true });
+      });
+      return true;
+    }
 
     case 'RETRY_AUTO_CONNECT':
       manuallyDisconnected = false;

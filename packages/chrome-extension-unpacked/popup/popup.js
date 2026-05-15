@@ -28,6 +28,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const domainList = document.getElementById('domainList');
   const checkFormatterUpdatesBtn = document.getElementById('checkFormatterUpdates');
   const formatterUpdateStatus = document.getElementById('formatterUpdateStatus');
+  const currentProfileRow = document.getElementById('currentProfileRow');
+  const currentProfileName = document.getElementById('currentProfileName');
+  const changeProfileBtn = document.getElementById('changeProfileBtn');
 
   // Tab switching
   const tabBtns = document.querySelectorAll('.tab-btn');
@@ -66,6 +69,9 @@ document.addEventListener('DOMContentLoaded', () => {
   disconnectBtn.addEventListener('click', handleDisconnect);
   retryBtn.addEventListener('click', handleRetry);
   checkFormatterUpdatesBtn.addEventListener('click', handleCheckFormatterUpdates);
+  if (changeProfileBtn) {
+    changeProfileBtn.addEventListener('click', handleChangeProfile);
+  }
 
   focusNewTabsToggle.addEventListener('change', () => {
     chrome.storage.local.set({ focusNewTabs: focusNewTabsToggle.checked });
@@ -108,8 +114,43 @@ document.addEventListener('DOMContentLoaded', () => {
       if (changes.networkMode || changes.serverUrl || changes.sseUrl) {
         updateEndpointDisplay();
       }
+      if (changes['webpilot.profileId'] || changes['webpilot.knownProfiles']) {
+        updateCurrentProfileDisplay();
+      }
     }
   });
+
+  function updateCurrentProfileDisplay() {
+    if (!currentProfileRow || !currentProfileName) return;
+    chrome.storage.local.get(['webpilot.profileId', 'webpilot.knownProfiles'], (data) => {
+      const profileId = data['webpilot.profileId'] || null;
+      if (!profileId) {
+        currentProfileRow.classList.add('hidden');
+        return;
+      }
+      const known = data['webpilot.knownProfiles'] || [];
+      const match = known.find((p) => p && p.directoryName === profileId);
+      const displayName = match && match.displayName ? match.displayName : profileId;
+      const label = match && match.displayName && match.displayName !== profileId
+        ? displayName + ' (' + profileId + ')'
+        : displayName;
+      currentProfileName.textContent = label;
+      currentProfileName.title = label;
+      currentProfileRow.classList.remove('hidden');
+    });
+  }
+
+  function handleChangeProfile() {
+    if (!changeProfileBtn) return;
+    changeProfileBtn.disabled = true;
+    changeProfileBtn.textContent = 'Resetting...';
+    chrome.runtime.sendMessage({ type: 'RESET_PROFILE_ID' }, () => {
+      changeProfileBtn.disabled = false;
+      changeProfileBtn.textContent = 'Change';
+      if (currentProfileRow) currentProfileRow.classList.add('hidden');
+      showView('connecting');
+    });
+  }
 
   function updateEndpointDisplay() {
     chrome.storage.local.get(['serverUrl', 'sseUrl', 'networkMode'], (result) => {
@@ -134,6 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
           serverUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
         });
         updateEndpointDisplay();
+        updateCurrentProfileDisplay();
         loadRestrictedModeSettings();
       } else if (response && response.manuallyDisconnected) {
         showView('disconnected');
@@ -215,6 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
         serverUrlDisplay.textContent = serverUrl;
         hideError(connectingError);
         updateEndpointDisplay();
+        updateCurrentProfileDisplay();
         loadRestrictedModeSettings();
       } else if (status === 'connecting') {
         showView('connecting');
