@@ -7,6 +7,7 @@ const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
 const pairedKeys = require('./paired-keys');
+const extensionInstalls = require('./extension-installs');
 const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
 const { createChromeManager, readProfiles } = require('./chrome');
@@ -590,8 +591,44 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
 
         if (message.type === 'hello') {
           clearTimeout(helloDeadline);
-          // Try direct profileId match first, then fall back to gaiaEmail lookup.
+          // Resolution order:
+          //   1) direct profileId echoed from extension storage
+          //   2) installId -> profileId mapping from extension-installs store
+          //      (survives extension storage being cleared)
+          //   3) gaiaEmail match against Local State
+          //   4) inference by exclusion
+          //   5) identify_required (picker fallback)
           let resolvedProfileId = message.profileId || null;
+          if (
+            !resolvedProfileId &&
+            typeof message.installId === 'string' &&
+            message.installId.length > 0
+          ) {
+            try {
+              const candidate = extensionInstalls.getProfileForInstall(message.installId);
+              if (candidate) {
+                // Validate it still corresponds to a real profile — a stale
+                // mapping for a deleted profile would mis-route everything.
+                const profiles = readProfiles(chromeManager.userDataDir);
+                const stillExists = profiles.some((p) => p.directoryName === candidate);
+                if (stillExists) {
+                  resolvedProfileId = candidate;
+                  console.log(
+                    `[extension-bridge] resolved profileId="${resolvedProfileId}" from ` +
+                      `installId="${message.installId.slice(0, 8)}..."`
+                  );
+                } else {
+                  console.log(
+                    `[extension-bridge] installId="${message.installId.slice(0, 8)}..." ` +
+                      `mapped to profileId="${candidate}" but that profile no longer exists; ` +
+                      `falling through`
+                  );
+                }
+              }
+            } catch (e) {
+              console.log(`[extension-bridge] installId resolution failed: ${e.message}`);
+            }
+          }
           if (!resolvedProfileId && message.gaiaEmail) {
             try {
               const profiles = readProfiles(chromeManager.userDataDir);
@@ -666,6 +703,17 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           }
 
           registeredProfileId = resolvedProfileId;
+          // Persist the installId -> profileId mapping regardless of which
+          // resolution path got us here. This is the moment the server
+          // "learns" the binding for this install; future connects can use
+          // the installId path even if extension storage gets wiped.
+          if (typeof message.installId === 'string' && message.installId.length > 0) {
+            try {
+              extensionInstalls.setProfileForInstall(message.installId, resolvedProfileId);
+            } catch (e) {
+              console.log(`[extension-bridge] persist installId mapping failed: ${e.message}`);
+            }
+          }
           extensionBridge.setConnection(resolvedProfileId, ws);
           console.log(
             `[extension-bridge] hello accepted profileId="${resolvedProfileId}" ` +
@@ -784,6 +832,14 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     );
   } catch (e) {
     console.log(`[pairing:cleanup] startup pass failed: ${e.message}`);
+  }
+
+  // Extension-installs housekeeping: drop install->profile mappings whose
+  // `lastResolved` is older than 90 days so the file doesn't grow unbounded.
+  try {
+    extensionInstalls.cleanupStaleInstalls(90);
+  } catch (e) {
+    console.log(`[extension-installs:cleanup] startup pass failed: ${e.message}`);
   }
   setInterval(() => {
     try {
