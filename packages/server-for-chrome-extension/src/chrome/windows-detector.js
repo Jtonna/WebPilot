@@ -44,6 +44,11 @@ function detect() {
   log('windows-detector', 'starting detection');
 
   return new Promise((resolve) => {
+    // CRITICAL: join with newlines, not spaces. Earlier versions used
+    // .join(' ') which collapsed the script into a single line — any PS `#`
+    // comment then ran from the `#` all the way to the end of the script,
+    // silently eating the final Write-Output. Result: 0 stdout, exit 0, no
+    // error visible — detect() returned `[]` even when Chrome was running.
     const psScript = [
       // Output as JSON; -Depth 2 is enough for ProcessId+CommandLine
       "$ErrorActionPreference='SilentlyContinue';",
@@ -54,7 +59,7 @@ function detect() {
       '$json = $arr | ConvertTo-Json -Compress -Depth 2;',
       '# ConvertTo-Json with a single element drops the array brackets — re-add if needed',
       'if ($arr.Count -eq 1) { Write-Output "[$json]" } else { Write-Output $json }',
-    ].join(' ');
+    ].join('\n');
 
     const args = ['-NoProfile', '-NonInteractive', '-Command', psScript];
     const startedAt = Date.now();
