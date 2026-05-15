@@ -202,6 +202,21 @@ if (flags.foreground || process.env.WEBPILOT_FOREGROUND === '1') {
   // Clean up log writer on exit
   process.on('exit', () => logWriter.close());
 
+  // Auto-open the web UI in the user's default browser. Foreground mode
+  // is the explicit interactive launch, so opening a window is what the
+  // user expects. Skipped in background/daemon mode (different code path
+  // below) and when WEBPILOT_NO_OPEN=1 is set. See Wave 6 H5.
+  try {
+    const { openWebUi } = require('./src/service/open-browser');
+    const fgPort = getPort();
+    // Fire-and-forget: polls /health then spawns the OS open command.
+    openWebUi({ port: fgPort }).catch((err) => {
+      console.log('[browser-open] unexpected error: ' + (err && err.message));
+    });
+  } catch (err) {
+    console.log('[browser-open] failed to schedule auto-open: ' + (err && err.message));
+  }
+
   // Start server
   require('./index.js');
 } else {
