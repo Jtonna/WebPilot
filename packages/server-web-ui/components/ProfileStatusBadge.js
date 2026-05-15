@@ -1,25 +1,24 @@
 'use client';
 
 /**
- * ProfileStatusBadge — a hairline pill showing a profile's WebPilot status.
- * Mirrors the runtime telemetry idiom: mono uppercase, tiny dot prefix.
+ * ProfileStatusBadge — a small, quiet pill showing a profile's WebPilot
+ * status. Sentence-case, tiny dot prefix, no border.
  *
  * Three states (matching the server's /api/ui/status `webPilotStatus`):
- *   - "active"      Profile is currently holding a live WebSocket.
- *                   Green dot (pulses), label "Active".
- *   - "ready"       Profile has completed a hello in the past but isn't
- *                   currently connected. Accent-orange dot, label "Ready".
+ *   - "active"      Profile is holding a live WebSocket. Accent dot, faint
+ *                   accent bg.
+ *   - "ready"       Profile has completed a hello but isn't connected now.
+ *                   Secondary-grey dot, no bg.
  *   - "needs_setup" Profile exists in Local State but has never registered
- *                   an extension install. Muted dot, label "Needs Setup".
+ *                   an extension install. Muted dot, no bg.
  *
- * Anything else falls back to a muted "Unknown" badge so a future server
- * value doesn't blow up the UI.
+ * Anything else falls back to a muted "Unknown" badge.
  */
 
 const STATE_META = {
   active: { label: 'Active' },
   ready: { label: 'Ready' },
-  needs_setup: { label: 'Needs Setup' },
+  needs_setup: { label: 'Needs setup' },
 };
 
 export default function ProfileStatusBadge({ status }) {
@@ -37,4 +36,4 @@ export default function ProfileStatusBadge({ status }) {
 }
 
 export const NEEDS_SETUP_HINT =
-  'Enable: chrome://extensions → Developer Mode → Load unpacked';
+  'Open chrome://extensions, turn on Developer mode, and load the WebPilot extension folder.';

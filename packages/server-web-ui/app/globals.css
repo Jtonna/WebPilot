@@ -1,46 +1,51 @@
 /* ===========================================================================
- * WebPilot · Mission Control design system
+ * WebPilot · Apple Quiet
  *
- * Brutalist editorial × technical instrumentation. Three-typeface stack:
- *   - Fraunces (display serif, variable, italic for page titles)
- *   - JetBrains Mono (runtime data, labels, code, all-caps markers)
- *   - IBM Plex Sans (body copy, button labels, longer prose)
- *
- * One signal color: --wp-accent (safety orange). Everything else is greyscale
- * with hairline borders. No rounded corners except status pills. CSS-only
- * motion (staggered page-load cascade).
+ * Single typeface (Geist), near-monochrome with one accent (Apple systemBlue),
+ * hierarchy through opacity and background lift rather than borders. Generous
+ * spacing, calm motion. Inspiration: macOS Sonoma, Linear, Raycast.
  * ========================================================================= */
 
 :root {
-  /* Surfaces */
-  --wp-bg: #0c0c0d;
-  --wp-bg-card: #131316;
-  --wp-bg-elevated: #1a1a1d;
+  /* Surfaces — pure black base, Apple secondary/tertiary system backgrounds. */
+  --wp-bg: #000000;
+  --wp-bg-card: #1c1c1e;
+  --wp-bg-elevated: #2c2c2e;
+  --wp-bg-hover: #242426;
 
-  /* Foreground */
-  --wp-fg: #e8e6e1;
-  --wp-fg-secondary: #9b988e;
-  --wp-fg-muted: #5e5b54;
+  /* Foreground — pure white plus opacity ladder. */
+  --wp-fg: #ffffff;
+  --wp-fg-secondary: rgba(235, 235, 245, 0.6);
+  --wp-fg-muted: rgba(235, 235, 245, 0.3);
 
-  /* Borders */
-  --wp-border: #2a2a2d;
-  --wp-border-strong: #3a3a3d;
+  /* Separators — used very sparingly, only between rows. */
+  --wp-separator: rgba(255, 255, 255, 0.08);
+  --wp-separator-strong: rgba(255, 255, 255, 0.12);
 
-  /* Signal */
-  --wp-accent: #ff5a1f; /* safety orange */
-  --wp-success: #4ade80;
-  --wp-warning: #fbbf24;
-  --wp-danger: #ef4444;
+  /* Single accent + semantic colors (Apple dark-mode system palette). */
+  --wp-accent: #0a84ff;
+  --wp-accent-soft: rgba(10, 132, 255, 0.16);
+  --wp-success: #30d158;
+  --wp-warning: #ff9f0a;
+  --wp-danger: #ff453a;
+  --wp-danger-soft: rgba(255, 69, 58, 0.14);
 
-  /* Typography stacks */
-  --wp-font-serif: "Fraunces", "Times New Roman", Georgia, serif;
-  --wp-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  --wp-font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Typography — Geist only. */
+  --wp-font-sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", system-ui, sans-serif;
+  --wp-font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
   /* Layout */
-  --wp-strip-h: 32px;
-  --wp-sidebar-w: 232px;
-  --wp-gutter: 40px;
+  --wp-sidebar-w: 240px;
+  --wp-gutter: 64px;
+  --wp-card-radius: 14px;
+  --wp-elevated-radius: 16px;
+  --wp-btn-radius: 10px;
+  --wp-pill-radius: 7px;
+
+  /* Motion */
+  --wp-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --wp-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 * {
@@ -54,75 +59,24 @@ body {
   background-color: var(--wp-bg);
   color: var(--wp-fg);
   font-family: var(--wp-font-sans);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 400;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+  text-rendering: optimizeLegibility;
 }
 
-/* Subtle SVG turbulence grain — Mission Control consoles weren't pristine.
- * Inline data-URI so no extra HTTP request, and a tiny radial-grain layer
- * on top to keep things crisp at 1x. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.06;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.9  0 0 0 0 0.85  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-  background-size: 200px 200px;
-  mix-blend-mode: overlay;
-}
-
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.02;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.7) 1px, transparent 1px);
-  background-size: 3px 3px;
-}
-
-/* Animated dotted underline — drawn from left on hover, then settles. */
 a {
-  color: var(--wp-fg);
+  color: var(--wp-accent);
   text-decoration: none;
-  background-image: linear-gradient(
-    to right,
-    var(--wp-fg-muted) 30%,
-    transparent 30%
-  );
-  background-repeat: repeat-x;
-  background-size: 4px 1px;
-  background-position: 0 100%;
-  padding-bottom: 2px;
-  transition: color 160ms linear, background-image 160ms linear;
+  transition: opacity 120ms linear, color 120ms linear;
 }
 
 a:hover {
-  color: var(--wp-accent);
-  background-image: linear-gradient(
-    to right,
-    var(--wp-accent) 30%,
-    transparent 30%
-  );
-}
-
-/* When a link uses .wp-link-draw, the underline draws in from the left
- * rather than fading. Used for editorial links where the draw is louder. */
-.wp-link-draw {
-  background-size: 0% 1px !important;
-  background-repeat: no-repeat;
-  background-image: linear-gradient(to right, var(--wp-accent), var(--wp-accent)) !important;
-  transition: background-size 220ms cubic-bezier(0.16, 1, 0.3, 1), color 160ms linear;
-}
-
-.wp-link-draw:hover {
-  background-size: 100% 1px !important;
+  opacity: 0.78;
 }
 
 button,
@@ -140,279 +94,207 @@ button {
 
 code {
   font-family: var(--wp-font-mono);
-  font-size: 0.85em;
-  color: var(--wp-fg);
+  font-size: 0.92em;
+  color: inherit;
   background: transparent;
   padding: 0;
+  font-feature-settings: "ss01", "ss02";
+}
+
+::selection {
+  background: var(--wp-accent-soft);
+  color: var(--wp-fg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--wp-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 hr {
   border: none;
-  border-top: 1px solid var(--wp-border);
+  border-top: 1px solid var(--wp-separator);
   margin: 0;
 }
 
 /* ---------------------------------------------------------------------------
- * App shell: top runtime strip + left sidebar + main column
+ * App shell — sidebar + main column. No top strip.
  * ------------------------------------------------------------------------- */
 
 .wp-shell {
   position: relative;
-  z-index: 1;
   min-height: 100vh;
-  padding-top: var(--wp-strip-h);
 }
 
-.wp-strip {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--wp-strip-h);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  background: var(--wp-bg);
-  border-bottom: 1px solid var(--wp-border);
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--wp-fg-secondary);
-  z-index: 100;
-  user-select: none;
-}
-
-.wp-strip-left,
-.wp-strip-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.wp-strip-sep {
-  color: var(--wp-fg-muted);
-  padding: 0 4px;
-}
-
-.wp-strip-accent {
-  color: var(--wp-accent);
-}
-
-.wp-strip-status-ok::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--wp-success);
-  transform: translateY(-1px);
-  animation: wp-pulse 2.4s ease-in-out infinite;
-}
-
-/* Body layout */
 .wp-body {
   display: grid;
   grid-template-columns: var(--wp-sidebar-w) 1fr;
-  min-height: calc(100vh - var(--wp-strip-h));
+  min-height: 100vh;
 }
 
 .wp-sidebar {
-  border-right: 1px solid var(--wp-border);
-  padding: 32px 0 32px 28px;
+  padding: 32px 16px 24px;
   position: sticky;
-  top: var(--wp-strip-h);
+  top: 0;
   align-self: start;
-  height: calc(100vh - var(--wp-strip-h));
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .wp-brand {
   display: block;
-  font-family: var(--wp-font-serif);
-  font-style: italic;
-  font-weight: 700;
-  font-size: 30px;
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 17px;
   line-height: 1;
   color: var(--wp-fg);
   text-decoration: none;
-  margin-bottom: 4px;
   letter-spacing: -0.01em;
+  padding: 4px 12px;
+  margin-bottom: 28px;
 }
 
 .wp-brand:hover {
-  color: var(--wp-accent);
-  text-decoration: none;
-}
-
-.wp-brand-sub {
-  display: block;
-  font-family: var(--wp-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--wp-fg-muted);
-  margin-bottom: 40px;
+  opacity: 1;
+  color: var(--wp-fg);
 }
 
 .wp-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-right: 16px;
 }
 
 .wp-nav-item {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 0;
-  font-family: var(--wp-font-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  align-items: center;
+  padding: 8px 12px;
+  font-family: var(--wp-font-sans);
+  font-size: 14px;
+  font-weight: 500;
   color: var(--wp-fg-secondary);
   text-decoration: none;
-  border-left: 2px solid transparent;
-  padding-left: 12px;
-  margin-left: -14px;
-  transition: color 120ms linear, border-color 120ms linear;
+  border-radius: 8px;
+  letter-spacing: -0.005em;
+  transition: background-color 180ms var(--wp-ease-out),
+    color 180ms var(--wp-ease-out);
 }
 
 .wp-nav-item:hover {
+  background-color: var(--wp-bg-card);
   color: var(--wp-fg);
-  text-decoration: none;
-  border-left-color: var(--wp-border-strong);
+  opacity: 1;
 }
 
 .wp-nav-item.is-active {
-  color: var(--wp-accent);
-  border-left-color: var(--wp-accent);
-}
-
-.wp-nav-num {
-  color: var(--wp-fg-muted);
-  font-size: 11px;
-}
-
-.wp-nav-item.is-active .wp-nav-num {
-  color: var(--wp-accent);
-}
-
-.wp-nav-arrow {
-  width: 12px;
-  display: inline-block;
-  color: var(--wp-fg-muted);
-}
-
-.wp-nav-item.is-active .wp-nav-arrow {
-  color: var(--wp-accent);
+  background-color: var(--wp-bg-elevated);
+  color: var(--wp-fg);
 }
 
 .wp-sidebar-footer {
-  position: absolute;
-  bottom: 24px;
-  left: 28px;
-  right: 16px;
-  font-family: var(--wp-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  margin-top: auto;
+  padding: 12px;
+  font-family: var(--wp-font-sans);
+  font-size: 12px;
+  font-weight: 400;
   color: var(--wp-fg-muted);
-  line-height: 1.6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wp-sidebar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  flex-shrink: 0;
+  transition: background-color 220ms var(--wp-ease-out);
+}
+
+.wp-sidebar-status-dot[data-state="ok"] {
+  background: var(--wp-success);
+}
+
+.wp-sidebar-status-dot[data-state="down"] {
+  background: var(--wp-danger);
 }
 
 .wp-main {
-  padding: 48px var(--wp-gutter) 80px;
-  max-width: 1200px;
+  padding: 64px var(--wp-gutter) 96px;
+  max-width: 1080px;
   display: flex;
   flex-direction: column;
-  gap: 56px;
+  gap: 48px;
 }
 
 /* ---------------------------------------------------------------------------
- * Page title block
+ * Page head — quiet title block, no kicker, no italic.
  * ------------------------------------------------------------------------- */
 
 .wp-page-head {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-bottom: 28px;
-  border-bottom: 1px solid var(--wp-border);
-}
-
-.wp-page-kicker {
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--wp-fg-muted);
-}
-
-.wp-page-kicker .wp-page-kicker-accent {
-  color: var(--wp-accent);
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .wp-page-title {
-  font-family: var(--wp-font-serif);
-  font-style: italic;
-  font-weight: 700;
-  font-size: clamp(48px, 7vw, 72px);
-  line-height: 0.95;
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: clamp(32px, 4.2vw, 44px);
+  line-height: 1.1;
   margin: 0;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   color: var(--wp-fg);
-  font-variation-settings: "opsz" 144, "SOFT" 50;
 }
 
 .wp-page-sub {
   margin: 0;
   font-family: var(--wp-font-sans);
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.55;
   color: var(--wp-fg-secondary);
-  max-width: 60ch;
+  max-width: 62ch;
+  letter-spacing: -0.005em;
 }
 
 /* ---------------------------------------------------------------------------
- * Section header (§ NN · LABEL)
+ * Section — heading, then content. No numbered prefix, no rule.
  * ------------------------------------------------------------------------- */
 
 .wp-section {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
 }
 
 .wp-section-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--wp-fg-secondary);
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
 }
 
-.wp-section-num {
-  color: var(--wp-accent);
-}
-
-.wp-section-rule {
-  flex: 1;
-  height: 1px;
-  background: var(--wp-border);
-  margin-left: 8px;
-  align-self: center;
+.wp-section-title {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 19px;
+  line-height: 1.3;
+  margin: 0;
+  color: var(--wp-fg);
+  letter-spacing: -0.015em;
 }
 
 .wp-section-aside {
+  font-family: var(--wp-font-sans);
+  font-size: 13px;
+  font-weight: 400;
   color: var(--wp-fg-muted);
-  font-size: 10px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -421,22 +303,23 @@ hr {
 
 .wp-card {
   background-color: var(--wp-bg-card);
-  border: 1px solid var(--wp-border);
-  padding: 24px 28px;
-  border-radius: 0;
+  border: none;
+  border-radius: var(--wp-card-radius);
+  padding: 28px 32px;
+  transition: background-color 180ms var(--wp-ease-out);
 }
 
 .wp-card-tight {
-  padding: 16px 20px;
+  padding: 20px 24px;
 }
 
 .wp-card h2,
 .wp-card h3 {
   margin: 0 0 16px;
   font-family: var(--wp-font-sans);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
   color: var(--wp-fg);
 }
 
@@ -444,18 +327,24 @@ hr {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--wp-border);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--wp-separator);
   position: relative;
+  transition: background-color 180ms var(--wp-ease-out);
+  margin: 0 -16px;
+  border-radius: 8px;
 }
 
 .wp-row:first-child {
-  padding-top: 0;
+  padding-top: 14px;
 }
 
 .wp-row:last-child {
   border-bottom: none;
-  padding-bottom: 0;
+}
+
+.wp-row:hover {
+  background-color: var(--wp-bg-hover);
 }
 
 .wp-row-grow {
@@ -468,80 +357,89 @@ hr {
   font-weight: 500;
   font-size: 15px;
   color: var(--wp-fg);
+  letter-spacing: -0.01em;
 }
 
 .wp-row-sub {
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-family: var(--wp-font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--wp-fg-secondary);
+  margin-top: 3px;
+  letter-spacing: -0.005em;
+}
+
+.wp-row-sub .wp-mono {
+  color: var(--wp-fg-secondary);
+}
+
+.wp-row-sep {
   color: var(--wp-fg-muted);
-  text-transform: uppercase;
-  margin-top: 4px;
+  margin: 0 8px;
 }
 
 /* ---------------------------------------------------------------------------
- * Instrument grid — the four-up dashboard tiles
+ * Instruments — the KPI grid. Soft cards, generous space, large numbers.
  * ------------------------------------------------------------------------- */
 
 .wp-instruments {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0;
-  border: 1px solid var(--wp-border);
+  gap: 12px;
 }
 
 .wp-instrument {
-  padding: 20px 22px;
-  border-right: 1px solid var(--wp-border);
-  border-bottom: 1px solid var(--wp-border);
+  padding: 24px 26px;
+  border: none;
+  border-radius: var(--wp-card-radius);
   background: var(--wp-bg-card);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   position: relative;
   overflow: hidden;
+  transition: background-color 180ms var(--wp-ease-out);
 }
 
-.wp-instrument:last-child {
-  border-right: none;
+.wp-instrument:hover {
+  background-color: var(--wp-bg-hover);
 }
 
 .wp-instrument-label {
-  font-family: var(--wp-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--wp-fg-muted);
+  font-family: var(--wp-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--wp-fg-secondary);
+  letter-spacing: -0.005em;
 }
 
 .wp-instrument-value {
-  font-family: var(--wp-font-serif);
-  font-style: italic;
-  font-weight: 700;
-  font-size: 38px;
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 36px;
   line-height: 1;
   color: var(--wp-fg);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 .wp-instrument-value-mono {
-  font-family: var(--wp-font-mono);
-  font-style: normal;
+  font-family: var(--wp-font-sans);
   font-weight: 500;
-  font-size: 28px;
-  letter-spacing: 0;
+  font-size: 36px;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .wp-instrument-detail {
-  font-family: var(--wp-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--wp-font-sans);
+  font-size: 13px;
+  font-weight: 400;
   color: var(--wp-fg-secondary);
-  line-height: 1.5;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
 }
 
 .wp-instrument-dot {
@@ -549,44 +447,30 @@ hr {
   height: 8px;
   border-radius: 50%;
   display: inline-block;
-}
-
-/* Make the bottom row borderless so the grid edges look right. */
-.wp-instruments .wp-instrument {
-  border-bottom-color: transparent;
+  flex-shrink: 0;
 }
 
 /* ---------------------------------------------------------------------------
- * Status pills (the one place we allow a pill shape)
+ * Status pills — the one place we accept a pill shape.
  * ------------------------------------------------------------------------- */
 
 .wp-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  border: 1px solid var(--wp-border-strong);
-  border-radius: 999px;
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--wp-fg);
-  background: var(--wp-bg-elevated);
+  gap: 6px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--wp-pill-radius);
+  font-family: var(--wp-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--wp-fg-secondary);
+  background: transparent;
   white-space: nowrap;
-  line-height: 1;
-  transform: translateY(0);
-  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 180ms linear, background-color 180ms linear;
-}
-
-.wp-pill:hover {
-  transform: translateY(-1px);
-  border-color: var(--wp-fg-secondary);
-}
-
-.wp-pill:hover .wp-pill-dot {
-  transform: scale(1.15);
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  transition: background-color 180ms var(--wp-ease-out),
+    color 180ms var(--wp-ease-out);
 }
 
 .wp-pill-dot {
@@ -595,14 +479,55 @@ hr {
   border-radius: 50%;
   background: var(--wp-fg-muted);
   position: relative;
-  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 180ms linear;
+  flex-shrink: 0;
+  transition: background-color 180ms var(--wp-ease-out);
 }
 
-/* Ignition burst — when a dot becomes active, fire a one-shot ring expansion.
- * The ring is a ::before pseudo-element that scales from 1 → 3.2 and fades
- * out in 420ms. Implemented via animation so it plays exactly once when the
- * data-state value is set to "active" on initial mount or after a swap. */
+.wp-pill[data-state="active"] {
+  color: var(--wp-fg);
+  background: var(--wp-accent-soft);
+}
+
+.wp-pill[data-state="active"] .wp-pill-dot {
+  background: var(--wp-accent);
+}
+
+.wp-pill[data-state="ready"] {
+  color: var(--wp-fg-secondary);
+}
+
+.wp-pill[data-state="ready"] .wp-pill-dot {
+  background: var(--wp-fg-secondary);
+}
+
+.wp-pill[data-state="needs_setup"] {
+  color: var(--wp-fg-muted);
+}
+
+.wp-pill[data-state="needs_setup"] .wp-pill-dot {
+  background: var(--wp-fg-muted);
+}
+
+.wp-pill[data-state="warn"] {
+  color: var(--wp-fg);
+  background: rgba(255, 159, 10, 0.14);
+}
+
+.wp-pill[data-state="warn"] .wp-pill-dot {
+  background: var(--wp-warning);
+}
+
+.wp-pill[data-state="danger"] {
+  color: var(--wp-fg);
+  background: var(--wp-danger-soft);
+}
+
+.wp-pill[data-state="danger"] .wp-pill-dot {
+  background: var(--wp-danger);
+}
+
+/* Active dot ignition — subtler than the brutalist pass: 1.0→1.3→1.0,
+ * ring at 70% max, 320ms. Plays once on data-state="active" mount. */
 .wp-pill[data-state="active"] .wp-pill-dot::before {
   content: "";
   position: absolute;
@@ -611,50 +536,27 @@ hr {
   border: 1px solid var(--wp-accent);
   opacity: 0;
   pointer-events: none;
-  animation: wp-ignition 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: wp-ignition 320ms var(--wp-ease);
 }
 
 @keyframes wp-ignition {
-  0% { transform: scale(1); opacity: 1; }
-  60% { transform: scale(2.4); opacity: 0.45; }
-  100% { transform: scale(3.4); opacity: 0; }
+  0% { transform: scale(1); opacity: 0.7; }
+  60% { transform: scale(2.1); opacity: 0.35; }
+  100% { transform: scale(2.8); opacity: 0; }
 }
 
-/* Pill text crossfade on state changes. The text span gets keyed by content
- * so React unmounts/remounts it, triggering this enter animation. */
 .wp-pill-label {
   display: inline-block;
-  animation: wp-pill-label 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: wp-label-fade 200ms var(--wp-ease);
 }
 
-@keyframes wp-pill-label {
-  from { opacity: 0; transform: translateY(2px); }
+@keyframes wp-label-fade {
+  from { opacity: 0; transform: translateY(1px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.wp-pill[data-state="active"] .wp-pill-dot {
-  background: var(--wp-success);
-  animation: wp-pulse 2.4s ease-in-out infinite;
-}
-
-.wp-pill[data-state="ready"] .wp-pill-dot {
-  background: var(--wp-accent);
-}
-
-.wp-pill[data-state="needs_setup"] .wp-pill-dot {
-  background: var(--wp-fg-muted);
-}
-
-.wp-pill[data-state="warn"] .wp-pill-dot {
-  background: var(--wp-warning);
-}
-
-.wp-pill[data-state="danger"] .wp-pill-dot {
-  background: var(--wp-danger);
-}
-
 /* ---------------------------------------------------------------------------
- * Buttons (rectangular, hairline, hover inverts)
+ * Buttons — Apple style. Rounded, no lift, smooth bg transition.
  * ------------------------------------------------------------------------- */
 
 .wp-btn {
@@ -662,39 +564,27 @@ hr {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: transparent;
+  background: var(--wp-bg-elevated);
   color: var(--wp-fg);
-  border: 1px solid var(--wp-border-strong);
-  border-radius: 0;
+  border: none;
+  border-radius: var(--wp-btn-radius);
   padding: 8px 16px;
-  font-family: var(--wp-font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-family: var(--wp-font-sans);
+  font-size: 13px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
   white-space: nowrap;
-  position: relative;
-  transform: translateY(0);
-  box-shadow: 0 0 0 0 transparent;
-  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1),
-    color 140ms linear, border-color 140ms linear,
-    transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform;
+  transition: background-color 180ms var(--wp-ease-out),
+    color 180ms var(--wp-ease-out), opacity 120ms linear;
 }
 
 .wp-btn:hover:not(:disabled) {
-  background: var(--wp-fg);
-  color: var(--wp-bg);
-  border-color: var(--wp-fg);
-  transform: translateY(-1px);
-  box-shadow: 0 1px 0 0 var(--wp-accent);
+  background: #3a3a3c;
 }
 
 .wp-btn:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 0 0 0 transparent;
+  opacity: 0.75;
   transition-duration: 60ms;
 }
 
@@ -705,39 +595,39 @@ hr {
 
 .wp-btn-primary {
   background: var(--wp-accent);
-  color: var(--wp-bg);
-  border-color: var(--wp-accent);
+  color: #ffffff;
 }
 
 .wp-btn-primary:hover:not(:disabled) {
-  background: #ff7340;
-  border-color: #ff7340;
-  color: var(--wp-bg);
+  background: #339cff;
 }
 
 .wp-btn-danger {
   color: var(--wp-danger);
-  border-color: var(--wp-danger);
-  background: transparent;
+  background: var(--wp-danger-soft);
 }
 
 .wp-btn-danger:hover:not(:disabled) {
-  background: var(--wp-danger);
-  color: var(--wp-bg);
-  border-color: var(--wp-danger);
+  background: rgba(255, 69, 58, 0.22);
 }
 
 .wp-btn-ghost {
-  border-color: var(--wp-border);
+  background: transparent;
   color: var(--wp-fg-secondary);
-  padding: 6px 10px;
-  font-size: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
 }
 
 .wp-btn-ghost:hover:not(:disabled) {
-  background: var(--wp-fg);
-  color: var(--wp-bg);
-  border-color: var(--wp-fg);
+  background: var(--wp-bg-elevated);
+  color: var(--wp-fg);
+}
+
+/* Subtle "Copied!" feedback — bg flash, no scale bump. */
+.wp-btn.is-copied {
+  background: var(--wp-accent-soft) !important;
+  color: var(--wp-accent) !important;
+  transition: background-color 220ms var(--wp-ease-out), color 220ms var(--wp-ease-out);
 }
 
 /* ---------------------------------------------------------------------------
@@ -748,30 +638,37 @@ hr {
 .wp-select {
   background: var(--wp-bg-elevated);
   color: var(--wp-fg);
-  border: 1px solid var(--wp-border-strong);
-  border-radius: 0;
-  padding: 8px 12px;
-  font-family: var(--wp-font-mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  border-radius: var(--wp-btn-radius);
+  padding: 9px 14px;
+  font-family: var(--wp-font-sans);
+  font-size: 14px;
+  font-weight: 400;
   line-height: 1.4;
+  letter-spacing: -0.005em;
   outline: none;
-  transition: border-color 120ms linear;
+  transition: background-color 160ms var(--wp-ease-out),
+    border-color 160ms var(--wp-ease-out);
+}
+
+.wp-input:hover,
+.wp-select:hover {
+  background: #3a3a3c;
 }
 
 .wp-input:focus,
 .wp-select:focus {
+  background: var(--wp-bg-elevated);
   border-color: var(--wp-accent);
+  outline: none;
 }
 
 .wp-input::placeholder {
   color: var(--wp-fg-muted);
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 /* ---------------------------------------------------------------------------
- * Code block (hairline border, copy button slot)
+ * Code blocks — quiet, no scanner, soft fade-in.
  * ------------------------------------------------------------------------- */
 
 .wp-code-wrap {
@@ -781,24 +678,32 @@ hr {
 
 .wp-code-block {
   font-family: var(--wp-font-mono);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 400;
   line-height: 1.6;
   background: var(--wp-bg-elevated);
-  border: 1px solid var(--wp-border);
-  border-radius: 0;
-  padding: 20px 24px;
-  padding-right: 96px;
+  border: none;
+  border-radius: var(--wp-btn-radius);
+  padding: 18px 22px;
+  padding-right: 88px;
   overflow-x: auto;
   margin: 0;
   color: var(--wp-fg);
   white-space: pre-wrap;
   word-break: break-word;
+  opacity: 0;
+  animation: wp-soft-fade 320ms var(--wp-ease-out) 60ms forwards;
+}
+
+@keyframes wp-soft-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .wp-code-copy {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 10px;
+  right: 10px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -807,21 +712,13 @@ hr {
 
 .wp-mono {
   font-family: var(--wp-font-mono);
-  font-size: 12px;
-  letter-spacing: 0.02em;
-}
-
-.wp-serif {
-  font-family: var(--wp-font-serif);
-}
-
-.wp-sans {
-  font-family: var(--wp-font-sans);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .wp-muted {
   color: var(--wp-fg-muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .wp-secondary {
@@ -829,40 +726,48 @@ hr {
 }
 
 .wp-empty {
-  font-family: var(--wp-font-serif);
-  font-style: italic;
+  font-family: var(--wp-font-sans);
+  font-size: 15px;
+  font-weight: 400;
   color: var(--wp-fg-muted);
-  font-size: 16px;
   padding: 8px 0;
+  letter-spacing: -0.005em;
 }
 
 .wp-kv {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 8px 24px;
-  font-family: var(--wp-font-mono);
-  font-size: 12px;
+  grid-template-columns: 160px 1fr;
+  gap: 14px 24px;
+  font-family: var(--wp-font-sans);
+  font-size: 14px;
 }
 
 .wp-kv-label {
-  color: var(--wp-fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 10px;
+  color: var(--wp-fg-secondary);
+  font-size: 13px;
+  font-weight: 400;
   align-self: center;
 }
 
 .wp-kv-value {
   color: var(--wp-fg);
+  font-weight: 500;
   word-break: break-all;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+}
+
+.wp-kv-value-mono {
+  font-family: var(--wp-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
 }
 
 .wp-kv-value-accent {
   color: var(--wp-accent);
 }
 
-/* Old class names that older components still reference. Keep them
- * functional so legacy markup blends in. */
+/* Legacy class kept for backward compat in any markup not yet migrated. */
 .wp-status-dot {
   display: inline-block;
   width: 8px;
@@ -873,7 +778,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Page-load cascade — staggered reveal of main column children
+ * Page entrance — subtle fade + rise. 40ms stagger. Apple snappy.
  * ------------------------------------------------------------------------- */
 
 @keyframes wp-enter {
@@ -888,42 +793,33 @@ hr {
 }
 
 @keyframes wp-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
-/* Default cascade — applies to sections that follow the page-head.
- * The page-head block has its own choreographed sub-sequence (see below),
- * so we start the section delays at 240ms so they begin AFTER the title
- * has landed and the lede has come in. */
 .wp-main > * {
   opacity: 0;
   transform: translateY(8px);
-  animation: wp-enter 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: wp-enter 320ms var(--wp-ease) forwards;
 }
 
-.wp-main > *:nth-child(1) { animation: none; opacity: 1; transform: none; }
-.wp-main > *:nth-child(2) { animation-delay: 240ms; }
-.wp-main > *:nth-child(3) { animation-delay: 300ms; }
-.wp-main > *:nth-child(4) { animation-delay: 360ms; }
-.wp-main > *:nth-child(5) { animation-delay: 420ms; }
-.wp-main > *:nth-child(6) { animation-delay: 480ms; }
-.wp-main > *:nth-child(7) { animation-delay: 540ms; }
-.wp-main > *:nth-child(8) { animation-delay: 600ms; }
-.wp-main > *:nth-child(n+9) { animation-delay: 660ms; }
+.wp-main > *:nth-child(1) { animation-delay: 0ms; }
+.wp-main > *:nth-child(2) { animation-delay: 80ms; }
+.wp-main > *:nth-child(3) { animation-delay: 120ms; }
+.wp-main > *:nth-child(4) { animation-delay: 160ms; }
+.wp-main > *:nth-child(5) { animation-delay: 200ms; }
+.wp-main > *:nth-child(6) { animation-delay: 240ms; }
+.wp-main > *:nth-child(7) { animation-delay: 280ms; }
+.wp-main > *:nth-child(8) { animation-delay: 320ms; }
+.wp-main > *:nth-child(n+9) { animation-delay: 360ms; }
 
-/* When a section is below the fold on first paint we hold it hidden and
- * let the IntersectionObserver flip .wp-reveal-on-scroll → .is-revealed. */
+/* Scroll-revealed sections — hold hidden until they enter viewport. */
 .wp-reveal-on-scroll {
   opacity: 0;
-  transform: translateY(12px);
+  transform: translateY(10px);
   animation: none !important;
-  transition: opacity 600ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 360ms var(--wp-ease),
+    transform 360ms var(--wp-ease);
 }
 
 .wp-reveal-on-scroll.is-revealed {
@@ -931,83 +827,82 @@ hr {
   transform: translateY(0);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .wp-main > *,
-  .wp-reveal-on-scroll,
-  .wp-page-head,
-  .wp-page-kicker,
-  .wp-page-title,
-  .wp-page-sub,
-  .wp-section-rule,
-  .wp-strip-caret,
-  .wp-modal,
-  .wp-modal-backdrop,
-  .wp-modal-title,
-  .wp-modal-actions > .wp-btn {
-    animation: none !important;
-    transition: none !important;
-    opacity: 1 !important;
-    transform: none !important;
-    clip-path: none !important;
-  }
-  .wp-strip-status-ok::before,
-  .wp-pill[data-state="active"] .wp-pill-dot,
-  .wp-pill[data-state="active"] .wp-pill-dot::before {
-    animation: none !important;
-  }
+/* Pill on active also gets a slow ambient pulse to read as "live". Very faint. */
+.wp-pill[data-state="active"] .wp-pill-dot {
+  animation: wp-pulse 2.8s ease-in-out infinite;
 }
 
 /* ---------------------------------------------------------------------------
- * Responsive: collapse sidebar
+ * Value-change flash — barely-perceptible blue tint on data update.
  * ------------------------------------------------------------------------- */
 
-@media (max-width: 880px) {
-  .wp-body {
-    grid-template-columns: 1fr;
+.wp-flash {
+  animation: wp-value-flash 300ms var(--wp-ease-out);
+}
+
+@keyframes wp-value-flash {
+  0% { color: rgba(10, 132, 255, 0.7); }
+  100% { color: inherit; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Pairing row arrival — soft slide-down, no accent bar.
+ * ------------------------------------------------------------------------- */
+
+.wp-row-enter {
+  animation: wp-row-enter 360ms var(--wp-ease);
+}
+
+@keyframes wp-row-enter {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
   }
-  .wp-sidebar {
-    position: static;
-    height: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--wp-border);
-    padding: 24px 24px 16px;
-  }
-  .wp-sidebar-footer {
-    position: static;
-    margin-top: 16px;
-  }
-  .wp-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px 16px;
-  }
-  .wp-main {
-    padding: 32px 24px 60px;
-    gap: 40px;
-  }
-  .wp-page-title {
-    font-size: clamp(40px, 11vw, 56px);
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 
 /* ---------------------------------------------------------------------------
- * Modal — hairline, no rounding, italic title
+ * Agent row leave — fade + slight shrink. No clip-path drama.
+ * ------------------------------------------------------------------------- */
+
+.wp-row-leave {
+  animation: wp-row-leave 200ms var(--wp-ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes wp-row-leave {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal — opacity + small scale entrance. Apple style.
  * ------------------------------------------------------------------------- */
 
 .wp-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(8, 8, 9, 0.78);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  backdrop-filter: blur(2px);
-  animation: wp-modal-fade 220ms ease-out forwards;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  animation: wp-modal-fade 220ms var(--wp-ease-out) forwards;
 }
 
 .wp-modal-backdrop.is-closing {
-  animation: wp-modal-fade-out 200ms ease-in forwards;
+  animation: wp-modal-fade-out 160ms ease-in forwards;
 }
 
 @keyframes wp-modal-fade {
@@ -1021,395 +916,136 @@ hr {
 }
 
 .wp-modal {
-  background: var(--wp-bg-card);
-  border: 1px solid var(--wp-border-strong);
-  border-radius: 0;
-  padding: 32px 36px 28px;
-  width: min(520px, calc(100% - 48px));
+  background: var(--wp-bg-elevated);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--wp-elevated-radius);
+  padding: 28px 32px 22px;
+  width: min(440px, calc(100% - 48px));
   position: relative;
-  /* Iris open: vertical clip-path inset closes from middle outward. */
-  clip-path: inset(50% 0 50% 0);
-  animation: wp-modal-iris 320ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: scale(0.96);
+  animation: wp-modal-pop 220ms var(--wp-ease) forwards;
 }
 
 .wp-modal-backdrop.is-closing .wp-modal {
-  animation: wp-modal-iris-close 200ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
+  animation: wp-modal-pop-out 160ms ease-in forwards;
 }
 
-@keyframes wp-modal-iris {
-  from { clip-path: inset(50% 0 50% 0); }
-  to { clip-path: inset(0 0 0 0); }
+@keyframes wp-modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-@keyframes wp-modal-iris-close {
-  from { clip-path: inset(0 0 0 0); }
-  to { clip-path: inset(50% 0 50% 0); }
-}
-
-.wp-modal::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  right: -1px;
-  height: 2px;
-  background: var(--wp-accent);
-}
-
-.wp-modal-kicker {
-  font-family: var(--wp-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--wp-accent);
-  margin-bottom: 14px;
-  opacity: 0;
-  animation: wp-modal-fade 200ms ease-out 240ms forwards;
+@keyframes wp-modal-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
 }
 
 .wp-modal-title {
-  font-family: var(--wp-font-serif);
-  font-style: italic;
-  font-weight: 700;
-  font-size: 32px;
-  line-height: 1;
-  margin: 0 0 20px;
-  letter-spacing: -0.01em;
-  opacity: 0;
-  animation: wp-modal-fade 240ms ease-out 320ms forwards;
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.3;
+  margin: 0 0 8px;
+  letter-spacing: -0.015em;
+  color: var(--wp-fg);
 }
 
 .wp-modal-body {
   font-family: var(--wp-font-sans);
   font-size: 14px;
-  line-height: 1.6;
+  font-weight: 400;
+  line-height: 1.5;
   color: var(--wp-fg-secondary);
-  margin-bottom: 28px;
-  opacity: 0;
-  animation: wp-modal-fade 220ms ease-out 400ms forwards;
+  margin-bottom: 24px;
+  letter-spacing: -0.005em;
 }
 
 .wp-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
 }
 
-/* Buttons cascade in 40ms apart, starting at 480ms. */
-.wp-modal-actions > .wp-btn {
-  opacity: 0;
-  animation: wp-enter 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+/* ---------------------------------------------------------------------------
+ * Reduced motion — all our animations collapse to instant.
+ * ------------------------------------------------------------------------- */
 
-.wp-modal-actions > .wp-btn:nth-child(1) { animation-delay: 480ms; }
-.wp-modal-actions > .wp-btn:nth-child(2) { animation-delay: 520ms; }
-.wp-modal-actions > .wp-btn:nth-child(3) { animation-delay: 560ms; }
-
-/* ===========================================================================
- * MOTION PASS — second pass: entrances, hover, status transitions, scanners
- *
- * Restraint principle: the page breathes — it does not vibrate. Every effect
- * has a single purpose and a short duration. Anything looping (the active
- * pulse, the runtime caret) is slow enough to read as ambient.
- * ========================================================================= */
-
-/* ---- Page-head choreography --------------------------------------------- */
-
-/* The page-head is the first child of .wp-main and we disable the generic
- * cascade animation on it (see nth-child(1) override above). Each of its
- * inner pieces — kicker, title, sub — runs its own keyframe so the title
- * "lands". */
-
-.wp-page-kicker {
-  opacity: 0;
-  letter-spacing: 0.4em;
-  animation: wp-kicker-settle 700ms cubic-bezier(0.16, 1, 0.3, 1) 0ms forwards;
-}
-
-@keyframes wp-kicker-settle {
-  from {
-    opacity: 0;
-    letter-spacing: 0.4em;
+@media (prefers-reduced-motion: reduce) {
+  .wp-main > *,
+  .wp-reveal-on-scroll,
+  .wp-page-title,
+  .wp-page-sub,
+  .wp-modal,
+  .wp-modal-backdrop,
+  .wp-code-block,
+  .wp-row-enter,
+  .wp-row-leave {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
-  to {
-    opacity: 1;
-    letter-spacing: 0.18em;
+  .wp-pill[data-state="active"] .wp-pill-dot,
+  .wp-pill[data-state="active"] .wp-pill-dot::before {
+    animation: none !important;
   }
 }
 
-.wp-page-title {
-  opacity: 0;
-  /* Clip-path swipe left → right. We start clipped on the right (100% inset
-   * right). The animation reveals from left to right, expo-out. */
-  clip-path: inset(0 100% 0 0);
-  animation: wp-title-swipe 760ms cubic-bezier(0.16, 1, 0.3, 1) 50ms forwards;
-}
-
-@keyframes wp-title-swipe {
-  from {
-    opacity: 0;
-    clip-path: inset(0 100% 0 0);
-  }
-  20% {
-    opacity: 1;
-  }
-  to {
-    opacity: 1;
-    clip-path: inset(0 0 0 0);
-  }
-}
-
-.wp-page-sub {
-  opacity: 0;
-  transform: translateY(6px);
-  animation: wp-enter 600ms cubic-bezier(0.16, 1, 0.3, 1) 280ms forwards;
-}
-
-/* ---- Section rule draw-in ----------------------------------------------- */
-
-/* The hairline rule that fills the remaining width on every section head.
- * We animate scaleX from 0 → 1, transform-origin: left, expo-out. The
- * animation fires when the section is revealed; the cascade timing on the
- * parent .wp-main > * keeps the rule in sync. */
-
-.wp-section-rule {
-  transform-origin: left center;
-  transform: scaleX(0);
-  animation: wp-rule-draw 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  animation-delay: inherit;
-}
-
-/* When the section is gated by the scroll-reveal observer we restart the
- * draw-in only after the section reveals. */
-.wp-reveal-on-scroll .wp-section-rule {
-  transform: scaleX(0);
-  animation: none;
-  transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.wp-reveal-on-scroll.is-revealed .wp-section-rule {
-  transform: scaleX(1);
-  transition-delay: 200ms;
-}
-
-@keyframes wp-rule-draw {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-
-/* ---- Sidebar nav hover -------------------------------------------------- */
-
-.wp-nav-item {
-  /* Tracking nudges on hover are very Mission Control. */
-  transition: color 160ms linear, border-left-color 200ms linear,
-    letter-spacing 220ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.wp-nav-item:hover {
-  letter-spacing: 0.1em;
-}
-
-.wp-nav-item.is-active {
-  /* The accent left bar grows slightly on hover. */
-  transition: color 160ms linear, border-left-color 200ms linear,
-    letter-spacing 220ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-left-width 200ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.wp-nav-item.is-active:hover {
-  border-left-width: 3px;
-  margin-left: -15px; /* compensate so layout doesn't reflow */
-}
-
-/* ---- Row hover (agents, profiles, pairings) ----------------------------- */
-
-/* Apply via .wp-row inside a .wp-card. We negative-margin the hover surface
- * so the highlight sits flush with the card padding without reflowing the
- * content. */
-.wp-row {
-  margin: 0 -28px;
-  padding-left: 28px;
-  padding-right: 28px;
-  transition: background-color 160ms linear;
-}
-
-.wp-card-tight .wp-row {
-  margin: 0 -20px;
-  padding-left: 20px;
-  padding-right: 20px;
-}
-
-.wp-row:hover {
-  background-color: var(--wp-bg-elevated);
-}
-
-/* ---- Instrument hover --------------------------------------------------- */
-
-.wp-instrument {
-  transition: background-color 200ms linear;
-}
-
-.wp-instrument:hover {
-  background-color: var(--wp-bg-elevated);
-}
-
-/* ---- Code block scanner reveal ------------------------------------------ */
-
-/* On first render, the code block reveals top-to-bottom with a 1px accent
- * line that scans down the block. The text appears under it as the scan
- * passes. Implemented via two layers:
- *   - the <pre> contents fade in from top to bottom via a clip-path
- *   - a ::after pseudo-element is the accent scanline that translates down
- */
-.wp-code-wrap {
-  position: relative;
-}
-
-.wp-code-block {
-  /* The reveal: clip from the bottom upward, then settle. */
-  clip-path: inset(0 0 100% 0);
-  animation: wp-code-reveal 320ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
-}
-
-@keyframes wp-code-reveal {
-  from { clip-path: inset(0 0 100% 0); }
-  to { clip-path: inset(0 0 0 0); }
-}
-
-.wp-code-wrap::after {
-  /* Accent scanline. */
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 1px;
-  background: var(--wp-accent);
-  pointer-events: none;
-  opacity: 0;
-  animation: wp-code-scan 340ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
-}
-
-@keyframes wp-code-scan {
-  0% { transform: translateY(0); opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { transform: translateY(100%); opacity: 0; }
-}
-
-/* Copy-button "copied" feedback: brief scale bump + accent border flash.
- * Works for both the code-block ghost copy button and the inline AgentRow
- * COPY .MCP.JSON button. */
-.wp-code-copy.is-copied,
-.wp-btn.is-copied {
-  animation: wp-copy-bump 320ms cubic-bezier(0.16, 1, 0.3, 1);
-  border-color: var(--wp-accent) !important;
-  color: var(--wp-accent) !important;
-}
-
-@keyframes wp-copy-bump {
-  0% { transform: scale(1); }
-  40% { transform: scale(0.96); }
-  100% { transform: scale(1); }
-}
-
-/* ---- Runtime strip — terminal caret + status flash ---------------------- */
-
-.wp-strip-caret {
-  display: inline-block;
-  width: 6px;
-  height: 11px;
-  margin-left: 8px;
-  background: var(--wp-accent);
-  vertical-align: -1px;
-  animation: wp-blink 1s steps(2, end) infinite;
-}
-
-@keyframes wp-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* When the status indicator transitions OK↔DOWN we play a one-shot inversion
- * flash. The .is-flashing modifier is toggled by JS for ~140ms. */
-.wp-strip-status-flash {
-  animation: wp-strip-flash 200ms steps(2, end);
-}
-
-@keyframes wp-strip-flash {
-  0%, 100% { background: transparent; color: inherit; }
-  50% { background: var(--wp-fg); color: var(--wp-bg); }
-}
-
-/* ---- Value-change flash (live data acknowledgment) ---------------------- */
-
-.wp-flash {
-  animation: wp-value-flash 400ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@keyframes wp-value-flash {
-  0% { color: var(--wp-accent); }
-  100% { color: inherit; }
-}
-
-/* ---- Pairing-row enter (new request arrives) ---------------------------- */
-
-.wp-row-enter {
-  animation: wp-row-enter 520ms cubic-bezier(0.16, 1, 0.3, 1);
-  position: relative;
-}
-
-.wp-row-enter::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--wp-accent);
-  animation: wp-row-pulse 1000ms cubic-bezier(0.4, 0, 0.2, 1) 400ms forwards;
-}
-
-@keyframes wp-row-enter {
-  from {
-    transform: translateY(-16px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-@keyframes wp-row-pulse {
-  0% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-/* ---- Agent-row leave (revoke) ------------------------------------------ */
-
-.wp-row-leave {
-  animation: wp-row-leave 220ms cubic-bezier(0.7, 0, 0.84, 0) forwards;
-  pointer-events: none;
-}
-
-@keyframes wp-row-leave {
-  from {
-    clip-path: inset(0 0 0 0);
-    opacity: 1;
-  }
-  to {
-    clip-path: inset(50% 0 50% 0);
-    opacity: 0;
-  }
-}
-
-/* ---- Mobile responsive: keep the choreography contained ----------------- */
+/* ---------------------------------------------------------------------------
+ * Responsive — collapse sidebar at narrow widths.
+ * ------------------------------------------------------------------------- */
 
 @media (max-width: 880px) {
+  .wp-body {
+    grid-template-columns: 1fr;
+  }
+  .wp-sidebar {
+    position: static;
+    height: auto;
+    padding: 20px 16px 8px;
+  }
+  .wp-sidebar-footer {
+    display: none;
+  }
+  .wp-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .wp-main {
+    padding: 36px 24px 60px;
+    gap: 36px;
+  }
+  .wp-page-title {
+    font-size: clamp(28px, 8vw, 36px);
+  }
+  .wp-card {
+    padding: 20px 22px;
+  }
+  .wp-section-head {
+    padding: 0;
+  }
   .wp-row {
-    margin: 0 -20px;
-    padding-left: 20px;
-    padding-right: 20px;
+    margin: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-radius: 0;
+  }
+  .wp-row:hover {
+    background: transparent;
   }
 }

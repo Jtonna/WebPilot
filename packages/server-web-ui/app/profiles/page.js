@@ -64,11 +64,7 @@ export default function ProfilesPage() {
   return (
     <>
       <header className="wp-page-head">
-        <div className="wp-page-kicker">
-          <span className="wp-page-kicker-accent">§ 03</span>
-          <span style={{ marginLeft: 12 }}>chrome user-data inventory</span>
-        </div>
-        <h1 className="wp-page-title">Profiles.</h1>
+        <h1 className="wp-page-title">Profiles</h1>
         <p className="wp-page-sub">
           Chrome profiles WebPilot knows about, plus a launcher for fresh
           sandbox profiles you can hand to a new agent.
@@ -77,36 +73,37 @@ export default function ProfilesPage() {
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-section-head" style={{ marginBottom: 8 }}>
-            <span className="wp-section-num">!!</span>
-            <span style={{ color: 'var(--wp-danger)' }}>ERROR</span>
+          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+            Something went wrong
           </div>
-          <div className="wp-mono wp-secondary">{error.message}</div>
+          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 01</span>
-          <span>KNOWN PROFILES</span>
-          <span className="wp-section-rule" />
+          <h2 className="wp-section-title">Known profiles</h2>
           <span className="wp-section-aside">
-            {profiles.length > 0 ? `${profiles.length} TOTAL` : 'EMPTY'}
+            {profiles.length > 0
+              ? `${profiles.length} ${profiles.length === 1 ? 'profile' : 'profiles'}`
+              : 'None found'}
           </span>
         </div>
         <div className="wp-card">
           {profiles.length === 0 ? (
-            <div className="wp-empty">no profiles — waiting</div>
+            <div className="wp-empty">No profiles found.</div>
           ) : (
             profiles.map((p) => (
               <div className="wp-row" key={p.directoryName}>
                 <div className="wp-row-grow">
                   <div className="wp-row-title">{p.displayName || p.directoryName}</div>
                   <div className="wp-row-sub">
-                    {p.gaiaEmail || 'NO GOOGLE ACCOUNT'} · DIR {p.directoryName}
+                    {p.gaiaEmail || 'No Google account'}
+                    <span className="wp-row-sep">·</span>
+                    <span className="wp-mono">{p.directoryName}</span>
                   </div>
                   {p.webPilotStatus === 'needs_setup' ? (
-                    <div className="wp-mono wp-muted" style={{ marginTop: 6, fontSize: 11, letterSpacing: '0.04em' }}>
+                    <div className="wp-secondary" style={{ marginTop: 8, fontSize: 13, maxWidth: '52ch' }}>
                       {NEEDS_SETUP_HINT}
                     </div>
                   ) : null}
@@ -120,10 +117,7 @@ export default function ProfilesPage() {
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 02</span>
-          <span>NEW SANDBOX</span>
-          <span className="wp-section-rule" />
-          <span className="wp-section-aside">spawn</span>
+          <h2 className="wp-section-title">New sandbox profile</h2>
         </div>
         <div className="wp-card">
           <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 20, maxWidth: '60ch' }}>
@@ -131,11 +125,12 @@ export default function ProfilesPage() {
             Chrome opens, load the WebPilot unpacked extension via
             chrome://extensions (Developer mode → Load unpacked).
           </p>
-          <div className="wp-row">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <input
-              className="wp-input wp-row-grow"
+              className="wp-input"
+              style={{ flex: 1, minWidth: 0 }}
               value={newName}
-              placeholder='Profile directory name (e.g. "WebPilot Sandbox")'
+              placeholder='e.g. "WebPilot Sandbox"'
               onChange={(e) => setNewName(e.target.value)}
               disabled={creating}
             />
@@ -150,10 +145,9 @@ export default function ProfilesPage() {
           </div>
           {createMsg ? (
             <div
-              className="wp-mono"
               style={{
-                marginTop: 16,
-                fontSize: 12,
+                marginTop: 14,
+                fontSize: 13,
                 color: createMsg.kind === 'err' ? 'var(--wp-danger)' : 'var(--wp-success)',
               }}
             >

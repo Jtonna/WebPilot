@@ -88,7 +88,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port, leaving = fa
   };
 
   const copyLabel =
-    copyState === 'copied' ? 'COPIED' : copyState === 'error' ? 'COPY FAILED' : 'COPY .MCP.JSON';
+    copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Copy failed' : 'Copy config';
 
   return (
     <div className={`wp-row${leaving ? ' wp-row-leave' : ''}`}>
@@ -116,15 +116,15 @@ export default function AgentRow({ agent, onRename, onRevoke, port, leaving = fa
               style={{ cursor: 'text' }}
               onClick={() => setEditing(true)}
             >
-              {agent.name || <span className="wp-empty" style={{ fontSize: 15 }}>unnamed agent</span>}
+              {agent.name || <span className="wp-empty" style={{ fontSize: 15 }}>Unnamed agent</span>}
             </div>
             <div className="wp-row-sub">
-              <span title={agent.key}>KEY {shortKey(agent.key)}</span>
-              <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
-              <span>ISSUED {formatDate(agent.createdAt)}</span>
-              <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
+              <span className="wp-mono" title={agent.key}>{shortKey(agent.key)}</span>
+              <span className="wp-row-sep">·</span>
+              <span>Created {formatDate(agent.createdAt)}</span>
+              <span className="wp-row-sep">·</span>
               <span className={lastActiveFlash ? 'wp-flash' : undefined}>
-                LAST {formatDate(agent.lastActive)}
+                Last active {formatDate(agent.lastActive)}
               </span>
             </div>
           </>

@@ -3,13 +3,12 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Live UTC clock displayed in the runtime strip. Pure presentation — ticks
- * once a second via setInterval. Renders empty until the first client tick
- * to avoid hydration mismatch.
+ * Live UTC clock — small, quiet, no caret. Not used in the chrome anymore
+ * (the top runtime strip was removed in the Apple Quiet pass) but kept as
+ * a primitive for the Settings page or any future server-info surface that
+ * wants a current-time readout.
  *
- * A 1Hz accent-orange caret blinks to the right of the seconds field for a
- * terminal feel. The blink keyframes are gated globally by
- * `prefers-reduced-motion`.
+ * Returns empty until the first client tick to avoid hydration mismatch.
  */
 function pad(n) {
   return n < 10 ? `0${n}` : `${n}`;
@@ -29,13 +28,16 @@ export default function RuntimeClock() {
   }, []);
 
   if (!now) {
-    return <span className="wp-mono" suppressHydrationWarning>--:--:-- UTC</span>;
+    return (
+      <span className="wp-mono" suppressHydrationWarning>
+        --:--:--
+      </span>
+    );
   }
 
   return (
     <span className="wp-mono" suppressHydrationWarning>
       {formatUtc(now)} UTC
-      <span className="wp-strip-caret" aria-hidden="true" />
     </span>
   );
 }

@@ -54,34 +54,27 @@ export default function SettingsPage() {
   return (
     <>
       <header className="wp-page-head">
-        <div className="wp-page-kicker">
-          <span className="wp-page-kicker-accent">§ 05</span>
-          <span style={{ marginLeft: 12 }}>server-wide configuration</span>
-        </div>
-        <h1 className="wp-page-title">Settings.</h1>
+        <h1 className="wp-page-title">Settings</h1>
         <p className="wp-page-sub">
-          Configuration that affects the whole WebPilot server. Toggling some
-          values requires a server restart.
+          Configuration that affects the whole WebPilot server. Some changes
+          require a server restart.
         </p>
       </header>
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-mono wp-secondary">{error.message}</div>
+          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 01</span>
-          <span>NETWORK MODE</span>
-          <span className="wp-section-rule" />
-          <span className="wp-section-aside">bind address</span>
+          <h2 className="wp-section-title">Network</h2>
         </div>
         <div className="wp-card">
           <p className="wp-secondary" style={{ marginTop: 0, maxWidth: '60ch' }}>
-            When enabled, the WebPilot server binds to all interfaces so other
-            devices on your LAN can connect. Toggling this restarts the server.
+            When enabled, WebPilot binds to all interfaces so other devices on
+            your LAN can connect. Toggling this restarts the server.
           </p>
           <div className="wp-row">
             <div className="wp-row-grow">
@@ -89,18 +82,18 @@ export default function SettingsPage() {
                 {loading
                   ? 'Loading…'
                   : networkMode
-                  ? 'Network mode · ON'
-                  : 'Network mode · OFF'}
+                  ? 'LAN access'
+                  : 'Localhost only'}
               </div>
               <div className="wp-row-sub">
                 {networkMode
-                  ? 'BIND 0.0.0.0 · LAN REACHABLE'
-                  : 'BIND 127.0.0.1 · LOCALHOST ONLY'}
+                  ? 'Bound to 0.0.0.0 — reachable on your network'
+                  : 'Bound to 127.0.0.1 — this machine only'}
               </div>
             </div>
             <span className="wp-pill" data-state={networkMode ? 'warn' : 'active'}>
               <span className="wp-pill-dot" />
-              {networkMode ? 'LAN' : 'LOCAL'}
+              <span className="wp-pill-label">{networkMode ? 'LAN' : 'Local'}</span>
             </span>
             <button
               type="button"

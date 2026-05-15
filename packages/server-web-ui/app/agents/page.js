@@ -106,11 +106,7 @@ export default function AgentsPage() {
   return (
     <>
       <header className="wp-page-head">
-        <div className="wp-page-kicker">
-          <span className="wp-page-kicker-accent">§ 04</span>
-          <span style={{ marginLeft: 12 }}>authorized api keys</span>
-        </div>
-        <h1 className="wp-page-title">Agents.</h1>
+        <h1 className="wp-page-title">Agents</h1>
         <p className="wp-page-sub">
           MCP agents currently authorized to talk to this WebPilot server.
           Each row binds an API key to a Chrome profile.
@@ -119,26 +115,25 @@ export default function AgentsPage() {
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-section-head" style={{ marginBottom: 8 }}>
-            <span className="wp-section-num">!!</span>
-            <span style={{ color: 'var(--wp-danger)' }}>ERROR</span>
+          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+            Something went wrong
           </div>
-          <div className="wp-mono wp-secondary">{error.message}</div>
+          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 01</span>
-          <span>ACTIVE AGENTS</span>
-          <span className="wp-section-rule" />
+          <h2 className="wp-section-title">Paired agents</h2>
           <span className="wp-section-aside">
-            {agents.length > 0 ? `${agents.length} PAIRED` : 'EMPTY'}
+            {agents.length > 0
+              ? `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`
+              : 'None paired'}
           </span>
         </div>
         <div className="wp-card">
           {agents.length === 0 ? (
-            <div className="wp-empty">no agents paired — waiting</div>
+            <div className="wp-empty">No agents have paired yet.</div>
           ) : (
             agents.map((a) => (
               <AgentRow
@@ -158,14 +153,11 @@ export default function AgentsPage() {
 
       <RevealSection className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 03</span>
-          <span>EXISTING KEY · MANUAL WIRE-UP</span>
-          <span className="wp-section-rule" />
-          <span className="wp-section-aside">reference</span>
+          <h2 className="wp-section-title">Connect an existing key</h2>
         </div>
         <div className="wp-card">
           <p className="wp-secondary" style={{ marginTop: 0, maxWidth: '60ch' }}>
-            For an agent that already has a key, use its <strong>COPY .MCP.JSON</strong> button
+            For an agent that already has a key, use its <strong>Copy config</strong> button
             above to copy a ready-to-paste snippet. The shape is:
           </p>
           <div className="wp-code-wrap">
@@ -184,7 +176,7 @@ export default function AgentsPage() {
           </div>
           <ol style={{ paddingLeft: 20, margin: '20px 0 0', color: 'var(--wp-fg-secondary)', fontSize: 14, lineHeight: 1.7 }}>
             <li>
-              Copy the snippet above (<strong>COPY .MCP.JSON</strong> button next
+              Copy the snippet above (<strong>Copy config</strong> button next
               to the agent).
             </li>
             <li>
@@ -246,13 +238,21 @@ function FirstTimeSetupCard({ port }) {
     "each tool call, or tell me to paste it into .mcp.json under " +
     "headers.\"X-API-Key\" and restart this client.";
 
+  const stepLabel = {
+    display: 'block',
+    marginTop: 24,
+    marginBottom: 6,
+    color: 'var(--wp-fg-secondary)',
+    fontSize: 13,
+    fontWeight: 500,
+    letterSpacing: '-0.005em',
+  };
+
   return (
     <section className="wp-section">
       <div className="wp-section-head">
-        <span className="wp-section-num">§ 02</span>
-        <span>FIRST-TIME SETUP</span>
-        <span className="wp-section-rule" />
-        <span className="wp-section-aside">new agent · no key</span>
+        <h2 className="wp-section-title">First-time setup</h2>
+        <span className="wp-section-aside">New agent, no key yet</span>
       </div>
       <div className="wp-card">
         <p className="wp-secondary" style={{ marginTop: 0, maxWidth: '60ch' }}>
@@ -261,31 +261,27 @@ function FirstTimeSetupCard({ port }) {
           to approve the request when it appears here.
         </p>
 
-        <div className="wp-mono" style={{ marginTop: 24, marginBottom: 6, color: 'var(--wp-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.14em', fontSize: 11 }}>
-          STEP 01 · ADD WEBPILOT TO .MCP.JSON
+        <div style={{ ...stepLabel, marginTop: 8 }}>
+          1.&nbsp;&nbsp;Add WebPilot to your <code>.mcp.json</code>
         </div>
         <CopyableBlock text={urlOnlyConfig} />
 
-        <div className="wp-mono" style={{ marginTop: 24, marginBottom: 6, color: 'var(--wp-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.14em', fontSize: 11 }}>
-          STEP 02 · PASTE PROMPT INTO AGENT
+        <div style={stepLabel}>
+          2.&nbsp;&nbsp;Paste this prompt into the agent
         </div>
         <CopyableBlock text={agentPrompt} />
 
-        <div className="wp-mono" style={{ marginTop: 24, color: 'var(--wp-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.14em', fontSize: 11 }}>
-          STEP 03 · APPROVE
-        </div>
+        <div style={stepLabel}>3.&nbsp;&nbsp;Approve the pairing</div>
         <p className="wp-secondary" style={{ margin: '4px 0 0', maxWidth: '60ch' }}>
           A pairing request appears at the top of the Pairings page (with a
-          system notification + sound). Approve it, picking the Chrome profile
-          the agent is allowed to drive.
+          system notification and sound). Approve it, picking the Chrome
+          profile the agent is allowed to drive.
         </p>
 
-        <div className="wp-mono" style={{ marginTop: 20, color: 'var(--wp-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.14em', fontSize: 11 }}>
-          STEP 04 · KEY MATERIALIZES
-        </div>
+        <div style={stepLabel}>4.&nbsp;&nbsp;The agent receives its key</div>
         <p className="wp-secondary" style={{ margin: '4px 0 0', maxWidth: '60ch' }}>
-          Once approved, the agent appears under <strong>Active agents</strong>{' '}
-          above. Use its <strong>COPY .MCP.JSON</strong> button for the keyed
+          Once approved, the agent appears under <strong>Paired agents</strong>{' '}
+          above. Use its <strong>Copy config</strong> button for the keyed
           snippet that lets future sessions skip step 2.
         </p>
       </div>
@@ -317,7 +313,7 @@ function CopyableBlock({ text }) {
         onClick={handleCopy}
         className={`wp-btn wp-btn-ghost wp-code-copy${copied ? ' is-copied' : ''}`}
       >
-        {copied ? 'COPIED' : 'COPY'}
+        {copied ? 'Copied' : 'Copy'}
       </button>
     </div>
   );

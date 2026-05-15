@@ -54,12 +54,12 @@ export default function PairingPromptCard({
   return (
     <div className={`wp-row${justArrived ? ' wp-row-enter' : ''}`}>
       <div className="wp-row-grow">
-        <div className="wp-row-title">{pairing.agentName || 'unnamed agent'}</div>
+        <div className="wp-row-title">{pairing.agentName || 'Unnamed agent'}</div>
         <div className="wp-row-sub">
-          <span title={pairing.pairingId}>ID {shortPairingId(pairing.pairingId)}</span>
-          <span style={{ margin: '0 8px', color: 'var(--wp-fg-muted)' }}>·</span>
+          <span className="wp-mono" title={pairing.pairingId}>{shortPairingId(pairing.pairingId)}</span>
+          <span className="wp-row-sep">·</span>
           <span>
-            REQ {pairing.createdAt ? new Date(pairing.createdAt).toLocaleTimeString() : 'JUST NOW'}
+            Requested {pairing.createdAt ? new Date(pairing.createdAt).toLocaleTimeString() : 'just now'}
           </span>
         </div>
       </div>

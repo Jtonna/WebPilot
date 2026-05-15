@@ -3,17 +3,15 @@
 import Ticker from './Ticker';
 
 /**
- * StatusCard — a Mission Control "instrument" tile. Used in a grid so the
- * surrounding `.wp-instruments` container provides the outer hairline and
- * the cells share inner hairlines. Each tile reads top to bottom:
+ * StatusCard — a quiet KPI tile. Used in a grid with `.wp-instruments`.
+ * Reads top to bottom:
  *
- *   LABEL                (mono, uppercase, muted)
- *   VALUE                (italic serif, large; numeric values tick up)
- *   detail               (mono, uppercase, secondary)
+ *   Label                (small, secondary)
+ *   Value                (large, weight-500, optionally tabular numerals)
+ *   detail               (secondary)
  *
- * `state` controls the dot color; falls back to muted for unknown.
- * If `value` is numeric (number or all-digit string) the value tickers from
- * 0 → target on mount. Non-numeric values render straight through.
+ * `state` controls the dot color (Apple system palette). Numeric values
+ * tick up from 0 → target on mount via the shared Ticker component.
  */
 
 const STATE_VAR = {

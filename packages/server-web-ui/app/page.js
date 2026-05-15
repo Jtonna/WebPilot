@@ -68,74 +68,58 @@ export default function HomePage() {
   return (
     <>
       <header className="wp-page-head">
-        <div className="wp-page-kicker">
-          <span className="wp-page-kicker-accent">§ HOME</span>
-          <span style={{ marginLeft: 12 }}>real-time runtime telemetry</span>
-        </div>
-        <h1 className="wp-page-title">Mission Control.</h1>
+        <h1 className="wp-page-title">Dashboard</h1>
         <p className="wp-page-sub">
-          Live readout of the WebPilot server, the Chrome process it watches,
-          and the agents currently authorized to drive your browser.
+          An overview of WebPilot, the Chrome process it watches, and the
+          agents currently authorized to drive your browser.
         </p>
       </header>
 
       {loading ? (
         <div className="wp-card">
-          <div className="wp-empty">acquiring signal…</div>
+          <div className="wp-empty">Loading…</div>
         </div>
       ) : null}
 
       {!loading && error ? (
         <div className="wp-card">
-          <div className="wp-section-head" style={{ marginBottom: 8 }}>
-            <span className="wp-section-num">!!</span>
-            <span style={{ color: 'var(--wp-danger)' }}>SIGNAL LOST</span>
+          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+            Couldn’t reach the server
           </div>
-          <div className="wp-mono wp-secondary">{error.message}</div>
+          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
       {!loading ? (
         <section className="wp-section">
-          <div className="wp-section-head">
-            <span className="wp-section-num">§ 01</span>
-            <span>STATUS</span>
-            <span className="wp-section-rule" />
-            <span className="wp-section-aside">snapshot</span>
-          </div>
           <div className="wp-instruments">
             <StatusCard
-              title="SERVER"
-              value="ONLINE"
+              title="Server"
+              value="Online"
               state="ok"
-              detail={status?.networkMode ? 'BIND 0.0.0.0 · LAN' : 'BIND 127.0.0.1 · LOCAL'}
+              detail={status?.networkMode ? 'Bound to 0.0.0.0 · LAN' : 'Bound to 127.0.0.1'}
             />
             <StatusCard
-              title="CHROME"
-              value={chromeRunning === undefined ? '???' : chromeRunning ? 'RUN' : 'IDLE'}
+              title="Chrome"
+              value={chromeRunning === undefined ? 'Unknown' : chromeRunning ? 'Running' : 'Idle'}
               state={chromeRunning === undefined ? 'unknown' : chromeRunning ? 'ok' : 'warn'}
-              mono
               detail={chromeRunning
-                ? (chromeHasFlag ? 'DEBUG FLAG · ENABLED' : 'DEBUG FLAG · MISSING')
-                : 'PROCESS · NOT DETECTED'}
+                ? (chromeHasFlag ? 'Debug flag enabled' : 'Debug flag missing')
+                : 'Not detected'}
             />
             <StatusCard
-              title="EXTENSIONS"
+              title="Extensions"
               value={extensionsConnected}
-              padWidth={2}
               state={extensionsConnected > 0 ? 'ok' : 'warn'}
-              mono
               detail={extensionsConnected > 0
-                ? `${extensionsConnected} PROFILE${extensionsConnected === 1 ? '' : 'S'} · LIVE WS`
-                : 'NO PROFILES · CONNECTED'}
+                ? `${extensionsConnected} profile${extensionsConnected === 1 ? '' : 's'} connected`
+                : 'No profiles connected'}
             />
             <StatusCard
-              title="PAIRINGS"
+              title="Pairings"
               value={pendingPairings}
-              padWidth={2}
               state={pendingPairings > 0 ? 'accent' : 'ok'}
-              mono
-              detail={pendingPairings > 0 ? 'AWAITING · APPROVAL' : 'QUEUE · EMPTY'}
+              detail={pendingPairings > 0 ? 'Awaiting approval' : 'Nothing pending'}
             />
           </div>
         </section>
@@ -144,31 +128,35 @@ export default function HomePage() {
       {!loading ? (
         <section className="wp-section">
           <div className="wp-section-head">
-            <span className="wp-section-num">§ 02</span>
-            <span>CHROME PROCESS</span>
-            <span className="wp-section-rule" />
-            <span className="wp-section-aside">os-level</span>
+            <h2 className="wp-section-title">Chrome</h2>
           </div>
           <div className="wp-card">
             <div className="wp-kv">
-              <div className="wp-kv-label">PROCESS</div>
+              <div className="wp-kv-label">Process</div>
               <div className="wp-kv-value">
-                {chromeRunning
-                  ? <>CHROME <span className="wp-kv-value-accent">PID {chromePid ?? 'unknown'}</span></>
-                  : 'NOT DETECTED'}
+                {chromeRunning ? (
+                  <>
+                    Chrome{' '}
+                    <span className="wp-kv-value-mono wp-secondary">PID {chromePid ?? '—'}</span>
+                  </>
+                ) : (
+                  <span className="wp-secondary">Not detected</span>
+                )}
               </div>
-              <div className="wp-kv-label">DEBUG FLAG</div>
+              <div className="wp-kv-label">Debug flag</div>
               <div className="wp-kv-value">
                 {chromeRunning
                   ? (chromeHasFlag
-                      ? <span style={{ color: 'var(--wp-success)' }}>ENABLED</span>
-                      : <span style={{ color: 'var(--wp-warning)' }}>MISSING — extension cannot connect</span>)
-                  : '—'}
+                      ? <span style={{ color: 'var(--wp-success)' }}>Enabled</span>
+                      : <span style={{ color: 'var(--wp-warning)' }}>Missing — the extension can’t connect</span>)
+                  : <span className="wp-secondary">—</span>}
               </div>
-              <div className="wp-kv-label">USER DATA</div>
-              <div className="wp-kv-value">{chromeUserDataDir || '—'}</div>
-              <div className="wp-kv-label">PAIRED AGENTS</div>
-              <div className="wp-kv-value">{String(pairedAgentCount).padStart(2, '0')}</div>
+              <div className="wp-kv-label">User data</div>
+              <div className="wp-kv-value wp-kv-value-mono wp-secondary" style={{ fontWeight: 400 }}>
+                {chromeUserDataDir || '—'}
+              </div>
+              <div className="wp-kv-label">Paired agents</div>
+              <div className="wp-kv-value">{pairedAgentCount}</div>
             </div>
           </div>
         </section>
@@ -177,10 +165,10 @@ export default function HomePage() {
       {!loading && activeProfiles.length > 0 ? (
         <section className="wp-section">
           <div className="wp-section-head">
-            <span className="wp-section-num">§ 03</span>
-            <span>ACTIVE PROFILES</span>
-            <span className="wp-section-rule" />
-            <span className="wp-section-aside">{activeProfiles.length} LIVE</span>
+            <h2 className="wp-section-title">Active profiles</h2>
+            <span className="wp-section-aside">
+              {activeProfiles.length} {activeProfiles.length === 1 ? 'profile' : 'profiles'}
+            </span>
           </div>
           <div className="wp-card">
             {activeProfiles.map((p) => (
@@ -188,7 +176,9 @@ export default function HomePage() {
                 <div className="wp-row-grow">
                   <div className="wp-row-title">{p.displayName || p.directoryName}</div>
                   <div className="wp-row-sub">
-                    {p.gaiaEmail || 'NO GOOGLE ACCOUNT'} · DIR {p.directoryName}
+                    {p.gaiaEmail || 'No Google account'}
+                    <span className="wp-row-sep">·</span>
+                    <span className="wp-mono">{p.directoryName}</span>
                   </div>
                 </div>
                 <ProfileStatusBadge status={p.webPilotStatus} />
@@ -201,19 +191,19 @@ export default function HomePage() {
       {!loading && profiles.length > 0 ? (
         <RevealSection className="wp-section">
           <div className="wp-section-head">
-            <span className="wp-section-num">§ 04</span>
-            <span>ALL PROFILES</span>
-            <span className="wp-section-rule" />
-            <span className="wp-section-aside">{profiles.length} KNOWN</span>
+            <h2 className="wp-section-title">All profiles</h2>
+            <span className="wp-section-aside">
+              {profiles.length} known
+            </span>
           </div>
           <div className="wp-card">
             {profiles.map((p) => (
               <div className="wp-row" key={p.directoryName}>
                 <div className="wp-row-grow">
                   <div className="wp-row-title">{p.displayName || p.directoryName}</div>
-                  <div className="wp-row-sub">{p.gaiaEmail || 'NO GOOGLE ACCOUNT'}</div>
+                  <div className="wp-row-sub">{p.gaiaEmail || 'No Google account'}</div>
                   {p.webPilotStatus === 'needs_setup' ? (
-                    <div className="wp-muted" style={{ marginTop: 6, fontFamily: 'var(--wp-font-mono)', fontSize: 11, letterSpacing: '0.04em' }}>
+                    <div className="wp-secondary" style={{ marginTop: 8, fontSize: 13, maxWidth: '52ch' }}>
                       {NEEDS_SETUP_HINT}
                     </div>
                   ) : null}
@@ -228,23 +218,21 @@ export default function HomePage() {
       {!loading ? (
         <RevealSection className="wp-section">
           <div className="wp-section-head">
-            <span className="wp-section-num">§ 05</span>
-            <span>PAIRINGS</span>
-            <span className="wp-section-rule" />
+            <h2 className="wp-section-title">Pairings</h2>
             <span className="wp-section-aside">
-              {pendingPairings > 0 ? `${pendingPairings} PENDING` : 'NONE'}
+              {pendingPairings > 0 ? `${pendingPairings} pending` : 'None pending'}
             </span>
           </div>
           <div className="wp-card">
             {pendingPairings === 0 ? (
-              <div className="wp-empty">no pairings — waiting</div>
+              <div className="wp-empty">Nothing waiting for approval.</div>
             ) : (
               <>
-                <div className="wp-muted" style={{ marginBottom: 12 }}>
+                <div className="wp-secondary" style={{ marginBottom: 16 }}>
                   {pendingPairings} agent{pendingPairings === 1 ? ' is' : 's are'} awaiting approval.
                 </div>
                 <a href="/ui/pairings/" className="wp-btn wp-btn-primary" style={{ textDecoration: 'none' }}>
-                  Review pairings →
+                  Review pairings
                 </a>
               </>
             )}

@@ -3,14 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * Mission Control confirmation modal. Hairline rectangular card with an
- * accent-orange top edge, italic serif title, mono kicker.
+ * Apple-style confirmation modal. Centered card with a soft backdrop blur,
+ * opacity + small scale entrance (0.96 → 1) over 220ms.
  *
  * Behavior:
  *   - Backdrop click cancels; Escape cancels; Enter confirms.
- *   - Opens with a vertical iris (clip-path) + backdrop fade.
- *   - Closes with the iris reversed (faster), driven by an `is-closing`
- *     class. The component keeps the modal mounted for ~200ms after `open`
+ *   - Closes with the inverse keyframes (faster), driven by an `is-closing`
+ *     class. The component keeps the modal mounted for ~160ms after `open`
  *     flips to false so the close keyframe can play before unmount.
  *
  * Replaces window.confirm() usage in the web UI — see QOL fix-up F7.
@@ -72,7 +71,7 @@ export default function ConfirmModal({
   useEffect(() => {
     if (wasOpenRef.current && !open) {
       setClosing(true);
-      const id = setTimeout(() => setClosing(false), 220);
+      const id = setTimeout(() => setClosing(false), 170);
       wasOpenRef.current = open;
       return () => clearTimeout(id);
     }
@@ -99,7 +98,6 @@ export default function ConfirmModal({
       onClick={handleBackdrop}
     >
       <div className="wp-modal">
-        <div className="wp-modal-kicker">§ confirm · action required</div>
         <h2 id="wp-confirm-title" className="wp-modal-title">{view.title}</h2>
         <div className="wp-modal-body">{view.body}</div>
         <div className="wp-modal-actions">

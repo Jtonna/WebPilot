@@ -2,7 +2,7 @@ import './globals.css';
 import AppShell from '../components/AppShell';
 
 export const metadata = {
-  title: 'WebPilot — Mission Control',
+  title: 'WebPilot',
   description: 'WebPilot server control panel',
 };
 
@@ -11,16 +11,15 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <head>
         {/*
-          Mission Control typography stack — pulled from Google Fonts.
-            • Fraunces      — variable serif, used italic 700 for page titles
-            • JetBrains Mono — telemetry, code, ALL CAPS labels
-            • IBM Plex Sans  — body copy & button labels
+          Apple Quiet typography — one family, varied weights.
+            • Geist      — variable sans for the whole UI (300/400/500/600)
+            • Geist Mono — only for UUIDs, ports, API keys, JSON snippets
         */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap"
         />
       </head>
       <body>

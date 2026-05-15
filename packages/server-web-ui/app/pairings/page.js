@@ -122,11 +122,7 @@ export default function PairingsPage() {
   return (
     <>
       <header className="wp-page-head">
-        <div className="wp-page-kicker">
-          <span className="wp-page-kicker-accent">§ 02</span>
-          <span style={{ marginLeft: 12 }}>pairing handshake queue</span>
-        </div>
-        <h1 className="wp-page-title">Pairings.</h1>
+        <h1 className="wp-page-title">Pairings</h1>
         <p className="wp-page-sub">
           Approve or deny pairing requests from MCP agents. Each approval mints
           an API key and binds the agent to a Chrome profile of your choosing.
@@ -135,26 +131,23 @@ export default function PairingsPage() {
 
       {error ? (
         <div className="wp-card">
-          <div className="wp-section-head" style={{ marginBottom: 8 }}>
-            <span className="wp-section-num">!!</span>
-            <span style={{ color: 'var(--wp-danger)' }}>ERROR</span>
+          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+            Something went wrong
           </div>
-          <div className="wp-mono wp-secondary">{error.message}</div>
+          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 01</span>
-          <span>AWAITING REVIEW</span>
-          <span className="wp-section-rule" />
+          <h2 className="wp-section-title">Awaiting review</h2>
           <span className="wp-section-aside">
-            {pairings.length > 0 ? `${pairings.length} PENDING` : 'EMPTY'}
+            {pairings.length > 0 ? `${pairings.length} pending` : 'Nothing pending'}
           </span>
         </div>
         <div className="wp-card">
           {pairings.length === 0 ? (
-            <div className="wp-empty">no pairings — waiting</div>
+            <div className="wp-empty">No pairing requests right now.</div>
           ) : (
             pairings.map((p) => (
               <PairingPromptCard
@@ -173,28 +166,28 @@ export default function PairingsPage() {
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <span className="wp-section-num">§ 02</span>
-          <span>SESSION LOG</span>
-          <span className="wp-section-rule" />
+          <h2 className="wp-section-title">This session</h2>
           <span className="wp-section-aside">
-            {history.length > 0 ? `${history.length} ENTRIES` : 'EMPTY'}
+            {history.length > 0
+              ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}`
+              : 'No decisions yet'}
           </span>
         </div>
         <div className="wp-card">
           {history.length === 0 ? (
-            <div className="wp-empty">no decisions yet — this session</div>
+            <div className="wp-empty">No decisions yet in this session.</div>
           ) : (
             history.map((h, i) => {
               const ok = h.decision === 'approved';
               return (
                 <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
                   <div className="wp-row-grow">
-                    <div className="wp-row-title">{h.agentName || 'unnamed agent'}</div>
-                    <div className="wp-row-sub">{h.decidedAt || 'just now'}</div>
+                    <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
+                    <div className="wp-row-sub">{h.decidedAt || 'Just now'}</div>
                   </div>
                   <span className="wp-pill" data-state={ok ? 'active' : 'danger'}>
                     <span className="wp-pill-dot" />
-                    {ok ? 'Approved' : 'Denied'}
+                    <span className="wp-pill-label">{ok ? 'Approved' : 'Denied'}</span>
                   </span>
                 </div>
               );
