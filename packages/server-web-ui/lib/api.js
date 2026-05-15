@@ -96,3 +96,40 @@ export function setNetworkMode(enabled) {
     body: { enabled },
   });
 }
+
+// Race guard for pages that refresh from BOTH REST and WS events.
+//
+// Without this, a slow REST `refresh()` issued before a WS event lands can
+// resolve AFTER the WS-triggered `refresh()` and clobber the fresher state
+// with stale data. The fix is a per-fetcher monotonically-increasing
+// sequence number: each `fetch` call gets the next id, and the caller
+// discards the response if a newer call has been issued in the meantime.
+//
+// Usage:
+//   const f = createSequencedFetcher();
+//   async function refresh() {
+//     const { data, isStale } = await f.fetch(() => getStatus());
+//     if (isStale) return;
+//     setState(data);
+//   }
+//
+// The fetcher returns `{ data, isStale, seq }`. `isStale === true` means
+// another `fetch()` was started while this one was in flight; the caller
+// should discard `data` and NOT commit it to state. See QOL Wave 6 H2.
+export function createSequencedFetcher() {
+  let nextSeq = 0;
+  let latestStartedSeq = 0;
+
+  async function fetchSeq(fn) {
+    const seq = ++nextSeq;
+    latestStartedSeq = seq;
+    const data = await fn();
+    const isStale = seq !== latestStartedSeq;
+    return { data, isStale, seq };
+  }
+
+  return {
+    fetch: fetchSeq,
+    latest: () => latestStartedSeq,
+  };
+}

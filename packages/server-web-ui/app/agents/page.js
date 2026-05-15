@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AgentRow from '../../components/AgentRow';
 import ConfirmModal from '../../components/ConfirmModal';
-import { getStatus, renameAgent, revokeAgent } from '../../lib/api';
+import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 export default function AgentsPage() {
@@ -12,10 +12,16 @@ export default function AgentsPage() {
   // Pending revoke confirmation. `null` = modal closed; otherwise the agent
   // whose key is about to be revoked.
   const [revokeTarget, setRevokeTarget] = useState(null);
+  // See QOL Wave 6 H2 — REST/WS refresh race guard.
+  const fetcherRef = useRef(null);
+  if (fetcherRef.current === null) {
+    fetcherRef.current = createSequencedFetcher();
+  }
 
   async function refresh() {
     try {
-      const data = await getStatus();
+      const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
+      if (isStale) return;
       // Normalize server shape (agentName/key/createdAt/lastAccessed) -> UI shape (name/key/createdAt/lastActive)
       const normalized = (data.pairedAgents || []).map((a) => ({
         key: a.key,

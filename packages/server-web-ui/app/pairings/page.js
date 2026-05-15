@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PairingPromptCard from '../../components/PairingPromptCard';
-import { getStatus, approvePairing, denyPairing } from '../../lib/api';
+import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 export default function PairingsPage() {
@@ -11,10 +11,16 @@ export default function PairingsPage() {
   const [profiles, setProfiles] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // See QOL Wave 6 H2 — guards REST refresh against WS-event clobber.
+  const fetcherRef = useRef(null);
+  if (fetcherRef.current === null) {
+    fetcherRef.current = createSequencedFetcher();
+  }
 
   async function refresh() {
     try {
-      const data = await getStatus();
+      const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
+      if (isStale) return;
       setPairings(data.pendingPairings || []);
       // History: client-side only — we don't get historical entries from /status
       setProfiles(data.profiles || []);

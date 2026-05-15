@@ -1,18 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import StatusCard from '../components/StatusCard';
-import { getStatus } from '../lib/api';
+import { createSequencedFetcher, getStatus } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  // Guards against stale REST refresh responses arriving AFTER a newer
+  // WS-event-triggered refresh has already updated state. See QOL Wave 6 H2.
+  const fetcherRef = useRef(null);
+  if (fetcherRef.current === null) {
+    fetcherRef.current = createSequencedFetcher();
+  }
 
   async function refresh() {
     try {
-      const data = await getStatus();
+      const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
+      if (isStale) return;
       setStatus(data);
       setError(null);
     } catch (err) {
