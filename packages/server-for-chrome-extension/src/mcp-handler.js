@@ -50,19 +50,53 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
   const chromeManager = options.chromeManager || null;
 
   /**
-   * v1 profile routing: read managedProfile from server.json (defaults to "Default").
-   * Per-agent profile binding is out of scope.
+   * Resolve which Chrome profile this tool call should target.
+   *
+   * Per-agent routing (Wave 7 J2): each paired-keys entry carries a `profileId`
+   * field (added in Wave 5 G2). When the API key resolves to an entry with a
+   * string `profileId`, route to that profile. Legacy entries (pre-G2) have
+   * `profileId: null` and fall back to the server-wide `managedProfile`.
+   *
+   * The caller (handleToolCall) already has `apiKey` available because the auth
+   * gate at the top of processMessage resolved it from session/args.
+   *
+   * @param {string|null|undefined} apiKey
+   * @returns {string} Chrome profile directory name
    */
-  function resolveTargetProfile() {
-    try {
-      const { loadConfig } = require('./service/paths');
-      const cfg = loadConfig() || {};
-      const profile = cfg.managedProfile || 'Default';
-      return profile;
-    } catch (e) {
-      console.log(`[mcp-handler] resolveTargetProfile fallback to "Default" (${e.message})`);
-      return 'Default';
+  function resolveTargetProfile(apiKey) {
+    function loadManagedProfile() {
+      try {
+        const { loadConfig } = require('./service/paths');
+        const cfg = loadConfig() || {};
+        return cfg.managedProfile || 'Default';
+      } catch (e) {
+        console.log(`[mcp-handler] resolveTargetProfile fallback to "Default" (${e.message})`);
+        return 'Default';
+      }
     }
+
+    if (!apiKey) {
+      // No key on the call (e.g. an auth-exempt tool that still got here).
+      // The auth-exempt tools that don't need routing return earlier in
+      // handleToolCall, so this path is defensive only.
+      return loadManagedProfile();
+    }
+
+    let entry = null;
+    try {
+      entry = pairedKeys.validateKey(apiKey);
+    } catch (e) {
+      console.log(`[mcp-handler] resolveTargetProfile: validateKey threw ${e.message}`);
+    }
+    if (entry && typeof entry.profileId === 'string' && entry.profileId.length > 0) {
+      return entry.profileId;
+    }
+    // Legacy entry (profileId: null) — fall back to managedProfile.
+    const managed = loadManagedProfile();
+    console.log(
+      `[mcp:routing] using managedProfile fallback for legacy key ${apiKey.slice(0, 8)}`
+    );
+    return managed;
   }
 
   function sleep(ms) {
@@ -536,8 +570,11 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
         params.name === 'check_pairing_status' ||
         params.name === 'webpilot_get_formatter_info' ||
         params.name === 'webpilot_reload_formatters';
+      // Resolved API key for the call. Used for both auth and per-agent
+      // profile routing (Wave 7 J2). For auth-exempt tools that don't carry a
+      // key, this stays null and resolveTargetProfile() falls back gracefully.
+      const effectiveKey = session.mcpApiKey || params.arguments?.api_key || null;
       if (!noAuthRequired && isPairingRequired()) {
-        const effectiveKey = session.mcpApiKey || params.arguments?.api_key;
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
           console.log(`[auth] Rejected unauthenticated tool call: ${params.name}`);
           return {
@@ -551,7 +588,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       }
 
       try {
-        const result = await handleToolCall(params);
+        const result = await handleToolCall(params, effectiveKey);
         return {
           jsonrpc: '2.0',
           id,
@@ -615,7 +652,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     return args; // numbers, booleans, etc. pass through
   }
 
-  async function handleToolCall(params) {
+  async function handleToolCall(params, apiKey = null) {
     const { name, arguments: args } = params;
 
     if (name === 'request_pairing') {
@@ -825,7 +862,11 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     }
 
     // From here down all tools require a connected extension for the target profile.
-    const targetProfile = resolveTargetProfile();
+    const targetProfile = resolveTargetProfile(apiKey);
+    const keyDisplay = apiKey ? apiKey.slice(0, 8) : '(none)';
+    console.log(
+      `[mcp:routing] tool=${name} apiKey=${keyDisplay}... profileId=${targetProfile}`
+    );
 
     // browser_create_tab is the readiness gate: it may launch/restart Chrome.
     if (name === 'browser_create_tab') {
@@ -1065,7 +1106,10 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
           const step = steps[i];
           try {
             const resolvedArgs = resolveReferences(step.arguments, previousResults);
-            const result = await handleToolCall({ name: step.tool, arguments: resolvedArgs });
+            const result = await handleToolCall(
+              { name: step.tool, arguments: resolvedArgs },
+              apiKey
+            );
             previousResults.push(result);
           } catch (error) {
             // Parse previous results for the error response
