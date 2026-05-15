@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../../components/ProfileStatusBadge';
 import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
-  const [connected, setConnected] = useState([]);
   const [error, setError] = useState(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -22,7 +22,6 @@ export default function ProfilesPage() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
       setProfiles(data.profiles || []);
-      setConnected(data.connectedProfiles || []);
       setError(null);
     } catch (err) {
       setError(err);
@@ -82,22 +81,24 @@ export default function ProfilesPage() {
         {profiles.length === 0 ? (
           <div className="wp-muted">No profiles found.</div>
         ) : (
-          profiles.map((p) => {
-            const isConnected = connected.includes(p.directoryName);
-            return (
-              <div className="wp-row" key={p.directoryName}>
-                <div className="wp-row-grow">
-                  <div style={{ fontWeight: 600 }}>{p.displayName || p.directoryName}</div>
-                  <div className="wp-muted">
-                    {p.gaiaEmail || 'No Google account linked'}
-                    {' • '}
-                    {isConnected ? 'extension connected' : 'extension not connected'}
-                  </div>
+          profiles.map((p) => (
+            <div className="wp-row" key={p.directoryName}>
+              <div className="wp-row-grow">
+                <div style={{ fontWeight: 600 }}>{p.displayName || p.directoryName}</div>
+                <div className="wp-muted">
+                  {p.gaiaEmail || 'No Google account linked'}
+                  {' • '}
+                  <span className="wp-mono">{p.directoryName}</span>
                 </div>
-                <span className="wp-mono wp-muted">{p.directoryName}</span>
+                {p.webPilotStatus === 'needs_setup' ? (
+                  <div className="wp-muted" style={{ marginTop: 4 }}>
+                    {NEEDS_SETUP_HINT}
+                  </div>
+                ) : null}
               </div>
-            );
-          })
+              <ProfileStatusBadge status={p.webPilotStatus} />
+            </div>
+          ))
         )}
       </div>
 

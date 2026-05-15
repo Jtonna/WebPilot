@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import StatusCard from '../components/StatusCard';
+import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../components/ProfileStatusBadge';
 import { createSequencedFetcher, getStatus } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
@@ -55,7 +56,9 @@ export default function HomePage() {
 
   const pendingPairings = status?.pendingPairings?.length ?? 0;
   const chromeRunning = status?.chrome?.running;
-  const extensionsConnected = (status?.connectedProfiles?.length) ?? 0;
+  const profiles = status?.profiles ?? [];
+  const activeProfiles = profiles.filter((p) => p.webPilotStatus === 'active');
+  const extensionsConnected = activeProfiles.length;
 
   return (
     <>
@@ -91,10 +94,14 @@ export default function HomePage() {
             detail={status?.chrome?.hasFlag ? 'Launched with debug flag' : (chromeRunning ? 'Missing debug flag' : 'Flag status unknown')}
           />
           <StatusCard
-            title="Connected extensions"
+            title="Active profiles"
             value={String(extensionsConnected)}
             state={extensionsConnected > 0 ? 'ok' : 'warn'}
-            detail={status?.connectedProfiles?.join(', ') || 'No profiles connected'}
+            detail={
+              activeProfiles.length > 0
+                ? activeProfiles.map((p) => p.directoryName).join(', ')
+                : 'No profiles currently connected'
+            }
           />
           <StatusCard
             title="Pending pairings"
@@ -102,6 +109,30 @@ export default function HomePage() {
             state={pendingPairings > 0 ? 'warn' : 'ok'}
             detail={pendingPairings > 0 ? 'Review on the Pairings page' : 'Nothing waiting'}
           />
+        </div>
+      ) : null}
+
+      {!loading && profiles.length > 0 ? (
+        <div className="wp-card">
+          <h2>Profiles</h2>
+          {profiles.map((p) => (
+            <div className="wp-row" key={p.directoryName}>
+              <div className="wp-row-grow">
+                <div style={{ fontWeight: 600 }}>
+                  {p.displayName || p.directoryName}
+                </div>
+                <div className="wp-muted">
+                  {p.gaiaEmail || 'No Google account linked'}
+                </div>
+                {p.webPilotStatus === 'needs_setup' ? (
+                  <div className="wp-muted" style={{ marginTop: 4 }}>
+                    {NEEDS_SETUP_HINT}
+                  </div>
+                ) : null}
+              </div>
+              <ProfileStatusBadge status={p.webPilotStatus} />
+            </div>
+          ))}
         </div>
       ) : null}
 
