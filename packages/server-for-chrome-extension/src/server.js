@@ -610,6 +610,44 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           }
 
           if (!resolvedProfileId) {
+            // Inference-by-exclusion: if every other known profile is either
+            // already connected or has a gaiaEmail (i.e. would have resolved
+            // via the gaiaEmail path), then the connecting extension must be
+            // the single remaining profile without those traits.
+            try {
+              const profiles = readProfiles(chromeManager.userDataDir);
+              const connectedProfileIds = new Set(extensionBridge.getConnectedProfiles());
+              const candidates = profiles.filter(
+                (p) => !connectedProfileIds.has(p.directoryName) && !p.gaiaEmail
+              );
+              if (candidates.length === 1) {
+                resolvedProfileId = candidates[0].directoryName;
+                console.log(
+                  `[extension-bridge] inferred profileId="${resolvedProfileId}" by exclusion ` +
+                    `(displayName="${candidates[0].displayName || ''}"; ` +
+                    `${profiles.length} total profile(s), ` +
+                    `${connectedProfileIds.size} already connected)`
+                );
+              } else if (candidates.length === 0) {
+                console.log(
+                  `[extension-bridge] inference-by-exclusion found 0 candidates ` +
+                    `(${profiles.length} total profile(s), ` +
+                    `${connectedProfileIds.size} already connected) — unexpected state, ` +
+                    `falling through to identify_required`
+                );
+              } else {
+                console.log(
+                  `[extension-bridge] inference-by-exclusion found ${candidates.length} candidates ` +
+                    `(${candidates.map((c) => c.directoryName).join(', ')}) — ambiguous, ` +
+                    `falling through to identify_required`
+                );
+              }
+            } catch (e) {
+              console.log(`[extension-bridge] inference-by-exclusion failed: ${e.message}`);
+            }
+          }
+
+          if (!resolvedProfileId) {
             // Can't determine profile — tell the extension to show its picker
             try {
               const profiles = readProfiles(chromeManager.userDataDir).map((p) => ({
