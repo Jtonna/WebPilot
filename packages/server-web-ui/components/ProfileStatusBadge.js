@@ -24,7 +24,7 @@ const STATE_META = {
   },
   ready: {
     label: 'Ready',
-    color: 'var(--wp-warning)',
+    color: 'var(--wp-accent)',
   },
   needs_setup: {
     label: 'Needs Setup',
