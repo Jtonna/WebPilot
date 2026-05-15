@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getStatus, createProfile } from '../../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 export default function ProfilesPage() {
@@ -11,10 +11,16 @@ export default function ProfilesPage() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [createMsg, setCreateMsg] = useState(null);
+  // See QOL Wave 6 H2 — guards REST refresh against WS-event clobber.
+  const fetcherRef = useRef(null);
+  if (fetcherRef.current === null) {
+    fetcherRef.current = createSequencedFetcher();
+  }
 
   async function refresh() {
     try {
-      const data = await getStatus();
+      const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
+      if (isStale) return;
       setProfiles(data.profiles || []);
       setConnected(data.connectedProfiles || []);
       setError(null);
