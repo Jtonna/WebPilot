@@ -3,7 +3,6 @@ const cors = require('cors');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { WebSocketServer } = require('ws');
 const { createMcpHandler } = require('./mcp-handler');
 const { createExtensionBridge } = require('./extension-bridge');
@@ -29,18 +28,6 @@ function cleanupPidAndPortFiles() {
   const dataDir = getDataDir();
   try { fs.unlinkSync(path.join(dataDir, 'server.pid')); } catch (e) { /* non-fatal */ }
   try { fs.unlinkSync(path.join(dataDir, 'server.port')); } catch (e) { /* non-fatal */ }
-}
-
-function getLocalIP() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return 'localhost';
 }
 
 /**
