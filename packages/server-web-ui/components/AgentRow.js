@@ -14,9 +14,31 @@ function formatDate(value) {
   return d.toLocaleString();
 }
 
-export default function AgentRow({ agent, onRename, onRevoke }) {
+/**
+ * Build the `.mcp.json` snippet a user can paste into a project to wire this
+ * WebPilot server as an MCP server for their agent. The URL hardcodes
+ * `localhost`; users editing for a remote WebPilot server can swap the host
+ * after pasting. See Wave 6 H6.
+ */
+function buildMcpConfigSnippet({ port, apiKey }) {
+  const config = {
+    mcpServers: {
+      webpilot: {
+        url: `http://localhost:${port}/sse`,
+        headers: {
+          'X-API-Key': apiKey,
+        },
+      },
+    },
+  };
+  return JSON.stringify(config, null, 2);
+}
+
+export default function AgentRow({ agent, onRename, onRevoke, port }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.name || '');
+  // 'idle' | 'copied' | 'error' — drives the inline "Copied!" confirmation.
+  const [copyState, setCopyState] = useState('idle');
 
   const commitRename = () => {
     setEditing(false);
@@ -36,6 +58,24 @@ export default function AgentRow({ agent, onRename, onRevoke }) {
       // eslint-disable-next-line no-console
       console.log('[agent] revoke (stub)', { agent });
     }
+  };
+
+  const handleCopyMcpConfig = async () => {
+    if (!port || !agent.key) {
+      setCopyState('error');
+      setTimeout(() => setCopyState('idle'), 2000);
+      return;
+    }
+    const snippet = buildMcpConfigSnippet({ port, apiKey: agent.key });
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopyState('copied');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log('[agent] clipboard write failed:', err && err.message);
+      setCopyState('error');
+    }
+    setTimeout(() => setCopyState('idle'), 2000);
   };
 
   return (
@@ -73,6 +113,15 @@ export default function AgentRow({ agent, onRename, onRevoke }) {
       <span className="wp-muted" style={{ minWidth: 140 }}>
         last active {formatDate(agent.lastActive)}
       </span>
+      <button
+        type="button"
+        className="wp-btn"
+        onClick={handleCopyMcpConfig}
+        disabled={!port || !agent.key}
+        title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}
+      >
+        {copyState === 'copied' ? 'Copied!' : copyState === 'error' ? 'Copy failed' : 'Copy MCP config'}
+      </button>
       <button type="button" className="wp-btn wp-btn-danger" onClick={handleRevoke}>
         Revoke
       </button>

@@ -8,6 +8,7 @@ import { createUiEventsClient } from '../../lib/ws';
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState([]);
+  const [port, setPort] = useState(null);
   const [error, setError] = useState(null);
   // Pending revoke confirmation. `null` = modal closed; otherwise the agent
   // whose key is about to be revoked.
@@ -30,6 +31,7 @@ export default function AgentsPage() {
         lastActive: a.lastAccessed,
       }));
       setAgents(normalized);
+      setPort(data.port || null);
       setError(null);
     } catch (err) {
       setError(err);
@@ -97,9 +99,65 @@ export default function AgentsPage() {
           <div className="wp-muted">No agents paired yet.</div>
         ) : (
           agents.map((a) => (
-            <AgentRow key={a.key} agent={a} onRename={handleRename} onRevoke={handleRevoke} />
+            <AgentRow
+              key={a.key}
+              agent={a}
+              onRename={handleRename}
+              onRevoke={handleRevoke}
+              port={port}
+            />
           ))
         )}
+      </div>
+
+      <div className="wp-card">
+        <h2>Wire WebPilot into your project</h2>
+        <p className="wp-muted" style={{ marginTop: 0 }}>
+          Use a paired agent's <strong>Copy MCP config</strong> button to copy a
+          ready-to-paste <code>.mcp.json</code> snippet. The snippet uses the
+          current server port (
+          <span className="wp-mono">{port ? String(port) : 'unknown'}</span>) and
+          the agent's API key as <code>X-API-Key</code>.
+        </p>
+        <pre className="wp-mono wp-code-block" style={{
+          background: 'var(--wp-bg-elevated)',
+          border: '1px solid var(--wp-border)',
+          borderRadius: 6,
+          padding: 12,
+          overflowX: 'auto',
+          margin: '12px 0',
+          color: 'var(--wp-fg)',
+        }}>
+{`{
+  "mcpServers": {
+    "webpilot": {
+      "url": "http://localhost:${port || '<port>'}/sse",
+      "headers": {
+        "X-API-Key": "<your-agent-api-key>"
+      }
+    }
+  }
+}`}
+        </pre>
+        <ol style={{ paddingLeft: 20, margin: 0 }}>
+          <li>
+            Copy the snippet above (<strong>Copy MCP config</strong> button next
+            to the agent).
+          </li>
+          <li>
+            In your project root, create or merge into <code>.mcp.json</code>
+            {' '}(project-level only — do <strong>not</strong> put your API key
+            in user-level config).
+          </li>
+          <li>
+            Restart your MCP client (Claude Code, Cursor, etc.) so it picks up
+            the new server.
+          </li>
+          <li>
+            Verify by asking the agent to call{' '}
+            <code>browser_get_tabs</code>.
+          </li>
+        </ol>
       </div>
 
       <ConfirmModal

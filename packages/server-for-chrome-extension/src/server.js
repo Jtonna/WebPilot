@@ -284,7 +284,7 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
 }
 
 function mountWebUiRoutes(app, deps) {
-  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode } = deps;
+  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port } = deps;
   // Web UI is localhost-only — no API key involved. See makeUiAuth().
   const auth = makeUiAuth();
 
@@ -293,6 +293,9 @@ function mountWebUiRoutes(app, deps) {
       const chromeStatus = await chromeManager.getStatus();
       const profiles = chromeStatus.knownProfiles || [];
       res.json({
+        // Exposed so the UI can render .mcp.json snippets with the live port
+        // (no hardcoded default). See Wave 6 H6.
+        port: port || null,
         chrome: chromeStatus,
         profiles,
         connectedProfiles: extensionBridge.getConnectedProfiles(),
@@ -799,6 +802,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     extensionBridge,
     pairedKeys,
     server,
+    port,
     setNetworkMode: ({ enabled }) => {
       // Persist + restart-spawn approach (Section 4.6)
       try {
