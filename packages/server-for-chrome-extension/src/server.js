@@ -292,14 +292,59 @@ function mountWebUiRoutes(app, deps) {
   app.get('/api/ui/status', auth, async (req, res) => {
     try {
       const chromeStatus = await chromeManager.getStatus();
-      const profiles = chromeStatus.knownProfiles || [];
+      const rawProfiles = chromeStatus.knownProfiles || [];
+      const connectedProfiles = extensionBridge.getConnectedProfiles();
+      const connectedSet = new Set(connectedProfiles);
+
+      // Compute the set of profileIds that have at least one installId mapped
+      // to them in extension-installs.json. Presence here proves the extension
+      // completed a hello handshake in that profile at least once.
+      let registeredProfileIds = new Set();
+      try {
+        const installs = extensionInstalls.loadInstalls();
+        registeredProfileIds = new Set(
+          Object.values(installs)
+            .map((e) => e && e.profileId)
+            .filter((p) => typeof p === 'string' && p.length > 0)
+        );
+      } catch (e) {
+        console.log(`[ui-api:status] failed to load extension installs: ${e.message}`);
+      }
+
+      // Tag each profile with its per-profile webPilotStatus. Mutually
+      // exclusive: active > ready > needs_setup.
+      let activeCount = 0;
+      let readyCount = 0;
+      let needsSetupCount = 0;
+      const profiles = rawProfiles.map((p) => {
+        let webPilotStatus;
+        if (connectedSet.has(p.directoryName)) {
+          webPilotStatus = 'active';
+          activeCount += 1;
+        } else if (registeredProfileIds.has(p.directoryName)) {
+          webPilotStatus = 'ready';
+          readyCount += 1;
+        } else {
+          webPilotStatus = 'needs_setup';
+          needsSetupCount += 1;
+        }
+        return { ...p, webPilotStatus };
+      });
+
+      console.log(
+        `[ui-api:status] ${profiles.length} profiles: ${activeCount} active, ` +
+          `${readyCount} ready, ${needsSetupCount} needs_setup`
+      );
+
       res.json({
         // Exposed so the UI can render .mcp.json snippets with the live port
         // (no hardcoded default). See Wave 6 H6.
         port: port || null,
         chrome: chromeStatus,
         profiles,
-        connectedProfiles: extensionBridge.getConnectedProfiles(),
+        // Kept for backward compatibility. New consumers should use the
+        // per-profile `webPilotStatus` field on each entry in `profiles`.
+        connectedProfiles,
         pendingPairings: pairedKeys.listPendingPairings(),
         pairedAgents: pairedKeys.listKeys(),
         networkMode: (() => {
