@@ -88,6 +88,12 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
 
   const profileList = useMemo(() => (Array.isArray(profiles) ? profiles : []), [profiles]);
 
+  const boundProfileLabel = useMemo(() => {
+    if (!generated) return '';
+    const match = profileList.find((p) => p.directoryName === generated.profileId);
+    return (match && (match.displayName || match.directoryName)) || generated.profileId;
+  }, [generated, profileList]);
+
   // Mirror open → closing animation. Stay mounted until the exit anim finishes.
   useEffect(() => {
     if (wasOpen.current && !open) {
@@ -204,12 +210,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       toast.success('Copied.');
     } catch (_e) { /* ignore */ }
   }
-
-  const boundProfileLabel = useMemo(() => {
-    if (!generated) return '';
-    const match = profileList.find((p) => p.directoryName === generated.profileId);
-    return (match && (match.displayName || match.directoryName)) || generated.profileId;
-  }, [generated, profileList]);
 
   const copyLabel = includeKey
     ? (copied ? 'Copied' : (submitting ? 'Generating…' : 'Generate & copy'))
