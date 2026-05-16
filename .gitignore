@@ -66,3 +66,4 @@ config.local.json
 !.github/**
 !CLAUDE.md
 !.gitattributes
+.mcp.json
