@@ -367,15 +367,16 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'request_pairing',
-      description: 'Initiate pairing. **Skip this tool if you already have a valid API key** (sent via the X-API-Key header or the api_key argument) — calling it in that case will short-circuit and tell you so. Just call browser tools directly; the server resolves your bound profile from the key. **Asynchronous flow** (only used by un-paired callers): returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', \'denied\', or \'expired\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back, **unless** the existing pending entry has expired (pending pairings expire after 24 hours of inactivity), in which case a fresh `pairing_id` is minted. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm. `agent_name` is optional; if omitted, the server uses "Unknown Agent" as a placeholder the human can rename after approval.',
+      description: 'Initiate pairing. **Skip this tool if you already have a valid API key** (sent via the X-API-Key header or the api_key argument) — calling it in that case will short-circuit and tell you so. Just call browser tools directly; the server resolves your bound profile from the key. **Asynchronous flow** (only used by un-paired callers): returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', \'denied\', or \'expired\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back, **unless** the existing pending entry has expired (pending pairings expire after 24 hours of inactivity), in which case a fresh `pairing_id` is minted. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm.',
       inputSchema: {
         type: 'object',
         properties: {
           agent_name: {
             type: 'string',
-            description: 'Optional human-readable name to identify this agent in the approval UI (e.g. "Claude Code", "Cursor", "My Script"). Not required — omit if you do not have one.'
+            description: 'A human-readable name to identify this agent in the approval UI (e.g. "Claude Code", "Cursor", "My Script").'
           }
-        }
+        },
+        required: ['agent_name']
       }
     },
     {
