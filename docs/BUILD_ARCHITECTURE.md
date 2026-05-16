@@ -23,11 +23,14 @@ Defined in `packages/server-for-chrome-extension/package.json`:
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
-      "index.js"
+      "index.js",
+      "../server-web-ui/out/**/*"
     ]
   }
 }
 ```
+
+The `../server-web-ui/out/**/*` glob bundles the Next.js static export into the pkg snapshot so the binary ships with the web UI baked in. The platform-specific build scripts (`build:win`, `build:mac`, `build:linux`) run `build:web-ui` first (which executes `next build` in `packages/server-web-ui`) before invoking `pkg`. At runtime the server resolves the snapshot path and serves `/ui/...` via `fs.readFileSync` (express.static is bypassed so the pkg-patched `fs` works correctly — see QOL fix F8).
 
 ### accessibility-tree-formatters/ Package
 
@@ -43,13 +46,13 @@ Two server modules handle formatter lifecycle:
 - **`formatter-manager.js`** -- loads formatters from `<dataDir>/formatters/` and runs the appropriate one for each accessibility tree request
 - **`formatter-updater.js`** -- auto-updates formatters from GitHub by comparing the local `manifest.json` version against the remote version on the `main` branch
 
-Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux":
+Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux". Each per-platform script runs `build:web-ui` first to refresh the static export:
 
 ```bash
 cd packages/server-for-chrome-extension
-npm run build:win    # pkg . --target node18-win-x64 --out-path dist
-npm run build:mac    # pkg . --target node18-macos-x64 --out-path dist
-npm run build:linux  # pkg . --target node18-linux-x64 --out-path dist
+npm run build:win    # npm run build:web-ui && pkg . --target node18-win-x64 --out-path dist
+npm run build:mac    # npm run build:web-ui && pkg . --target node18-macos-x64 --out-path dist
+npm run build:linux  # npm run build:web-ui && pkg . --target node18-linux-x64 --out-path dist
 ```
 
 Output goes to `packages/server-for-chrome-extension/dist/`:
@@ -158,6 +161,8 @@ The server binary (`cli.js` / compiled binary) supports these flags:
 | `--network` | Start in network mode (listen on `0.0.0.0` instead of `127.0.0.1`) |
 
 Running with no flags starts the server as a **background daemon** (spawns a detached child process with `WEBPILOT_FOREGROUND=1` and exits). Use `--foreground` to run the server in the current process.
+
+> **pkg-binary self-spawn gotcha:** Inside a pkg binary, `spawn(process.execPath, ['--foreground'])` fails because pkg treats the first argument as a module path (`Cannot find module 'C:\...\--foreground'`). The CLI works around this by passing the flag via the `WEBPILOT_FOREGROUND=1` environment variable to the spawned child and re-checking the env var in addition to the parsed CLI flag. Any external doc that walks through the build / daemon flow must follow the env-var convention.
 
 ## Service Registration
 

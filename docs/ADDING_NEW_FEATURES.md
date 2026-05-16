@@ -60,7 +60,7 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
 }
 ```
 
-**Note:** All tools except `request_pairing` and `webpilot_get_formatter_info` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
+**Note:** All tools except the auth-exempt set (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header. The auth-exempt set is enforced in `processMessage` in `mcp-handler.js` — if you add a new auth-exempt tool, update that check too.
 
 **Add case to `handleToolCall` switch:**
 

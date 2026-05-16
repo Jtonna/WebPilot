@@ -8,11 +8,9 @@ The WebPilot MCP server provides browser automation capabilities to AI agents vi
 
 ## Authentication
 
-By default, all MCP tool calls (except `request_pairing`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`) require a valid API key obtained by pairing with the browser extension. Users can disable this requirement in the Chrome extension's Pairing tab, after which agents can connect and call tools without authentication.
+By default, all MCP tool calls (except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`) require a valid API key obtained by pairing.
 
-### Pairing Requirement Toggle
-
-The pairing requirement can be toggled on/off in the WebPilot Chrome extension (Pairing tab → "Require Pairing Approval" toggle). When disabled, all agents can call tools without an API key. When enabled (default), authentication is required as described below.
+`agent_name` is only required when calling `request_pairing` — it is shown in the approval UI. All other tools authenticate via the API key alone; the server resolves the bound Chrome profile from the key via `resolveTargetProfile` in `mcp-handler.js`.
 
 ### Providing the API Key
 
@@ -22,15 +20,29 @@ Include the key with every request using any of these methods:
 - **Query parameter:** `?apiKey=<your-key>` on the `/sse` and `/message` endpoints
 - **Tool parameter:** `api_key: "<your-key>"` as a parameter in each `tools/call` request (useful for immediate use after pairing, before the client is reconfigured)
 
-The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except `request_pairing` include an optional `api_key` parameter in their schema for this purpose.
+The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except `request_pairing` and `check_pairing_status` include an optional `api_key` parameter in their schema for this purpose.
 
-### First-Time Setup
+### First-Time Setup (async flow)
 
-1. Call the `request_pairing` tool with a human-readable `agent_name`.
-2. The user will see an approve/deny prompt in the WebPilot Chrome extension popup (Pairing tab).
-3. On approval, the tool returns your API key in a text response.
-4. To use the key immediately, pass it as the `api_key` parameter in each tool call.
-5. To persist the key, configure your MCP client to include it as the `X-API-Key` header (e.g., in `.mcp.json` for Claude Code).
+The pairing flow is asynchronous and is mediated by the server-hosted web UI at `http://localhost:3456/ui/`, not by the Chrome extension popup.
+
+1. Call `request_pairing` with a human-readable `agent_name`. The tool returns **immediately** with a `pairing_id` and `status` (one of `'pending'`, `'approved'`, `'denied'`, `'expired'`). It is **idempotent**: a repeat call with the same `agent_name` returns the same `pairing_id` unless the pending entry has aged past its 24-hour TTL.
+2. If `status` is `'pending'`, a native system notification fires on the host pointing the human at the web UI. Surface the approval URL to the human and stop calling browser tools.
+3. The human approves the pairing in the web UI and **selects which Chrome profile** the agent should be bound to. (The web UI can also pre-provision a key directly without an approval round-trip — see [Pre-provisioned keys](#pre-provisioned-keys-web-ui).)
+4. On a later turn, call `check_pairing_status` with the `pairing_id`. When `status` becomes `'approved'`, the response contains your `api_key`.
+5. Persist the key as the `X-API-Key` header in your MCP client config (e.g. `.mcp.json` for Claude Code), or pass it as the `api_key` parameter on each tool call.
+
+### Short-circuit for already-keyed callers
+
+If the caller already presents a valid API key (header, query, or `api_key` argument) when calling `request_pairing`, the tool **short-circuits** and returns the existing identity instead of minting a new pending entry. This avoids spurious approval prompts when a subagent or inheriting process carries its parent's `.mcp.json` and reflexively calls `request_pairing` again. Subagents do **not** need to re-pair — they share the parent's key and are routed to the same bound profile.
+
+### Pre-provisioned keys (web UI)
+
+The web UI's pair-agent modal supports an "Include API key" toggle. When enabled, the UI calls `POST /api/ui/agents` (body: `{ agentName, profileId }`), the server mints the key directly via `paired-keys.createPairedAgent`, and the UI builds the copyable `.mcp.json` snippet with the key already baked in. Agents using a pre-provisioned key never call `request_pairing` at all.
+
+### Re-binding agents to a different profile
+
+The web UI's Agents page exposes a profile dropdown per row. Selecting a different profile issues `PATCH /api/ui/agents/:key` with `{ profileId }`. This is a field-flip on the paired-keys entry — no WebSocket teardown is needed because tool calls re-resolve the target profile per call via `resolveTargetProfile`.
 
 ### Auth Error
 
@@ -73,33 +85,73 @@ When an agent connects to the WebPilot MCP server, the `initialize` response inc
 
 ### request_pairing
 
-Request pairing with the browser extension. A human will see an approve/deny prompt in the WebPilot extension popup. This is the only tool that works without authentication.
+Initiate an asynchronous pairing request. Returns **immediately** with a `pairing_id`; the human approves in the web UI on the host. This tool is unauthenticated and idempotent (same `agent_name` → same `pairing_id` until the 24h TTL expires).
+
+If the caller already presents a valid API key, the tool **short-circuits** and returns the existing identity instead of creating a new pending entry. Subagents inheriting their parent's `.mcp.json` should not call this tool at all.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `agent_name` | string | Yes | Human-readable name for this agent, shown in the approval prompt |
+| `agent_name` | string | Yes | Human-readable name for this agent, shown in the approval UI |
 
-**Returns (approved):**
-A text response containing the API key and instructions for persisting it:
+**Returns (pending):**
 ```
-Pairing approved! Your API key: <uuid>
+Pairing requested for agent "<agent_name>".
 
-IMPORTANT: To use this key immediately in this session, include api_key: "<uuid>" as a parameter in your tool calls.
+pairing_id: <uuid>
+status: pending
 
-To persist this key for future sessions so you don't need to pass api_key every time, update your MCP server configuration. For Claude Code, update your .mcp.json file:
-{ "mcpServers": { "webpilot": { "url": "http://localhost:3456/sse", "headers": { "X-API-Key": "<uuid>" } } } }
+ACTION REQUIRED FROM THE HUMAN: open http://localhost:3456/ui in a browser and approve this pairing. A system notification has been sent.
+
+NEXT STEPS FOR THE AGENT:
+1. Surface the approval URL to the human and stop making other tool calls.
+2. After the human confirms approval, call check_pairing_status with pairing_id="<uuid>" to retrieve your api_key.
+3. Calling request_pairing again with the same agent_name is safe — it is idempotent and will return this same pairing_id.
+```
+
+**Returns (already-approved on this call):**
+If the agent_name was already approved previously, the call returns `status: approved` immediately with the full `api_key` and an example `.mcp.json` snippet.
+
+**Returns (short-circuit when caller is already keyed):**
+```
+You already have a valid API key — no need to pair again.
+
+Paired as: "<agentName>"
+Bound to profile: <profileId>
+status: approved
+
+Just call browser tools directly with your existing key. The server resolves your bound profile from the api_key automatically; agent_name is not needed on tool calls and only matters during initial pairing.
 ```
 
 **Returns (denied):**
-```
-Pairing denied by the user. The human chose not to approve this agent for browser access.
-```
+A text response with `status: denied` and instructions not to retry automatically.
 
 **Notes:**
-- To use the key immediately, pass it as the `api_key` parameter in each tool call
-- To persist the key, add it as the `X-API-Key` header in your MCP client configuration
-- This is the only MCP tool that does not require an API key by default; other tools also skip auth when the pairing requirement is disabled
+- The async flow is server-side. The pairing entry is persisted to `<dataDir>/config/pending-pairings.json` and aged out after 24h of inactivity.
+- The human picks **which Chrome profile** the agent binds to during approval. That profile is persisted on the paired-keys entry and used for tool-call routing.
+- `agent_name` is required here only. Other tools authenticate via the API key alone.
+- This tool and `check_pairing_status` do not require an API key.
+
+---
+
+### check_pairing_status
+
+Poll the status of a pending pairing request. Returns the current `status` and, when approved, the `api_key`. This tool is unauthenticated.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pairing_id` | string | Yes | The `pairing_id` returned from a prior call to `request_pairing` |
+
+**Status values:**
+- `pending` — user has not yet approved; wait and call again on a later turn.
+- `approved` — the response includes your `api_key`. Store it and use it for all future tool calls via the `X-API-Key` header or `api_key` argument.
+- `denied` — the user rejected this pairing. Do not retry automatically; ask the human whether to try again with a different `agent_name`.
+- `expired` — the pending entry aged out (24h of inactivity). Call `request_pairing` again with the same `agent_name` to mint a fresh `pairing_id`.
+
+**Notes:**
+- The server expires `pending` entries after 24 hours and hard-drops terminal-state entries (`approved`/`denied`/`expired`) older than 7 days during periodic cleanup.
+- This is the only safe way to retrieve the API key after an async approval.
 
 ---
 
@@ -157,7 +209,7 @@ webpilot_get_formatter_info(platform="threads")
 ```
 
 **Notes:**
-- This tool does not require an API key (unauthenticated, like `request_pairing`; other tools also skip auth when the pairing requirement is disabled)
+- This tool does not require an API key (unauthenticated, like `request_pairing`, `check_pairing_status`, and `webpilot_reload_formatters`).
 - Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
 - The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
 - Calling this tool also triggers a live reload of both manifests, so changes to `custom-formatters/manifest.json` are picked up immediately
@@ -191,7 +243,7 @@ This tool does not require authentication.
 ```
 
 **Notes:**
-- This tool is unauthenticated — no API key required, even when the pairing requirement is enabled
+- This tool is unauthenticated — no API key required.
 - Triggers a full reload of both the auto-updated formatter manifest (`formatters/`) and the custom formatter manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key.
 - Use this after dropping new formatter files into `custom-formatters/` and updating `custom-formatters/manifest.json`, rather than restarting the server
 - The returned object merges `reloaded: true` with the full `getFormatterInfo()` response, so callers see the current state of all loaded formatters immediately
@@ -1037,14 +1089,9 @@ If you try to close a tab that doesn't exist:
 
 ### Extension Not Connected
 
-If the Chrome extension is not connected to the MCP server:
-```json
-{
-  "error": "Browser extension not connected"
-}
-```
+If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
 
-**Solution:** User needs to open the extension popup and click "Retry" to restart the auto-connect process.
+**Solution:** Open the WebPilot web UI to inspect Chrome status, restart Chrome with the flag if needed, or re-load the unpacked extension in the target profile.
 
 ---
 

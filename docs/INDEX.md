@@ -16,5 +16,15 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Reference
 
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all eleven MCP tools: parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all fourteen MCP tools (including the async `request_pairing` / `check_pairing_status` pair, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`): parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+
+## Design
+
+- `design/UX.md`, `design/ELEGANCE.md`, `design/PALETTE.md`, and `design/research/{APPLE,LUXURY,SIMPLE}.md` -- Web UI design system, palette, and design-research briefs. These describe the look-and-feel of the server-hosted web UI at `/ui`.
+
+## Project planning (temporary)
+
+- `QOL_FOLLOWUPS.md` -- Living list of outstanding QOL-Features follow-ups (will be pruned / deleted as items land).
+- `TEMP_QOL_FEATURES_PLAN.md` -- Spec / planning doc for the QOL-Features wave. Marked for deletion or fold-in after v1 ships.
+- `REVIEW_SERVER.md`, `packages/server-web-ui/REVIEW_WEB_UI.md`, `packages/chrome-extension-unpacked/REVIEW_EXTENSION.md` -- Wave 3 code reviews from the QOL-Features audit pass. Kept for historical context; safe to delete once their findings are resolved.
 
