@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import ErrorCard from '../../components/ErrorCard';
 import ProfileStatusBadge from '../../components/ProfileStatusBadge';
 import ProfileSetupModal from '../../components/ProfileSetupModal';
 import { SkeletonRow } from '../../components/Skeleton';
@@ -102,14 +103,7 @@ export default function ProfilesPage() {
         </p>
       </header>
 
-      {error ? (
-        <div className="wp-card">
-          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Couldn’t reach the server.
-          </div>
-          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
-        </div>
-      ) : null}
+      {error ? <ErrorCard error={error} /> : null}
 
       <section className="wp-section">
         <div className="wp-section-head">

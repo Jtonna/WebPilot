@@ -6,6 +6,7 @@ import PairingPromptCard from '../components/PairingPromptCard';
 import ProfileStatusBadge from '../components/ProfileStatusBadge';
 import StatusRow from '../components/StatusRow';
 import Skeleton from '../components/Skeleton';
+import ErrorCard from '../components/ErrorCard';
 import { useToast } from '../components/ToastRegion';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
@@ -223,14 +224,7 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {!loading && error ? (
-        <div className="wp-card">
-          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Couldn’t reach the server.
-          </div>
-          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
-        </div>
-      ) : null}
+      {!loading && error ? <ErrorCard error={error} /> : null}
 
       {!loading && !error ? (
         <section className="wp-section">

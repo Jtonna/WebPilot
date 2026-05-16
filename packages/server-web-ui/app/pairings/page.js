@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import ErrorCard from '../../components/ErrorCard';
 import PairingPromptCard from '../../components/PairingPromptCard';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
@@ -162,14 +163,7 @@ export default function PairingsPage() {
         </p>
       </header>
 
-      {error ? (
-        <div className="wp-card">
-          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Couldn’t reach the server.
-          </div>
-          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
-        </div>
-      ) : null}
+      {error ? <ErrorCard error={error} /> : null}
 
       <section className="wp-section">
         <div className="wp-section-head">
@@ -217,21 +211,11 @@ export default function PairingsPage() {
           </span>
         </div>
         {historyError ? (
-          <div className="wp-card">
-            <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-              Couldn’t load history.
-            </div>
-            <div className="wp-secondary" style={{ fontSize: 14, marginBottom: 'var(--s-3)' }}>
-              {historyError.message}
-            </div>
-            <button
-              type="button"
-              className="wp-link"
-              onClick={loadInitialHistory}
-            >
-              Retry
-            </button>
-          </div>
+          <ErrorCard
+            title="Couldn’t load history."
+            error={historyError}
+            onRetry={loadInitialHistory}
+          />
         ) : historyLoading ? (
           <div className="wp-inset-group">
             <SkeletonRow titleWidth="50%" subWidth="30%" showTrailing />

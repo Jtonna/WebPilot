@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
 import BackLink from '../../components/BackLink';
 import ConfirmModal from '../../components/ConfirmModal';
+import ErrorCard from '../../components/ErrorCard';
 import PairAgentModal from '../../components/PairAgentModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
@@ -179,14 +180,7 @@ function AgentsPageInner() {
         </p>
       </header>
 
-      {error ? (
-        <div className="wp-card">
-          <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Couldn’t reach the server.
-          </div>
-          <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
-        </div>
-      ) : null}
+      {error ? <ErrorCard error={error} /> : null}
 
       {/* Slim pair-agent bar — opens PairAgentModal with the instructions. */}
       <div
