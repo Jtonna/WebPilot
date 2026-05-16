@@ -13,7 +13,7 @@ import {
   getPairingHistory,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
-import { formatRelativeTime } from '../../lib/format';
+import { formatRelativeTime, profileLabel, profileOptions } from '../../lib/format';
 
 /**
  * Pairings — per UX §Pairings.
@@ -120,13 +120,7 @@ export default function PairingsPage() {
     };
   }, []);
 
-  const profileOptions = [
-    ...profiles.map((p) => ({ value: p.directoryName, label: p.displayName || p.directoryName })),
-    { value: '__new__', label: '+ New sandbox profile' },
-  ];
-  if (profileOptions.length === 1) {
-    profileOptions.unshift({ value: 'Default', label: 'Default' });
-  }
+  const profileOptionsList = profileOptions(profiles);
 
   async function handleApprove(pairing, selectedProfile, newProfileName) {
     setBusy(true);
@@ -189,7 +183,7 @@ export default function PairingsPage() {
               <PairingPromptCard
                 key={p.pairingId}
                 pairing={p}
-                profileOptions={profileOptions}
+                profileOptions={profileOptionsList}
                 onApprove={handleApprove}
                 onDeny={handleDeny}
                 disabled={busy}
@@ -242,25 +236,22 @@ export default function PairingsPage() {
                 // Only approved entries are ever bound to a profile. Denied
                 // and expired pairings were never minted into an API key, so
                 // there's no profile association to surface.
-                const profileMatch = h.status === 'approved' && h.profileId
-                  ? profiles.find((p) => p.directoryName === h.profileId)
+                const profileText = h.status === 'approved' && h.profileId
+                  ? profileLabel(profiles, h.profileId)
                   : null;
-                const profileLabel = profileMatch
-                  ? (profileMatch.displayName || profileMatch.directoryName)
-                  : (h.status === 'approved' ? h.profileId : null);
                 return (
                   <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
                     <div className="wp-row-grow">
                       <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
                       <div className="wp-row-sub">
                         <span>{formatRelativeTime(h.decidedAt || h.createdAt)}</span>
-                        {profileLabel ? (
+                        {profileText ? (
                           <>
                             <span className="wp-row-sep">·</span>
                             <span>
                               paired to{' '}
                               <strong style={{ color: 'var(--wp-fg)', fontWeight: 500 }}>
-                                {profileLabel}
+                                {profileText}
                               </strong>
                             </span>
                           </>

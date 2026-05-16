@@ -17,6 +17,7 @@ import {
   updateAgentProfile,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
+import { profileLabel } from '../../lib/format';
 
 /**
  * Agents — pairing-first layout.
@@ -131,8 +132,7 @@ function AgentsPageInner() {
     )));
     try {
       await updateAgentProfile(agent.key, nextProfileId);
-      const match = profiles.find((p) => p.directoryName === nextProfileId);
-      const label = (match && (match.displayName || match.directoryName)) || nextProfileId;
+      const label = profileLabel(profiles, nextProfileId);
       toast.success(`Bound ${agent.name || 'agent'} to ${label}.`);
       await refresh();
     } catch (e) {
@@ -159,11 +159,10 @@ function AgentsPageInner() {
 
   // Resolve the filter's display name from the loaded profile list. Fall back
   // to the raw directoryName when the profile isn't (yet) known.
-  const filterDisplayName = useMemo(() => {
-    if (!profileFilter) return '';
-    const match = profiles.find((p) => p.directoryName === profileFilter);
-    return (match && (match.displayName || match.directoryName)) || profileFilter;
-  }, [profileFilter, profiles]);
+  const filterDisplayName = useMemo(
+    () => (profileFilter ? profileLabel(profiles, profileFilter) : ''),
+    [profileFilter, profiles],
+  );
 
   const filteredAgents = profileFilter
     ? agents.filter((a) => a.profileId === profileFilter)

@@ -7,7 +7,7 @@ import {
   TrashIcon,
   CheckIcon,
 } from '@heroicons/react/20/solid';
-import { formatRelativeTime } from '../lib/format';
+import { formatRelativeTime, profileLabel } from '../lib/format';
 import { buildMcpConfigJson } from '../lib/mcpConfig';
 
 function shortKey(key) {
@@ -24,12 +24,9 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
   // Resolve the bound profile's display name from the profiles list. Falls
   // back to the raw directoryName so a stale or unknown binding is still
   // surfaced rather than silently rendered as blank.
-  const boundProfile = agent.profileId
-    ? profiles.find((p) => p.directoryName === agent.profileId)
+  const boundLabel = agent.profileId
+    ? profileLabel(profiles, agent.profileId)
     : null;
-  const boundLabel = boundProfile
-    ? (boundProfile.displayName || boundProfile.directoryName)
-    : (agent.profileId || null);
 
   const commitRename = () => {
     setEditing(false);

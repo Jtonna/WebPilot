@@ -10,6 +10,7 @@ import ErrorCard from '../components/ErrorCard';
 import { useToast } from '../components/ToastRegion';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
+import { profileOptions } from '../lib/format';
 
 /**
  * Dashboard — per UX §Dashboard.
@@ -153,13 +154,7 @@ export default function HomePage() {
   });
 
   // Build profile picker options for inline pairing approval.
-  const profileOptions = [
-    ...profiles.map((p) => ({ value: p.directoryName, label: p.displayName || p.directoryName })),
-    { value: '__new__', label: '+ New sandbox profile' },
-  ];
-  if (profileOptions.length === 1) {
-    profileOptions.unshift({ value: 'Default', label: 'Default' });
-  }
+  const profileOptionsList = profileOptions(profiles);
 
   // Truly-empty: no Chrome, no agents, no pending. Replace System status with
   // a single Welcome card.
@@ -244,7 +239,7 @@ export default function HomePage() {
                 <PairingPromptCard
                   key={p.pairingId}
                   pairing={p}
-                  profileOptions={profileOptions}
+                  profileOptions={profileOptionsList}
                   onApprove={handleApprove}
                   onDeny={handleDeny}
                   disabled={busy}

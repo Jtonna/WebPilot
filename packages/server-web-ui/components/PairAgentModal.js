@@ -11,6 +11,7 @@ import { useToast } from './ToastRegion';
 import Toggle from './Toggle';
 import Modal from './Modal';
 import { buildMcpConfigJson } from '../lib/mcpConfig';
+import { profileLabel } from '../lib/format';
 
 /**
  * PairAgentModal — dialog that produces the copy-text an AI agent pastes to
@@ -132,9 +133,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
 
   const boundProfileLabel = useMemo(() => {
     const profId = generated ? generated.profileId : selectedProfile;
-    if (!profId) return '';
-    const match = profileList.find((p) => p.directoryName === profId);
-    return (match && (match.displayName || match.directoryName)) || profId;
+    return profileLabel(profileList, profId, '');
   }, [generated, selectedProfile, profileList]);
 
   // Keep refs in sync with state so out-of-render handlers (Esc, backdrop,
@@ -410,10 +409,9 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       if (includeKey) {
         const g = generatedRef.current;
         const profId = (g && g.profileId) || selectedProfile;
-        const match = profileList.find((p) => p.directoryName === profId);
-        const profLabel = (match && (match.displayName || match.directoryName)) || profId || '';
+        const profLabelText = profileLabel(profileList, profId, '');
         toast.success('Copied — agent created.');
-        scheduleConfirmFlash(profLabel ? `Copied — bound to ${profLabel}.` : 'Copied.');
+        scheduleConfirmFlash(profLabelText ? `Copied — bound to ${profLabelText}.` : 'Copied.');
       } else {
         toast.success('Copied.');
         scheduleConfirmFlash('Copied.');
