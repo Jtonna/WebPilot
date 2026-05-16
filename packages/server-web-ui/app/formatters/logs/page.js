@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import BackLink from '../../../components/BackLink';
 import ErrorCard from '../../../components/ErrorCard';
+import HealthPill from '../../../components/HealthPill';
 import { SkeletonRow } from '../../../components/Skeleton';
 import { createSequencedFetcher, getFormatterLogs } from '../../../lib/api';
 import { formatRelativeTime } from '../../../lib/format';
@@ -28,22 +29,6 @@ import { formatRelativeTime } from '../../../lib/format';
  */
 
 const POLL_INTERVAL_MS = 15 * 1000;
-
-const HEALTH_META = {
-  healthy:   { state: 'info',    label: 'Healthy' },
-  unhealthy: { state: 'danger',  label: 'Unhealthy' },
-  unknown:   { state: 'unknown', label: 'Not yet used' },
-};
-
-function HealthPill({ health }) {
-  const meta = HEALTH_META[health] || HEALTH_META.unknown;
-  return (
-    <span className="wp-pill" data-state={meta.state}>
-      <span className="wp-pill-dot" />
-      <span className="wp-pill-label">{meta.label}</span>
-    </span>
-  );
-}
 
 export default function FormatterLogsPage() {
   return (
