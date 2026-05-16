@@ -227,7 +227,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'browser_execute_js',
-      description: 'Execute JavaScript code in page context and return the result. Return value must be JSON-serializable. Use for actions that require JS execution (form manipulation, custom interactions) — for page data extraction, prefer browser_get_accessibility_tree which already provides pre-filtered, structured content.',
+      description: 'Execute arbitrary JavaScript in a browser tab and return the result. Return value must be JSON-serializable. Use ONLY for reading values or computing derived data that the accessibility tree does not already expose. **Do NOT use for navigation, clicking, typing, scrolling, or any DOM manipulation** — those have dedicated tools (`browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_close_tab`) that integrate with WebPilot\'s visual cursor, scroll easing, focus management, and refs system. Using browser_execute_js to click/type/navigate bypasses all of those and produces brittle, hard-to-debug interactions. For page data extraction, prefer browser_get_accessibility_tree which already provides pre-filtered, structured content.',
       inputSchema: {
         type: 'object',
         properties: {
