@@ -549,6 +549,17 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
           </div>
 
           <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{previewText}</pre>
+          {includeKey ? (
+            <div
+              className="wp-secondary"
+              style={{
+                marginTop: 'var(--s-2)',
+                fontSize: 'var(--fs-small)',
+              }}
+            >
+              Unused keys expire after 48 hours.
+            </div>
+          ) : null}
         </div>
         <div className="wp-modal-actions">
           <button

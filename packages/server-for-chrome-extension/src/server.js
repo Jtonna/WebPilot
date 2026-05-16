@@ -1233,6 +1233,22 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     console.log(`[pairing:cleanup] startup pass failed: ${e.message}`);
   }
 
+  // Unused-keys housekeeping: revoke paired-keys entries that were minted
+  // (typically by the pair-agent modal Copy click) but never used for a
+  // single tool call within 48h. Runs at startup and hourly. If anything
+  // is revoked, fire `agents_changed` so the web UI refreshes.
+  try {
+    const revokedAtStartup = pairedKeys.cleanupUnusedKeys();
+    if (revokedAtStartup > 0) {
+      console.log(
+        `[paired-keys:cleanup] startup pass: revoked ${revokedAtStartup} unused key(s)`
+      );
+      broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
+    }
+  } catch (e) {
+    console.log(`[paired-keys:cleanup] startup pass failed: ${e.message}`);
+  }
+
   // Extension-installs housekeeping: drop install->profile mappings whose
   // `lastResolved` is older than 90 days so the file doesn't grow unbounded.
   try {
@@ -1245,6 +1261,17 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       pairedKeys.cleanupExpiredPairings();
     } catch (e) {
       console.log(`[pairing:cleanup] hourly pass failed: ${e.message}`);
+    }
+    try {
+      const revoked = pairedKeys.cleanupUnusedKeys();
+      if (revoked > 0) {
+        console.log(
+          `[paired-keys:cleanup] hourly pass: revoked ${revoked} unused key(s)`
+        );
+        broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
+      }
+    } catch (e) {
+      console.log(`[paired-keys:cleanup] hourly pass failed: ${e.message}`);
     }
   }, 3600 * 1000);
 

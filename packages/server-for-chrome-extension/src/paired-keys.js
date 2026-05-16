@@ -20,6 +20,14 @@ function getPendingPairingsPath() {
 const PENDING_PAIRING_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 // Garbage-collect terminal / very-old entries after this many ms.
 const PAIRING_HARD_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+// Unused-key expiry: a paired-keys entry whose `lastAccessed` is still null
+// more than this many ms after `createdAt` is auto-revoked by
+// cleanupUnusedKeys(). Use case: user opened the pair-agent modal, clicked
+// Copy (which commits the entry so it survives modal close), but the AI agent
+// never actually made a single tool call. The key is dead weight in the
+// agents list — drop it. Used keys (any tool call → touchKey() sets
+// lastAccessed) are kept indefinitely.
+const UNUSED_KEY_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48h
 
 /**
  * Listener registry. Other modules (server.js) can subscribe to pairing events
@@ -558,6 +566,58 @@ function cleanupExpiredPairings() {
   return { expired, dropped, kept: kept.length };
 }
 
+/**
+ * Walk paired-keys.json and revoke any entry whose `lastAccessed` is still
+ * null more than `maxAgeMs` after `createdAt`. Designed to be called at
+ * startup and hourly, in the same schedule as `cleanupExpiredPairings`.
+ *
+ * Defensive: entries with missing or unparseable `createdAt` are SKIPPED
+ * (left alone) — legacy rows that predate the field shouldn't be silently
+ * deleted by a housekeeping pass.
+ *
+ * Entries with any non-null `lastAccessed` are kept regardless of age —
+ * the user clearly used the key at some point.
+ *
+ * Writes via saveKeys(), which updates the in-memory cache atomically.
+ *
+ * @param {number} [maxAgeMs] Override threshold (used by tests).
+ * @returns {number} Count of entries revoked.
+ */
+function cleanupUnusedKeys(maxAgeMs = UNUSED_KEY_EXPIRY_MS) {
+  const keys = loadKeys();
+  const now = Date.now();
+  const kept = [];
+  let revoked = 0;
+  for (const entry of keys) {
+    // Only touch entries that have never been accessed.
+    if (entry.lastAccessed) {
+      kept.push(entry);
+      continue;
+    }
+    // Defensive: skip if createdAt is missing or unparseable so legacy rows
+    // aren't deleted by a housekeeping pass.
+    const created = entry.createdAt ? Date.parse(entry.createdAt) : NaN;
+    if (!Number.isFinite(created)) {
+      kept.push(entry);
+      continue;
+    }
+    if (now - created > maxAgeMs) {
+      const keyDisplay = (entry.key || '').slice(0, 8) + '...';
+      console.log(
+        `[paired-keys:cleanupUnusedKeys] revoked unused key ${keyDisplay} ` +
+          `for agent "${entry.agentName}" (created ${entry.createdAt}, never accessed)`
+      );
+      revoked += 1;
+      continue;
+    }
+    kept.push(entry);
+  }
+  if (revoked > 0) {
+    saveKeys(kept);
+  }
+  return revoked;
+}
+
 module.exports = {
   loadKeys,
   saveKeys,
@@ -579,5 +639,8 @@ module.exports = {
   listPendingPairings,
   listAllPairings,
   cleanupExpiredPairings,
+  cleanupUnusedKeys,
   onPairingEvent,
+  // Constants (exposed for docs / tests; not strictly part of the runtime API)
+  UNUSED_KEY_EXPIRY_MS,
 };

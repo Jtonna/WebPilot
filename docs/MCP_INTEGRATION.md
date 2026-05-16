@@ -40,6 +40,8 @@ If the caller already presents a valid API key (header, query, or `api_key` argu
 
 The web UI's pair-agent modal supports an "Include API key" toggle. When enabled, the UI calls `POST /api/ui/agents` (body: `{ agentName, profileId }`), the server mints the key directly via `paired-keys.createPairedAgent`, and the UI builds the copyable `.mcp.json` snippet with the key already baked in. Agents using a pre-provisioned key never call `request_pairing` at all.
 
+**Unused keys expire after 48 hours.** If the agent never makes a tool call with this key, the server revokes the entry on its next cleanup pass (`paired-keys.cleanupUnusedKeys`, runs at startup and hourly). Once any tool call lands (which sets `lastAccessed` via `touchKey`), the key is kept indefinitely. The same rule applies to keys minted by the classic `request_pairing → approve` handshake — both paths start with `lastAccessed: null`.
+
 ### Re-binding agents to a different profile
 
 The web UI's Agents page exposes a profile dropdown per row. Selecting a different profile issues `PATCH /api/ui/agents/:key` with `{ profileId }`. This is a field-flip on the paired-keys entry — no WebSocket teardown is needed because tool calls re-resolve the target profile per call via `resolveTargetProfile`.
