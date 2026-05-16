@@ -7,6 +7,7 @@ WebPilot documentation covering system architecture, development guides, and API
 - [BUILD_ARCHITECTURE.md](BUILD_ARCHITECTURE.md) -- Build pipeline, pkg compilation, Electron packaging, deployment paths, and CLI flags. For anyone working on the build system or understanding how the pieces ship together.
 - [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, and service registration. For developers working on the server layer.
 - [CHROME_EXTENSION.md](CHROME_EXTENSION.md) -- Chrome extension architecture: service worker, command handlers, formatters, utilities, popup UI, and communication protocol. For developers working on browser automation.
+- [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.
 - [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: status dashboard, onboarding placeholder text, preload IPC bridge, and build scripts. For developers working on the installer and management UI.
 
 ## Guides
@@ -24,5 +25,5 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Project planning (temporary)
 
-- [`../PRE_LAUNCH_TRACKING.md`](../PRE_LAUNCH_TRACKING.md) -- Single consolidated file holding the QOL-Features spec, the living follow-ups list, and the Wave-3 server / web UI / extension code reviews. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
+- [`../PRE_LAUNCH_TRACKING.md`](../PRE_LAUNCH_TRACKING.md) -- Pre-launch tracking: open items (P0/P1/P2/P3) and intentional non-goals before this branch's v1 ships. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
 
