@@ -6,32 +6,12 @@ import {
   PencilSquareIcon,
   TrashIcon,
   CheckIcon,
-} from '@heroicons/react/24/outline';
+} from '@heroicons/react/20/solid';
+import { formatRelativeTime } from '../lib/format';
 
 function shortKey(key) {
   if (!key) return '';
   return `${String(key).slice(0, 10)}…`;
-}
-
-/**
- * Format a Date/string as relative for ≤ 7d, absolute (e.g. "May 2") for older.
- * Returns "never" for null/undefined.
- */
-function formatLastActive(value) {
-  if (!value) return 'never';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffHr  = Math.floor(diffMs / 3600000);
-  const diffDay = Math.floor(diffMs / 86400000);
-  if (diffMin < 1) return 'Just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  if (diffHr  < 24) return `${diffHr}h ago`;
-  if (diffDay < 2)  return 'Yesterday';
-  if (diffDay <= 7) return `${diffDay}d ago`;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function buildMcpConfigSnippet({ port, apiKey }) {
@@ -103,7 +83,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
             <div className="wp-row-sub">
               <span className="wp-mono" title={agent.key}>{shortKey(agent.key)}</span>
               <span className="wp-row-sep">·</span>
-              <span>Last active {formatLastActive(agent.lastActive)}</span>
+              <span>Last active {formatRelativeTime(agent.lastActive)}</span>
             </div>
           </>
         )}
@@ -117,11 +97,11 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}
         >
           {copyState === 'copied' ? (
-            <><CheckIcon style={{ width: 14, height: 14 }} /> Copied</>
+            <><CheckIcon style={{ width: 16, height: 16 }} /> Copied</>
           ) : copyState === 'error' ? (
             <>Copy failed</>
           ) : (
-            <><DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy config</>
+            <><DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy config</>
           )}
         </button>
         <button
@@ -131,7 +111,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           aria-label="Rename"
           title="Rename"
         >
-          <PencilSquareIcon style={{ width: 14, height: 14 }} /> Rename
+          <PencilSquareIcon style={{ width: 16, height: 16 }} /> Rename
         </button>
         <button
           type="button"
@@ -140,7 +120,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           aria-label="Revoke"
           title="Revoke"
         >
-          <TrashIcon style={{ width: 14, height: 14 }} /> Revoke
+          <TrashIcon style={{ width: 16, height: 16 }} /> Revoke
         </button>
       </div>
     </div>

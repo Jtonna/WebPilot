@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ProfileStatusBadge from '../../components/ProfileStatusBadge';
 import ProfileSetupModal from '../../components/ProfileSetupModal';
+import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
@@ -20,6 +21,7 @@ const STATUS_ORDER = { active: 0, ready: 1, needs_setup: 2, unknown: 3 };
 
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
+  const [profilesLoading, setProfilesLoading] = useState(true);
   const [extensionPath, setExtensionPath] = useState(null);
   const [error, setError]       = useState(null);
   const [creating, setCreating] = useState(false);
@@ -40,6 +42,8 @@ export default function ProfilesPage() {
       setError(null);
     } catch (err) {
       setError(err);
+    } finally {
+      setProfilesLoading(false);
     }
   }
 
@@ -69,7 +73,7 @@ export default function ProfilesPage() {
       setNewName('');
       setTimeout(refresh, 1000);
     } catch (e) {
-      toast.error(`Failed to create profile: ${e.message}`);
+      toast.error(e.message || 'Couldn’t create profile.');
     } finally {
       setCreating(false);
     }
@@ -95,7 +99,7 @@ export default function ProfilesPage() {
       {error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Something went wrong.
+            Couldn’t reach the server.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
@@ -105,15 +109,23 @@ export default function ProfilesPage() {
         <div className="wp-section-head">
           <h2 className="wp-section-title">Known profiles</h2>
           <span className="wp-section-aside">
-            {sorted.length > 0
-              ? `${sorted.length} ${sorted.length === 1 ? 'profile' : 'profiles'}`
-              : 'None found'}
+            {profilesLoading
+              ? ''
+              : sorted.length > 0
+                ? `${sorted.length} ${sorted.length === 1 ? 'profile' : 'profiles'}`
+                : 'None found.'}
           </span>
         </div>
         <div className="wp-card">
-          {sorted.length === 0 ? (
+          {profilesLoading ? (
+            <>
+              <SkeletonRow titleWidth="45%" subWidth="60%" showTrailing />
+              <SkeletonRow titleWidth="38%" subWidth="55%" showTrailing />
+              <SkeletonRow titleWidth="52%" subWidth="50%" showTrailing />
+            </>
+          ) : sorted.length === 0 ? (
             <div className="wp-empty">
-              No profiles found. WebPilot reads profiles from Chrome’s Local State file — launch Chrome once and refresh.
+              No profiles found. Launch Chrome once on this machine to populate the list.
             </div>
           ) : (
             sorted.map((p) => {

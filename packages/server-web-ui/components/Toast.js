@@ -5,8 +5,8 @@ import {
   CheckCircleIcon,
   InformationCircleIcon,
   ExclamationCircleIcon,
-  XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { XMarkIcon } from '@heroicons/react/20/solid';
 
 /**
  * Toast — a single toast notification. Rendered by ToastRegion.
@@ -61,7 +61,7 @@ export default function Toast({ id, flavor = 'info', message, onDismiss, duratio
         aria-label="Dismiss"
         onClick={beginDismiss}
       >
-        <XMarkIcon style={{ width: 14, height: 14 }} />
+        <XMarkIcon style={{ width: 16, height: 16 }} />
       </button>
     </div>
   );

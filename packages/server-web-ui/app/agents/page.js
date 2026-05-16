@@ -5,6 +5,7 @@ import AgentRow from '../../components/AgentRow';
 import ConfirmModal from '../../components/ConfirmModal';
 import PairAgentModal from '../../components/PairAgentModal';
 import RevealSection from '../../components/RevealSection';
+import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
@@ -22,6 +23,7 @@ import { createUiEventsClient } from '../../lib/ws';
  */
 export default function AgentsPage() {
   const [agents, setAgents]   = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
   const [port, setPort]       = useState(null);
   const [error, setError]     = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
@@ -47,6 +49,8 @@ export default function AgentsPage() {
       setError(null);
     } catch (err) {
       setError(err);
+    } finally {
+      setAgentsLoading(false);
     }
   }
 
@@ -69,7 +73,7 @@ export default function AgentsPage() {
       toast.success(`Renamed to ${newName}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Rename failed.');
+      toast.error(e.message || 'Couldn’t rename.');
     }
   }
 
@@ -84,11 +88,11 @@ export default function AgentsPage() {
       toast.info(`Revoked ${agent.name || 'agent'}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Revoke failed.');
+      toast.error(e.message || 'Couldn’t revoke.');
     }
   }
 
-  const empty = agents.length === 0;
+  const empty = !agentsLoading && agents.length === 0;
 
   return (
     <>
@@ -103,10 +107,22 @@ export default function AgentsPage() {
       {error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Something went wrong.
+            Couldn’t reach the server.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
+      ) : null}
+
+      {agentsLoading ? (
+        <section className="wp-section">
+          <div className="wp-section-head">
+            <h2 className="wp-section-title">Paired agents</h2>
+          </div>
+          <div className="wp-card">
+            <SkeletonRow titleWidth="40%" subWidth="50%" showTrailing />
+            <SkeletonRow titleWidth="48%" subWidth="45%" showTrailing />
+          </div>
+        </section>
       ) : null}
 
       {empty ? (
@@ -116,8 +132,7 @@ export default function AgentsPage() {
           </div>
           <div className="wp-card wp-card-lg">
             <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-4)', maxWidth: '60ch' }}>
-              No agents paired yet. Walk through three short steps to get your
-              first client talking to WebPilot.
+              No agents paired yet. Pair your first agent to get started.
             </p>
             <button
               type="button"
@@ -130,7 +145,7 @@ export default function AgentsPage() {
         </section>
       ) : null}
 
-      {!empty ? (
+      {!empty && !agentsLoading ? (
         <section className="wp-section">
           <div className="wp-section-head">
             <h2 className="wp-section-title">Paired agents</h2>
@@ -152,7 +167,7 @@ export default function AgentsPage() {
         </section>
       ) : null}
 
-      {!empty ? (
+      {!empty && !agentsLoading ? (
         <section className="wp-section">
           <div className="wp-section-head">
             <h2 className="wp-section-title">Pair a new agent</h2>
@@ -191,7 +206,7 @@ export default function AgentsPage() {
         title="Revoke API key?"
         body={
           revokeTarget
-            ? `Their API key stops working immediately. They can re-pair to come back.`
+            ? `${revokeTarget.name || 'Agent'}’s API key stops working immediately. They can re-pair to come back.`
             : ''
         }
         confirmLabel="Revoke"

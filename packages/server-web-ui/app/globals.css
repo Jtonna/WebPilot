@@ -1288,8 +1288,8 @@ hr {
 
 .wp-toast-region {
   position: fixed;
-  bottom: var(--s-5);
-  right: var(--s-5);
+  bottom: var(--s-6);
+  right: var(--s-6);
   z-index: 80;
   display: flex;
   flex-direction: column;
@@ -1303,7 +1303,11 @@ hr {
     right: var(--s-4);
     left: var(--s-4);
     bottom: var(--s-4);
-    align-items: center;
+    align-items: stretch;
+    max-width: none;
+  }
+  .wp-toast {
+    width: 100%;
   }
 }
 
@@ -1447,6 +1451,58 @@ hr {
 }
 .wp-card-section:first-child { padding-top: 0; }
 .wp-card-section:last-child  { padding-bottom: 0; border-bottom: none; }
+
+/* ---------------------------------------------------------------------------
+ * Skeleton — shimmer placeholder for loading content.
+ *
+ * Visual:
+ *   --wp-bg-elevated block with a low-amplitude linear-gradient shimmer
+ *   (background-position animation, 1.4s linear infinite). No opacity flash,
+ *   no scale. Respects prefers-reduced-motion (static block).
+ * ------------------------------------------------------------------------- */
+
+.wp-skeleton {
+  background-color: var(--wp-bg-elevated);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wp-separator) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  background-position: 100% 0;
+  animation: wp-shimmer 1.4s linear infinite;
+}
+
+@keyframes wp-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-skeleton {
+    animation: none;
+    background-image: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Long-path display — mono, tinted, breakable. Sits next to a Copy button.
+ * ------------------------------------------------------------------------- */
+
+.wp-path {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg-secondary);
+  word-break: break-all;
+  line-height: 1.5;
+  padding: var(--s-2) var(--s-3);
+  background: var(--wp-bg-elevated);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  max-width: 100%;
+}
 
 /* ---------------------------------------------------------------------------
  * Reveal-on-scroll — gentle fade-up triggered by IntersectionObserver

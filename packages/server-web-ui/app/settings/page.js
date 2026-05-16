@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
+import { DocumentDuplicateIcon } from '@heroicons/react/20/solid';
 import ConfirmModal from '../../components/ConfirmModal';
+import Skeleton, { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import {
   getStatus,
@@ -79,7 +80,7 @@ export default function SettingsPage() {
       await setNotificationSettings({ systemNotifications: on });
     } catch (e) {
       setNotifOn(previous);
-      toast.error(e.message || 'Could not save notification setting.');
+      toast.error(e.message || 'Couldn’t save notification setting.');
     }
   }
   async function handleSoundChange(on) {
@@ -89,7 +90,7 @@ export default function SettingsPage() {
       await setNotificationSettings({ sound: on });
     } catch (e) {
       setSoundOn(previous);
-      toast.error(e.message || 'Could not save sound setting.');
+      toast.error(e.message || 'Couldn’t save sound setting.');
     }
   }
 
@@ -101,9 +102,9 @@ export default function SettingsPage() {
     try {
       await apiSetNetworkMode(next);
       setNetworkMode(next);
-      toast.info('Server is restarting — refresh in a few seconds.');
+      toast.info('Restarting…');
     } catch (e) {
-      toast.error(e.message || 'Could not update network mode.');
+      toast.error(e.message || 'Couldn’t update network mode.');
     } finally { setBusy(false); }
   };
 
@@ -115,12 +116,12 @@ export default function SettingsPage() {
       // we reload the page after a short delay so the UI reconnects to the
       // freshly-spawned daemon.
       restartServer().catch(() => { /* expected: connection dropped */ });
-      toast.info('Server is restarting…');
+      toast.info('Restarting…');
       setTimeout(() => {
         try { window.location.reload(); } catch (_e) { /* ignore */ }
       }, 2000);
     } catch (e) {
-      toast.error(e.message || 'Could not restart server.');
+      toast.error(e.message || 'Couldn’t restart server.');
       setBusy(false);
     }
   };
@@ -185,10 +186,12 @@ export default function SettingsPage() {
           <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
             <div className="wp-row-grow">
               <div className="wp-row-title">
-                {loading ? 'Loading…' : (networkMode ? 'LAN access' : 'Localhost only')}
+                {loading
+                  ? <Skeleton width="40%" height={14} />
+                  : (networkMode ? 'LAN access' : 'Localhost only')}
               </div>
               <div className="wp-row-sub">
-                Lets other devices on your network reach this server. The server will restart.
+                Other devices on your network can reach this server. The server will restart.
               </div>
               <button
                 type="button"
@@ -237,7 +240,7 @@ export default function SettingsPage() {
             <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
               <div className="wp-row-grow">
                 <div className="wp-row-title" style={{ opacity: notifOn ? 1 : 0.5 }}>
-                  Play sound with notifications
+                  Play a sound
                 </div>
                 <div className="wp-row-sub" style={{ opacity: notifOn ? 1 : 0.5 }}>
                   A short chime alongside the system notification.
@@ -260,6 +263,15 @@ export default function SettingsPage() {
           <h2 className="wp-section-title">Server</h2>
         </div>
         <div className="wp-card">
+          {loading ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
+              <SkeletonRow titleWidth="20%" subWidth="35%" padded={false} />
+              <SkeletonRow titleWidth="35%" subWidth="75%" padded={false} />
+              <SkeletonRow titleWidth="30%" subWidth="70%" padded={false} />
+              <SkeletonRow titleWidth="25%" subWidth="40%" padded={false} />
+            </div>
+          ) : (
+          <>
           <div className="wp-kv">
             <div className="wp-kv-label">Port</div>
             <div className="wp-kv-value">
@@ -267,8 +279,8 @@ export default function SettingsPage() {
             </div>
 
             <div className="wp-kv-label">Data directory</div>
-            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-              <span className="wp-mono wp-secondary" style={{ wordBreak: 'break-all' }}>
+            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
+              <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
                 {paths.dataDir || '—'}
               </span>
               <button
@@ -277,13 +289,13 @@ export default function SettingsPage() {
                 onClick={() => copyToClipboard(paths.dataDir || '', 'Data directory')}
                 disabled={!paths.dataDir}
               >
-                <DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy
+                <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
               </button>
             </div>
 
             <div className="wp-kv-label">Log file</div>
-            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-              <span className="wp-mono wp-secondary" style={{ wordBreak: 'break-all' }}>
+            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
+              <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
                 {paths.logPath || '—'}
               </span>
               <button
@@ -292,7 +304,7 @@ export default function SettingsPage() {
                 onClick={() => copyToClipboard(paths.logPath || '', 'Log file path')}
                 disabled={!paths.logPath}
               >
-                <DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy
+                <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
               </button>
             </div>
           </div>
@@ -306,6 +318,8 @@ export default function SettingsPage() {
               {busy ? 'Restarting…' : 'Restart server'}
             </button>
           </div>
+          </>
+          )}
         </div>
       </section>
 
@@ -336,8 +350,8 @@ export default function SettingsPage() {
         title={pendingToggle ? 'Enable network mode?' : 'Disable network mode?'}
         body={
           pendingToggle
-            ? 'Restarts the server bound to 0.0.0.0 so other devices on your LAN can connect. Active agents will reconnect automatically.'
-            : 'Restarts the server bound to 127.0.0.1 (this machine only). Active agents will reconnect automatically.'
+            ? 'Other devices on your network can reach this server. The server will restart.'
+            : 'Only this machine can reach this server. The server will restart.'
         }
         confirmLabel={pendingToggle ? 'Enable' : 'Disable'}
         onConfirm={confirmToggle}

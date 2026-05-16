@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GlobeAltIcon, SignalIcon, ServerIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from '../components/PairingPromptCard';
 import StatusRow from '../components/StatusRow';
+import Skeleton from '../components/Skeleton';
 import { useToast } from '../components/ToastRegion';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
@@ -70,7 +71,7 @@ export default function HomePage() {
       toast.success(`Paired. ${pairing.agentName || 'agent'} is bound to ${selectedProfile === '__new__' ? newProfileName : selectedProfile}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Failed to approve.');
+      toast.error(e.message || 'Couldn’t approve.');
     } finally {
       setBusy(false);
     }
@@ -83,20 +84,29 @@ export default function HomePage() {
       toast.info(`Denied ${pairing.agentName || 'agent'}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Failed to deny.');
+      toast.error(e.message || 'Couldn’t deny.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleChromeAction(kind) {
+  async function handleChromeAction() {
     setBusy(true);
     try {
-      await restartChrome();
-      if (kind === 'launch') {
+      const result = await restartChrome();
+      // The server reports the outcome via `action`:
+      //   'launch'  — Chrome wasn't running; we started it.
+      //   'restart' — Chrome was running without the flag; we killed + relaunched.
+      //   'noop'    — Chrome was already running with the debug flag.
+      const action = result && result.action;
+      if (action === 'launch') {
         toast.success('Chrome launched.');
+      } else if (action === 'restart') {
+        toast.success('Chrome restarted.');
+      } else if (action === 'noop') {
+        toast.info('Chrome is already running with the debug flag.');
       } else {
-        toast.success('Chrome restarted with debug flag.');
+        toast.success('Chrome is running with the debug flag.');
       }
       // ensureReady is mostly synchronous; small delay lets the new Chrome
       // PID register so `/api/ui/status` reflects it.
@@ -143,11 +153,11 @@ export default function HomePage() {
   } else if (chromeRunning && !chromeHasFlag) {
     chromeState = 'warn';
     chromeValue = 'Running · debug flag missing';
-    chromeAction = { label: 'Restart Chrome', onClick: () => handleChromeAction('restart') };
+    chromeAction = { label: 'Restart Chrome', onClick: () => handleChromeAction() };
   } else {
     chromeState = 'unknown';
     chromeValue = 'Not detected';
-    chromeAction = { label: 'Launch Chrome', onClick: () => handleChromeAction('launch') };
+    chromeAction = { label: 'Launch Chrome', onClick: () => handleChromeAction() };
   }
 
   // ---- Extension row state ----
@@ -182,8 +192,12 @@ export default function HomePage() {
       </header>
 
       {loading ? (
-        <div className="wp-card">
-          <div className="wp-empty">Loading…</div>
+        <div className="wp-card" style={{ minHeight: 200, display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
+          <Skeleton width="40%" height={18} />
+          <Skeleton width="100%" height={14} />
+          <Skeleton width="80%" height={14} />
+          <Skeleton width="65%" height={14} />
+          <Skeleton width="55%" height={14} />
         </div>
       ) : null}
 
@@ -203,12 +217,12 @@ export default function HomePage() {
             <span className="wp-section-aside">
               {pendingPairings.length > 0
                 ? `${pendingPairings.length} pending`
-                : 'All clear'}
+                : 'All clear.'}
             </span>
           </div>
           <div className="wp-card">
             {pendingPairings.length === 0 ? (
-              <div className="wp-empty">Nothing waiting.</div>
+              <div className="wp-empty">Nothing pending right now.</div>
             ) : (
               pendingPairings.map((p) => (
                 <PairingPromptCard

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import PairingPromptCard from '../../components/PairingPromptCard';
+import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import {
   createSequencedFetcher,
@@ -11,6 +12,7 @@ import {
   getPairingHistory,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
+import { formatRelativeTime } from '../../lib/format';
 
 /**
  * Pairings — per UX §Pairings.
@@ -25,6 +27,7 @@ const HISTORY_PAGE_SIZE = 50;
 
 export default function PairingsPage() {
   const [pairings, setPairings] = useState([]);
+  const [pairingsLoading, setPairingsLoading] = useState(true);
   const [history, setHistory]   = useState([]);
   const [historyCursor, setHistoryCursor] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -48,6 +51,8 @@ export default function PairingsPage() {
       setError(null);
     } catch (err) {
       setError(err);
+    } finally {
+      setPairingsLoading(false);
     }
   }
 
@@ -76,7 +81,7 @@ export default function PairingsPage() {
       setHistory((h) => [...h, ...(entries || [])]);
       setHistoryCursor(nextCursor || null);
     } catch (err) {
-      toast.error(err.message || 'Could not load more history.');
+      toast.error(err.message || 'Couldn’t load more history.');
     } finally {
       setHistoryLoadingMore(false);
     }
@@ -129,7 +134,7 @@ export default function PairingsPage() {
       toast.success(`Paired. ${pairing.agentName || 'agent'} is bound to ${selectedProfile === '__new__' ? newProfileName : selectedProfile}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Failed to approve.');
+      toast.error(e.message || 'Couldn’t approve.');
     } finally {
       setBusy(false);
     }
@@ -142,22 +147,10 @@ export default function PairingsPage() {
       toast.info(`Denied ${pairing.agentName || 'agent'}.`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || 'Failed to deny.');
+      toast.error(e.message || 'Couldn’t deny.');
     } finally {
       setBusy(false);
     }
-  }
-
-  function fmtTimestamp(iso) {
-    if (!iso) return 'Just now';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   }
 
   return (
@@ -172,7 +165,7 @@ export default function PairingsPage() {
       {error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Something went wrong.
+            Couldn’t reach the server.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
@@ -182,12 +175,21 @@ export default function PairingsPage() {
         <div className="wp-section-head">
           <h2 className="wp-section-title">Awaiting review</h2>
           <span className="wp-section-aside">
-            {pairings.length > 0 ? `${pairings.length} pending` : 'Nothing pending'}
+            {pairingsLoading
+              ? ''
+              : pairings.length > 0
+                ? `${pairings.length} pending`
+                : 'Nothing pending.'}
           </span>
         </div>
         <div className="wp-card">
-          {pairings.length === 0 ? (
-            <div className="wp-empty">No pairing requests right now.</div>
+          {pairingsLoading ? (
+            <>
+              <SkeletonRow titleWidth="55%" subWidth="35%" showTrailing />
+              <SkeletonRow titleWidth="48%" subWidth="42%" showTrailing />
+            </>
+          ) : pairings.length === 0 ? (
+            <div className="wp-empty">Nothing pending right now.</div>
           ) : (
             pairings.map((p) => (
               <PairingPromptCard
@@ -208,10 +210,10 @@ export default function PairingsPage() {
           <h2 className="wp-section-title">History</h2>
           <span className="wp-section-aside">
             {historyLoading
-              ? 'Loading…'
+              ? ''
               : history.length > 0
                 ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}${historyCursor ? '+' : ''}`
-                : 'No decisions yet'}
+                : 'No decisions yet.'}
           </span>
         </div>
         <div className="wp-card">
@@ -232,7 +234,12 @@ export default function PairingsPage() {
               </button>
             </div>
           ) : historyLoading ? (
-            <div className="wp-empty">Loading…</div>
+            <>
+              <SkeletonRow titleWidth="50%" subWidth="30%" showTrailing />
+              <SkeletonRow titleWidth="42%" subWidth="28%" showTrailing />
+              <SkeletonRow titleWidth="55%" subWidth="35%" showTrailing />
+              <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
+            </>
           ) : history.length === 0 ? (
             <div className="wp-empty">
               No pairings yet. They’ll appear here after you approve or deny your first request.
@@ -240,7 +247,6 @@ export default function PairingsPage() {
           ) : (
             <>
               {history.map((h, i) => {
-                const ok = h.status === 'approved';
                 const denied = h.status === 'denied';
                 const expired = h.status === 'expired';
                 let label = 'Approved';
@@ -251,7 +257,7 @@ export default function PairingsPage() {
                   <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
                     <div className="wp-row-grow">
                       <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
-                      <div className="wp-row-sub">{fmtTimestamp(h.decidedAt || h.createdAt)}</div>
+                      <div className="wp-row-sub">{formatRelativeTime(h.decidedAt || h.createdAt)}</div>
                     </div>
                     <span className="wp-pill" data-state={state}>
                       <span className="wp-pill-dot" />
