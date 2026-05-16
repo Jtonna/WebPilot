@@ -12,6 +12,7 @@ import Toggle from './Toggle';
 import Modal from './Modal';
 import { buildMcpConfigJson } from '../lib/mcpConfig';
 import { profileLabel } from '../lib/format';
+import { useCopyToClipboard } from '../lib/useCopyToClipboard';
 
 /**
  * PairAgentModal — dialog that produces the copy-text an AI agent pastes to
@@ -106,7 +107,8 @@ You don't have an API key yet. Steps:
 }
 
 export default function PairAgentModal({ open, onClose, port, profiles }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, copyToClipboard] = useCopyToClipboard();
+  const copied = copyState === 'copied';
   const [includeKey, setIncludeKey] = useState(true);
   const [agentName, setAgentName] = useState('');
   const [selectedProfile, setSelectedProfile] = useState('');
@@ -191,7 +193,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   // Reset transient state + eagerly mint each time the modal opens.
   useEffect(() => {
     if (!open) return;
-    setCopied(false);
     setIncludeKey(true);
     setSubmitting(false);
     setConfirmFlash(null);
@@ -306,7 +307,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   // ---------------------------------------------------------------------------
   async function onToggleChange(next) {
     setIncludeKey(next);
-    setCopied(false);
     if (!next) {
       // Going OFF: revoke any tentative entry, drop the generated state.
       if (renameTimerRef.current) {
@@ -398,13 +398,11 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       const text = includeKey
         ? buildPromptWithKey(port, generatedRef.current && generatedRef.current.apiKey)
         : buildPromptNoKey(port);
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (_e) { /* clipboard rejected; toast still wins */ }
+      // Clipboard rejection is non-fatal — the toast still confirms intent
+      // and the agent is committed either way.
+      await copyToClipboard(text);
 
       committedRef.current = true;
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
 
       if (includeKey) {
         const g = generatedRef.current;

@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
 import {
   ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   CheckIcon,
 } from '@heroicons/react/24/outline';
 import Modal from './Modal';
+import { useCopyToClipboard } from '../lib/useCopyToClipboard';
 
 /**
  * ProfileSetupModal — walkthrough for loading the WebPilot unpacked extension
@@ -116,19 +116,13 @@ function Step({ n, text, copy, mono = false }) {
 }
 
 function InlineCopy({ text }) {
-  const [copied, setCopied] = useState(false);
-  async function handle() {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (_e) { /* ignore */ }
-  }
+  const [state, copy] = useCopyToClipboard({ revertMs: 2000 });
+  const copied = state === 'copied';
   return (
     <button
       type="button"
       className="wp-btn wp-btn-compact"
-      onClick={handle}
+      onClick={() => copy(text)}
       style={{ alignSelf: 'flex-start' }}
     >
       {copied ? (
@@ -145,23 +139,16 @@ function InlineCopy({ text }) {
 }
 
 function CodeBlock({ text }) {
-  const [copied, setCopied] = useState(false);
-  async function handle() {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (_e) { /* ignore */ }
-  }
+  const [state, copy] = useCopyToClipboard({ revertMs: 2000 });
   return (
     <div className="wp-code-wrap">
       <pre className="wp-code">{text}</pre>
       <button
         type="button"
         className="wp-btn wp-btn-compact wp-code-copy"
-        onClick={handle}
+        onClick={() => copy(text)}
       >
-        {copied ? 'Copied' : 'Copy'}
+        {state === 'copied' ? 'Copied' : 'Copy'}
       </button>
     </div>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DocumentDuplicateIcon } from '@heroicons/react/20/solid';
 import ConfirmModal from '../../components/ConfirmModal';
 import Skeleton, { SkeletonRow } from '../../components/Skeleton';
@@ -12,6 +12,7 @@ import {
   restartServer,
 } from '../../lib/api';
 import { getTheme, setTheme } from '../../lib/theme';
+import { useCopyToClipboard } from '../../lib/useCopyToClipboard';
 
 /**
  * Settings — Apple-style grouped inset cards.
@@ -39,6 +40,17 @@ export default function SettingsPage() {
   const [notifOn, setNotifOn] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
   const toast = useToast();
+  // The settings copy buttons toast success/failure with a per-call label.
+  // We close over `pendingLabelRef` so the hook's onSuccess/onError handlers
+  // see the label that was active when the click fired.
+  const pendingLabelRef = useRef('');
+  const [, copy] = useCopyToClipboard({
+    onSuccess: () => {
+      const label = pendingLabelRef.current;
+      if (label) toast.success(`${label} copied.`);
+    },
+    onError: () => toast.error('Clipboard write failed.'),
+  });
 
   async function refresh() {
     try {
@@ -121,13 +133,9 @@ export default function SettingsPage() {
     }
   };
 
-  async function copyToClipboard(text, label) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(`${label} copied.`);
-    } catch (_e) {
-      toast.error('Clipboard write failed.');
-    }
+  function copyToClipboard(text, label) {
+    pendingLabelRef.current = label;
+    copy(text);
   }
 
   return (

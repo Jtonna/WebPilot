@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/20/solid';
 import { formatRelativeTime, profileLabel } from '../lib/format';
 import { buildMcpConfigJson } from '../lib/mcpConfig';
+import { useCopyToClipboard } from '../lib/useCopyToClipboard';
 
 function shortKey(key) {
   if (!key) return '';
@@ -19,7 +20,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
   const [editing, setEditing] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
   const [name, setName] = useState(agent.name || '');
-  const [copyState, setCopyState] = useState('idle');
+  const [copyState, copy] = useCopyToClipboard();
 
   // Resolve the bound profile's display name from the profiles list. Falls
   // back to the raw directoryName so a stale or unknown binding is still
@@ -38,19 +39,9 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
     if (onRevoke) onRevoke(agent);
   };
 
-  const handleCopy = async () => {
-    if (!port || !agent.key) {
-      setCopyState('error');
-      setTimeout(() => setCopyState('idle'), 1500);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(buildMcpConfigJson({ port, apiKey: agent.key }));
-      setCopyState('copied');
-    } catch (_e) {
-      setCopyState('error');
-    }
-    setTimeout(() => setCopyState('idle'), 1500);
+  const handleCopy = () => {
+    if (!port || !agent.key) return;
+    copy(buildMcpConfigJson({ port, apiKey: agent.key }));
   };
 
   return (
