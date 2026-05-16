@@ -51,14 +51,6 @@ const NAV_WORKSPACE = [
     IconSolid: HomeSolid,
   },
   {
-    href: '/ui/pairings/',
-    label: 'Pairings',
-    match: (p) => p.startsWith('/ui/pairings'),
-    IconOutline: KeyOutline,
-    IconSolid: KeySolid,
-    showCount: true,
-  },
-  {
     href: '/ui/profiles/',
     label: 'Profiles',
     match: (p) => p.startsWith('/ui/profiles'),
@@ -71,6 +63,14 @@ const NAV_WORKSPACE = [
     match: (p) => p.startsWith('/ui/agents'),
     IconOutline: CpuChipOutline,
     IconSolid: CpuChipSolid,
+  },
+  {
+    href: '/ui/pairings/',
+    label: 'Pairings',
+    match: (p) => p.startsWith('/ui/pairings'),
+    IconOutline: KeyOutline,
+    IconSolid: KeySolid,
+    showCount: true,
   },
 ];
 

@@ -4,7 +4,6 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
 import ConfirmModal from '../../components/ConfirmModal';
-import RevealSection from '../../components/RevealSection';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../../lib/api';
@@ -14,30 +13,29 @@ import { createUiEventsClient } from '../../lib/ws';
  * Agents — pairing-first layout.
  *
  * Sections (top → bottom):
- *   1. Pair a new agent  — always-visible hero. Big copy-card containing the
- *                          AI-pairing prompt. One-click copy → paste into AI.
+ *   1. Pair a new agent  — always-visible single bar. One block of natural-
+ *                          language instructions (with the actual MCP server
+ *                          URL inline) + one Copy button. Self-sufficient for
+ *                          both AI-driven pairing and manual .mcp.json setup.
  *   2. Paired agents     — list. Filtered by ?profile=<directoryName> when
  *                          set (with a small "Clear" banner above).
- *   3. Manual setup      — collapsed RevealSection with the .mcp.json snippet
- *                          for the 1% who want to paste it themselves.
- *
- * The previous PairAgentModal walkthrough has been retired — the copy-text
- * is now primary, always-visible content.
  */
 
-// The AI-pairing prompt the user copies and pastes into their AI agent.
-// Mirrors the previous PairAgentModal step-2 text verbatim so behavior on
-// the agent side is unchanged.
-function buildAgentPrompt() {
+// The pairing instructions the user copies and pastes into their AI agent.
+// Includes the actual MCP server URL inline so a human reading it can also
+// drop it into .mcp.json by hand without needing a separate snippet.
+function buildAgentPrompt(port) {
+  const portStr = port ? String(port) : '<port>';
   return (
-    'You have access to a WebPilot MCP server but no API key yet. ' +
-    'Call request_pairing with a memorable agent_name (e.g. the project ' +
-    'or your client name). The tool returns a pairing_id and instructions; ' +
-    'follow them — surface the approval URL to me, wait for me to approve, ' +
-    'then call check_pairing_status with the pairing_id to retrieve your ' +
-    'api_key. Once you have the key, include it as the api_key parameter on ' +
-    'each tool call, or tell me to paste it into .mcp.json under ' +
-    'headers."X-API-Key" and restart this client.'
+    `Connect to my WebPilot MCP server at http://localhost:${portStr}/sse — ` +
+    `that's the URL for your .mcp.json if you need it.\n\n` +
+    `You don't have an API key yet. Call request_pairing with a memorable ` +
+    `agent_name (e.g. the project or client name). The tool returns a ` +
+    `pairing_id and instructions; follow them — surface the approval URL ` +
+    `to me, wait for me to approve, then call check_pairing_status with ` +
+    `the pairing_id to retrieve your api_key. Once you have the key, ` +
+    `include it as the api_key parameter on each tool call, or tell me to ` +
+    `paste it into .mcp.json under headers."X-API-Key" and restart this client.`
   );
 }
 
@@ -158,7 +156,7 @@ function AgentsPageInner() {
     ? agents.filter((a) => a.profileId === profileFilter)
     : agents;
 
-  const agentPrompt = buildAgentPrompt();
+  const agentPrompt = buildAgentPrompt(port);
 
   return (
     <>
@@ -179,7 +177,7 @@ function AgentsPageInner() {
         </div>
       ) : null}
 
-      {/* Hero — always visible, primary CTA. */}
+      {/* Single pair-agent bar — self-sufficient for both AI and manual setup. */}
       <section className="wp-section">
         <div className="wp-section-head">
           <h2 className="wp-section-title">Pair a new agent</h2>
@@ -244,13 +242,6 @@ function AgentsPageInner() {
         </section>
       )}
 
-      <RevealSection className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Manual setup (advanced)</h2>
-        </div>
-        <ManualSetupCard port={port} />
-      </RevealSection>
-
       <ConfirmModal
         open={!!revokeTarget}
         title="Revoke API key?"
@@ -269,8 +260,10 @@ function AgentsPageInner() {
 }
 
 /**
- * The "primary CTA" card. Big heading, one-line explanation, then the copy
- * block with an overlay Copy button — the same pattern ManualSetupCard uses.
+ * Single pair-agent bar. One heading, one subhead, the copy-text in a
+ * <pre class="wp-code"> with an overlay Copy button. Self-sufficient for
+ * both AI-driven pairing (copy → paste into agent) and manual setup
+ * (read the URL out of the copy-text and drop it into .mcp.json).
  */
 function PairingPromptHero({ prompt }) {
   const [copied, setCopied] = useState(false);
@@ -291,8 +284,7 @@ function PairingPromptHero({ prompt }) {
           maxWidth: '62ch',
         }}
       >
-        Copy this prompt and paste it into your AI agent. It’ll pair itself
-        with WebPilot — you just approve the request when it appears.
+        Copy this and paste it into your AI agent — or use the URL to set it up manually.
       </p>
       <div className="wp-code-wrap">
         <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{prompt}</pre>
@@ -304,54 +296,6 @@ function PairingPromptHero({ prompt }) {
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-    </div>
-  );
-}
-
-function ManualSetupCard({ port }) {
-  const portStr = port ? String(port) : '<port>';
-  const urlOnlyConfig = `{
-  "mcpServers": {
-    "webpilot": {
-      "url": "http://localhost:${portStr}/sse"
-    }
-  }
-}`;
-  const [copied, setCopied] = useState(false);
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(urlOnlyConfig);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (_e) { /* ignore */ }
-  }
-  return (
-    <div className="wp-card">
-      <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-4)', maxWidth: '60ch' }}>
-        For users who prefer to paste the config themselves.
-      </p>
-      <div className="wp-code-wrap">
-        <pre className="wp-code">{urlOnlyConfig}</pre>
-        <button
-          type="button"
-          className="wp-btn wp-btn-compact wp-code-copy"
-          onClick={handleCopy}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <ol style={{
-        paddingLeft: 20,
-        margin: 'var(--s-4) 0 0',
-        color: 'var(--wp-fg-secondary)',
-        fontSize: 14,
-        lineHeight: 1.7,
-      }}>
-        <li>Paste the snippet above into your project’s <code>.mcp.json</code>.</li>
-        <li>Restart your MCP client so it picks up the new server.</li>
-        <li>Ask the agent to call <code>request_pairing</code> with a memorable name.</li>
-        <li>Approve the request on the Pairings page when it appears.</li>
-      </ol>
     </div>
   );
 }
