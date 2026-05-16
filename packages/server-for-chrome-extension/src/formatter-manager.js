@@ -3,11 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 const { getFormatterDir, getDataDir } = require('./service/paths');
+const formatterLogs = require('./formatter-logs');
 
 let manifest = null;
 let formatterCache = {}; // path -> loaded module
 let customPlatforms = new Set(); // platform names that came from custom manifest
 let perFormatterManifests = {}; // platformName -> normalized per-formatter manifest
+let workflowsByFormatter = {};   // platformName -> { workflowName -> { description, parameters, run } }
 
 // --- per-formatter manifest schema ---
 //
@@ -82,6 +84,7 @@ function loadPerFormatterManifest(platformName, baseDir, entryRelPath, matchHint
 
 function loadAllPerFormatterManifests() {
   perFormatterManifests = {};
+  workflowsByFormatter = {};
   if (!manifest || !manifest.platforms) return;
 
   const formatterDir = getFormatterDir();
@@ -99,7 +102,101 @@ function loadAllPerFormatterManifests() {
       platformConfig.match,
       sourceHint
     );
+    loadWorkflowsForFormatter(platformName, baseDir, platformConfig.entry);
   }
+}
+
+/**
+ * Load the sibling `workflows.js` (if present) and cross-check it against
+ * the per-formatter manifest's `workflows` array. Each declared workflow
+ * must have a matching entry in workflows.js with a valid shape:
+ *   { description: string, parameters: object, run: function }
+ * Mismatches log a warning and the broken workflow is skipped.
+ */
+function loadWorkflowsForFormatter(platformName, baseDir, entryRelPath) {
+  const entryDir = path.dirname(path.join(baseDir, entryRelPath));
+  const workflowsPath = path.join(entryDir, 'workflows.js');
+  if (!fs.existsSync(workflowsPath)) return;
+
+  let mod;
+  try {
+    // Bust the require cache so reload() picks up edits.
+    try { delete require.cache[require.resolve(workflowsPath)]; } catch (e) { /* not in cache yet */ }
+    mod = require(workflowsPath);
+  } catch (err) {
+    console.warn(`[formatter-manager] workflows.js for "${platformName}" failed to load: ${err.message}. Skipping workflows.`);
+    return;
+  }
+
+  if (!mod || typeof mod !== 'object') {
+    console.warn(`[formatter-manager] workflows.js for "${platformName}" must export an object map of workflows. Got ${typeof mod}.`);
+    return;
+  }
+
+  const manifestWorkflows = (perFormatterManifests[platformName] && perFormatterManifests[platformName].workflows) || [];
+  const declaredNames = new Set(manifestWorkflows.map((w) => w && w.name).filter(Boolean));
+
+  const valid = {};
+  for (const [wfName, wf] of Object.entries(mod)) {
+    if (!declaredNames.has(wfName)) {
+      console.warn(`[formatter-manager] workflow "${platformName}/${wfName}" is implemented in workflows.js but not declared in manifest.json — skipping. Add it to manifest.workflows[] to enable.`);
+      continue;
+    }
+    if (!wf || typeof wf !== 'object') {
+      console.warn(`[formatter-manager] workflow "${platformName}/${wfName}" must be an object — skipping.`);
+      continue;
+    }
+    if (typeof wf.run !== 'function') {
+      console.warn(`[formatter-manager] workflow "${platformName}/${wfName}" missing run() function — skipping.`);
+      continue;
+    }
+    if (typeof wf.description !== 'string' || wf.description.length === 0) {
+      console.warn(`[formatter-manager] workflow "${platformName}/${wfName}" missing description — skipping.`);
+      continue;
+    }
+    if (!wf.parameters || typeof wf.parameters !== 'object') {
+      console.warn(`[formatter-manager] workflow "${platformName}/${wfName}" missing parameters object — skipping.`);
+      continue;
+    }
+    valid[wfName] = {
+      description: wf.description,
+      parameters: wf.parameters,
+      run: wf.run
+    };
+  }
+
+  // Warn (don't fail) when manifest declares a workflow with no implementation.
+  for (const declaredName of declaredNames) {
+    if (!valid[declaredName]) {
+      console.warn(`[formatter-manager] workflow "${platformName}/${declaredName}" declared in manifest.json but has no valid implementation in workflows.js.`);
+    }
+  }
+
+  if (Object.keys(valid).length > 0) {
+    workflowsByFormatter[platformName] = valid;
+    console.log(`[formatter-manager] loaded ${Object.keys(valid).length} workflow(s) for "${platformName}": ${Object.keys(valid).join(', ')}`);
+  }
+}
+
+function getWorkflow(formatterName, workflowName) {
+  const formatterWorkflows = workflowsByFormatter[formatterName];
+  if (!formatterWorkflows) return null;
+  return formatterWorkflows[workflowName] || null;
+}
+
+function listWorkflows() {
+  const out = [];
+  for (const [formatterName, formatterWorkflows] of Object.entries(workflowsByFormatter)) {
+    for (const [wfName, wf] of Object.entries(formatterWorkflows)) {
+      out.push({
+        formatter: formatterName,
+        name: wfName,
+        description: wf.description,
+        parameters: wf.parameters
+      });
+    }
+  }
+  return out;
 }
 
 function getCustomFormatterDir() {
@@ -178,9 +275,20 @@ function formatTree(url, rawNodes) {
             // Support both export styles: module.exports = fn OR module.exports = { fn }
             const formatFn = typeof formatter === 'function' ? formatter : Object.values(formatter)[0];
             const result = formatFn(rawNodes);
+            formatterLogs.recordSuccess(platformName);
             return result;
           } catch (err) {
             console.warn(`[formatter-manager] Platform formatter ${platformName} failed:`, err.message);
+            formatterLogs.recordError(platformName, { error: err, phase: 'format' });
+
+            // Honor per-formatter `errorHandling.fallbackToRawTree` (defaults
+            // to true if the per-formatter manifest is missing or did not
+            // override it). When false, re-raise so the caller can decide.
+            const pm = perFormatterManifests[platformName];
+            const fallback = !pm || !pm.errorHandling || pm.errorHandling.fallbackToRawTree !== false;
+            if (!fallback) {
+              throw err;
+            }
             // Fall through to default
           }
         }
@@ -271,6 +379,17 @@ function getFormatterInfo(platform) {
   for (const [name, config] of Object.entries(manifest.platforms || {})) {
     const perManifest = perFormatterManifests[name];
     const fallbackSource = customPlatforms.has(name) ? 'custom' : 'remote';
+    const declaredWorkflows = (perManifest && perManifest.workflows) || [];
+    const implMap = workflowsByFormatter[name] || {};
+    // Annotate each manifest-declared workflow with whether a matching
+    // implementation is actually loaded (workflows.js export shape valid).
+    // Agents call webpilot_run_workflow only on `implemented: true` rows.
+    const workflows = declaredWorkflows.map((wf) => ({
+      name: wf.name,
+      description: wf.description,
+      parameters: wf.parameters || {},
+      implemented: !!(wf.name && implMap[wf.name])
+    }));
     platforms[name] = {
       name,
       match: (perManifest && perManifest.match) || config.match,
@@ -281,7 +400,7 @@ function getFormatterInfo(platform) {
       version: (perManifest && perManifest.version) || '0.0.0',
       source: (perManifest && perManifest.source) || fallbackSource,
       errorHandling: (perManifest && perManifest.errorHandling) || { fallbackToRawTree: true },
-      workflows: (perManifest && perManifest.workflows) || []
+      workflows
     };
   }
 
@@ -376,4 +495,13 @@ function getPerFormatterManifests() {
   return { ...perFormatterManifests };
 }
 
-module.exports = { init, formatTree, reload, getFormatterInfo, getCustomFormatterDir, getPerFormatterManifests };
+module.exports = {
+  init,
+  formatTree,
+  reload,
+  getFormatterInfo,
+  getCustomFormatterDir,
+  getPerFormatterManifests,
+  getWorkflow,
+  listWorkflows
+};

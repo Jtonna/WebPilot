@@ -1,5 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { buildMcpConfigJson } = require('./lib/mcp-config-template');
+const { findInTree } = require('./lib/tree-query');
+const formatterLogs = require('./formatter-logs');
 
 async function fetchScriptFromUrl(url) {
   const parsedUrl = new URL(url);
@@ -436,6 +438,40 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
       }
     },
     {
+      name: 'webpilot_run_workflow',
+      description: 'Execute a platform-specific workflow exposed by an accessibility tree formatter. Workflows bundle multiple primitive actions (click, type, scroll, etc.) into a single named operation — much cheaper than multiple tool calls. Use webpilot_get_formatter_info to discover available workflows per platform. Each workflow has typed parameters; pass them via the `params` argument.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          platform: {
+            type: 'string',
+            description: "Formatter name (e.g. 'discord', 'threads'). See webpilot_get_formatter_info."
+          },
+          workflow: {
+            type: 'string',
+            description: "Workflow name (e.g. 'send_message'). See webpilot_get_formatter_info."
+          },
+          params: {
+            type: 'object',
+            description: 'Workflow-specific parameters as declared in the workflow definition.'
+          },
+          tab_id: {
+            type: 'number',
+            description: 'The browser tab to run the workflow against.'
+          },
+          intent: {
+            type: 'string',
+            description: "Optional. Why you are running this workflow (debug log)."
+          },
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
+          }
+        },
+        required: ['platform', 'workflow', 'tab_id']
+      }
+    },
+    {
       name: 'browser_request_chain',
       description: 'Execute multiple tool calls sequentially and return combined results. Best used for sequential browser operations that do not need intermediate LLM reasoning between steps (e.g., click then get accessibility tree). Each step can reference results from prior steps using $N.path.to.value syntax (e.g., $0.tab_id references the tab_id field from step 0). Validates all tool names before execution begins.',
       inputSchema: {
@@ -682,6 +718,262 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       return resolved;
     }
     return args; // numbers, booleans, etc. pass through
+  }
+
+  // ----------------------------------------------------------------------
+  // Internal browser-primitive helpers
+  // ----------------------------------------------------------------------
+  //
+  // The MCP tool dispatch in `handleToolCall` and the workflow primitives
+  // exposed to `webpilot_run_workflow` both need the same underlying
+  // operations: create a tab, click a ref, fetch + format the a11y tree,
+  // etc. To keep the two in step, we factor each one into a small helper
+  // here that:
+  //   - resolves the target profile from the api_key (per-agent routing)
+  //   - guards on extension connection
+  //   - sends the command via extensionBridge.sendCommand
+  //   - returns the raw result object (NOT the MCP `{ content: [...] }`
+  //     envelope) so workflows get plain objects to work with
+  //
+  // The MCP tool branches wrap each helper in the `{ content: [{ ... }] }`
+  // envelope; the workflow primitives return the helper's result directly.
+  // ----------------------------------------------------------------------
+
+  /**
+   * Ensure the extension is connected for the resolved profile. Throws an
+   * Error with a helpful message if not. Returns the resolved profileId.
+   */
+  function _requireExtensionConnected(apiKey) {
+    const targetProfile = resolveTargetProfile(apiKey);
+    if (!extensionBridge.isConnected(targetProfile)) {
+      throw new Error(
+        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
+      );
+    }
+    return targetProfile;
+  }
+
+  async function _browserCreateTab({ url }, apiKey) {
+    const targetProfile = resolveTargetProfile(apiKey);
+
+    if (chromeManager) {
+      console.log(`[mcp-handler] browser_create_tab readiness gate for profile="${targetProfile}"`);
+      let ensureResult;
+      try {
+        ensureResult = await chromeManager.ensureReady([targetProfile]);
+        console.log(`[mcp-handler] chromeManager.ensureReady result:`, ensureResult);
+      } catch (e) {
+        console.log(`[mcp-handler] chromeManager.ensureReady threw: ${e.message}`);
+        throw new Error(`Failed to ensure Chrome readiness: ${e.message}`);
+      }
+
+      if (ensureResult && (ensureResult.action === 'restart' || ensureResult.action === 'launch')) {
+        console.log(
+          `[mcp-handler] waiting up to 10s for extension WS profile="${targetProfile}" (action=${ensureResult.action})`
+        );
+        const ok = await waitForExtensionConnection(targetProfile, 10000);
+        if (!ok) {
+          throw new Error(
+            `Chrome was ${ensureResult.action}ed for profile "${targetProfile}" but the WebPilot extension ` +
+              `did not (re)connect within 10s. Ensure the extension is installed and loaded in this profile.`
+          );
+        }
+      }
+    }
+
+    if (!extensionBridge.isConnected(targetProfile)) {
+      throw new Error(
+        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
+      );
+    }
+
+    return await extensionBridge.sendCommand(targetProfile, 'create_tab', { url });
+  }
+
+  async function _browserCloseTab({ tab_id }, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    return await extensionBridge.sendCommand(targetProfile, 'close_tab', { tab_id });
+  }
+
+  async function _browserGetTabs(_args, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    return await extensionBridge.sendCommand(targetProfile, 'get_tabs', {});
+  }
+
+  async function _browserClick(args, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    return await extensionBridge.sendCommand(targetProfile, 'click', {
+      tab_id: args.tab_id,
+      ref: args.ref,
+      selector: args.selector,
+      x: args.x,
+      y: args.y,
+      button: args.button || 'left',
+      clickCount: args.clickCount || 1,
+      delay: args.delay,
+      showCursor: args.showCursor ?? true
+    });
+  }
+
+  async function _browserScroll(args, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    // The extension command takes { tab_id, ref?, selector?, pixels? } —
+    // direction/amount are conveniences for workflow callers that get
+    // translated into positive/negative pixel deltas here.
+    let pixels = args.pixels;
+    if (pixels === undefined && args.direction) {
+      const amount = typeof args.amount === 'number' ? args.amount : 300;
+      const dir = String(args.direction).toLowerCase();
+      if (dir === 'down') pixels = amount;
+      else if (dir === 'up') pixels = -amount;
+    }
+    return await extensionBridge.sendCommand(targetProfile, 'scroll', {
+      tab_id: args.tab_id,
+      ref: args.ref,
+      selector: args.selector,
+      pixels
+    });
+  }
+
+  async function _browserType(args, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    return await extensionBridge.sendCommand(targetProfile, 'type', {
+      tab_id: args.tab_id,
+      text: args.text,
+      ref: args.ref,
+      selector: args.selector,
+      delay: args.delay || 50,
+      pressEnter: args.pressEnter || false
+    });
+  }
+
+  /**
+   * Fetch the accessibility tree, run it through the formatter, push refs
+   * back to the extension (so subsequent click/type/scroll-by-ref work),
+   * and return the parsed result object:
+   *   { tree, elementCount, refs, ...extras }
+   *
+   * Returns the parsed object directly — callers in the MCP tool branch
+   * wrap it in `{ content: [{ type: 'text', text: JSON.stringify(...) }] }`.
+   */
+  async function _browserGetAccessibilityTree(args, apiKey) {
+    const targetProfile = _requireExtensionConnected(apiKey);
+    const a11yParams = {
+      tab_id: args.tab_id,
+      usePlatformOptimizer: args.usePlatformOptimizer ?? true
+    };
+    const rawResult = await extensionBridge.sendCommand(targetProfile, 'get_accessibility_tree', a11yParams);
+    const { nodes, url, tabId, usePlatformOptimizer } = rawResult;
+
+    const formatterUrl = usePlatformOptimizer === false ? null : url;
+
+    let formatted;
+    try {
+      formatted = formatterManager.formatTree(formatterUrl, nodes);
+    } catch (err) {
+      console.warn('[mcp-handler] Formatter error, falling back to default:', err.message);
+      formatted = formatterManager.formatTree(null, nodes);
+    }
+
+    const { tree, elementCount, refs, ...extras } = formatted;
+
+    // Build ancestry context for each ref using extractAncestryContext from default formatter
+    if (refs && Object.keys(refs).length > 0) {
+      try {
+        const { getFormatterDir } = require('./service/paths');
+        const { extractAncestryContext } = require(require('path').join(getFormatterDir(), 'default.js'));
+
+        const nodeMap = new Map();
+        for (const node of nodes) {
+          nodeMap.set(node.nodeId, node);
+        }
+
+        const backendNodeMap = new Map();
+        for (const node of nodes) {
+          if (node.backendDOMNodeId) {
+            backendNodeMap.set(node.backendDOMNodeId, node);
+          }
+        }
+
+        const refContexts = {};
+        for (const [ref, backendDOMNodeId] of Object.entries(refs)) {
+          const node = backendNodeMap.get(backendDOMNodeId);
+          if (node) {
+            refContexts[ref] = extractAncestryContext(node, nodeMap);
+          }
+        }
+
+        extensionBridge.notify(targetProfile, {
+          type: 'store_refs',
+          tabId,
+          refs,
+          refContexts
+        });
+      } catch (err) {
+        console.warn('[mcp-handler] Failed to build ref contexts:', err.message);
+        extensionBridge.notify(targetProfile, {
+          type: 'store_refs',
+          tabId,
+          refs,
+          refContexts: null
+        });
+      }
+    }
+
+    return { tree, elementCount, refs, ...extras };
+  }
+
+  /**
+   * Build the `browser` primitives object passed to workflow `run()`
+   * implementations. Internally each method calls the same `_browser*`
+   * helper used by the MCP tool dispatch, so workflows execute
+   * server-side without HTTP/SSE roundtrips.
+   */
+  function buildBrowserPrimitives(apiKey) {
+    return {
+      getAccessibilityTree: ({ tab_id, usePlatformOptimizer } = {}) =>
+        _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey),
+      click: ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) =>
+        _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey),
+      type: ({ tab_id, text, ref, selector, delay, pressEnter } = {}) =>
+        _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey),
+      scroll: ({ tab_id, ref, selector, pixels, direction, amount } = {}) =>
+        _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey),
+      getTabs: () => _browserGetTabs({}, apiKey),
+      createTab: ({ url } = {}) => _browserCreateTab({ url }, apiKey)
+    };
+  }
+
+  /**
+   * Validate workflow params against the workflow's `parameters` declaration.
+   * Returns null on success or an error message string. Supports basic
+   * type checks (string/number/boolean/object/array) — no full JSON Schema
+   * library, which matches the format the manifest declares per param.
+   */
+  function _validateWorkflowParams(declared, provided) {
+    if (!declared || typeof declared !== 'object') return null;
+    for (const [pname, pdecl] of Object.entries(declared)) {
+      const expectedType = pdecl && pdecl.type;
+      const value = provided && provided[pname];
+      if (value === undefined || value === null) {
+        // Treat all declared params as optional unless explicitly marked
+        // required (which the v1 schema doesn't carry yet). The workflow
+        // implementation is responsible for asserting required fields.
+        continue;
+      }
+      if (!expectedType) continue;
+      const actualType = Array.isArray(value) ? 'array' : typeof value;
+      const ok =
+        (expectedType === 'string'  && actualType === 'string')  ||
+        (expectedType === 'number'  && actualType === 'number')  ||
+        (expectedType === 'boolean' && actualType === 'boolean') ||
+        (expectedType === 'object'  && actualType === 'object' && !Array.isArray(value)) ||
+        (expectedType === 'array'   && actualType === 'array');
+      if (!ok) {
+        return `Parameter "${pname}" expected type ${expectedType}, got ${actualType}.`;
+      }
+    }
+    return null;
   }
 
   async function handleToolCall(params, apiKey = null) {
@@ -949,6 +1241,63 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       return { content: [{ type: 'text', text: JSON.stringify({ reloaded: true, ...info }, null, 2) }] };
     }
 
+    if (name === 'webpilot_run_workflow') {
+      const {
+        platform,
+        workflow,
+        params: workflowParams = {},
+        tab_id: workflowTabId
+      } = args || {};
+
+      if (!platform || !workflow) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: 'Missing required argument: platform and workflow.' }) }],
+          isError: true
+        };
+      }
+
+      const wf = formatterManager.getWorkflow(platform, workflow);
+      if (!wf) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: `Unknown workflow: ${platform}/${workflow}. See webpilot_get_formatter_info.` }) }],
+          isError: true
+        };
+      }
+
+      const paramError = _validateWorkflowParams(wf.parameters, workflowParams);
+      if (paramError) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: paramError }) }],
+          isError: true
+        };
+      }
+
+      console.log(`[mcp:workflow] running ${platform}/${workflow} tabId=${workflowTabId}`);
+
+      try {
+        const result = await wf.run({
+          params: workflowParams,
+          browser: buildBrowserPrimitives(apiKey),
+          tabId: workflowTabId,
+          findInTree
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(result && typeof result === 'object' ? result : { result }) }) }] };
+      } catch (err) {
+        formatterLogs.recordError(platform, {
+          error: err,
+          phase: 'workflow',
+          workflow,
+          params: workflowParams,
+          tabId: workflowTabId
+        });
+        console.warn(`[mcp:workflow] ${platform}/${workflow} failed: ${err.message}`);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }],
+          isError: true
+        };
+      }
+    }
+
     // From here down all tools require a connected extension for the target profile.
     const targetProfile = resolveTargetProfile(apiKey);
     const keyDisplay = apiKey ? apiKey.slice(0, 8) : '(none)';
@@ -958,39 +1307,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 
     // browser_create_tab is the readiness gate: it may launch/restart Chrome.
     if (name === 'browser_create_tab') {
-      if (chromeManager) {
-        console.log(`[mcp-handler] browser_create_tab readiness gate for profile="${targetProfile}"`);
-        let ensureResult;
-        try {
-          ensureResult = await chromeManager.ensureReady([targetProfile]);
-          console.log(`[mcp-handler] chromeManager.ensureReady result:`, ensureResult);
-        } catch (e) {
-          console.log(`[mcp-handler] chromeManager.ensureReady threw: ${e.message}`);
-          throw new Error(`Failed to ensure Chrome readiness: ${e.message}`);
-        }
-
-        // If Chrome was restarted or freshly launched, wait for the extension to (re)connect.
-        if (ensureResult && (ensureResult.action === 'restart' || ensureResult.action === 'launch')) {
-          console.log(
-            `[mcp-handler] waiting up to 10s for extension WS profile="${targetProfile}" (action=${ensureResult.action})`
-          );
-          const ok = await waitForExtensionConnection(targetProfile, 10000);
-          if (!ok) {
-            throw new Error(
-              `Chrome was ${ensureResult.action}ed for profile "${targetProfile}" but the WebPilot extension ` +
-                `did not (re)connect within 10s. Ensure the extension is installed and loaded in this profile.`
-            );
-          }
-        }
-      }
-
-      if (!extensionBridge.isConnected(targetProfile)) {
-        throw new Error(
-          `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
-        );
-      }
-
-      const result = await extensionBridge.sendCommand(targetProfile, 'create_tab', { url: args.url });
+      const result = await _browserCreateTab({ url: args.url }, apiKey);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
@@ -1010,89 +1327,18 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       // ChromeManager readiness path and an early `return`. It must NOT appear
       // in this switch — its presence would be misleading dead code.
 
-      case 'browser_close_tab':
-        commandType = 'close_tab';
-        commandParams = { tab_id: args.tab_id };
-        break;
+      case 'browser_close_tab': {
+        const result = await _browserCloseTab({ tab_id: args.tab_id }, apiKey);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
-      case 'browser_get_tabs':
-        commandType = 'get_tabs';
-        commandParams = {};
-        break;
+      case 'browser_get_tabs': {
+        const result = await _browserGetTabs({}, apiKey);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
       case 'browser_get_accessibility_tree': {
-        const a11yParams = {
-          tab_id: args.tab_id,
-          usePlatformOptimizer: args.usePlatformOptimizer ?? true
-        };
-        const rawResult = await extensionBridge.sendCommand(targetProfile, 'get_accessibility_tree', a11yParams);
-        const { nodes, url, tabId, usePlatformOptimizer } = rawResult;
-
-        // Determine URL for formatter: if usePlatformOptimizer is explicitly false, pass null to force default
-        const formatterUrl = usePlatformOptimizer === false ? null : url;
-
-        // Format the tree server-side
-        let formatted;
-        try {
-          formatted = formatterManager.formatTree(formatterUrl, nodes);
-        } catch (err) {
-          console.warn('[mcp-handler] Formatter error, falling back to default:', err.message);
-          formatted = formatterManager.formatTree(null, nodes);
-        }
-
-        const { tree, elementCount, refs, ...extras } = formatted;
-
-        // Build ancestry context for each ref using extractAncestryContext from default formatter
-        if (refs && Object.keys(refs).length > 0) {
-          try {
-            const { getFormatterDir } = require('./service/paths');
-            const { extractAncestryContext } = require(require('path').join(getFormatterDir(), 'default.js'));
-
-            // Build nodeMap from raw nodes
-            const nodeMap = new Map();
-            for (const node of nodes) {
-              nodeMap.set(node.nodeId, node);
-            }
-
-            // Build backendDOMNodeId -> node lookup for ref resolution
-            const backendNodeMap = new Map();
-            for (const node of nodes) {
-              if (node.backendDOMNodeId) {
-                backendNodeMap.set(node.backendDOMNodeId, node);
-              }
-            }
-
-            // Build refContexts: { ref: ancestryContext }
-            const refContexts = {};
-            for (const [ref, backendDOMNodeId] of Object.entries(refs)) {
-              const node = backendNodeMap.get(backendDOMNodeId);
-              if (node) {
-                refContexts[ref] = extractAncestryContext(node, nodeMap);
-              }
-            }
-
-            // Send ref mappings and contexts to extension
-            extensionBridge.notify(targetProfile, {
-              type: 'store_refs',
-              tabId,
-              refs,
-              refContexts
-            });
-          } catch (err) {
-            console.warn('[mcp-handler] Failed to build ref contexts:', err.message);
-            // Still send refs without contexts
-            extensionBridge.notify(targetProfile, {
-              type: 'store_refs',
-              tabId,
-              refs,
-              refContexts: null
-            });
-          }
-        }
-
-        // Build response with tree, elementCount, and any extras (postCount, listingCount, platform, etc.)
-        const responseData = { tree, elementCount, ...extras };
-
+        const responseData = await _browserGetAccessibilityTree(args, apiKey);
         return {
           content: [{
             type: 'text',
@@ -1116,42 +1362,20 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
         commandParams = { tab_id: args.tab_id, code: args.code };
         break;
 
-      case 'browser_click':
-        commandType = 'click';
-        commandParams = {
-          tab_id: args.tab_id,
-          ref: args.ref,
-          selector: args.selector,
-          x: args.x,
-          y: args.y,
-          button: args.button || 'left',
-          clickCount: args.clickCount || 1,
-          delay: args.delay,
-          showCursor: args.showCursor ?? true
-        };
-        break;
+      case 'browser_click': {
+        const result = await _browserClick(args, apiKey);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
-      case 'browser_scroll':
-        commandType = 'scroll';
-        commandParams = {
-          tab_id: args.tab_id,
-          ref: args.ref,
-          selector: args.selector,
-          pixels: args.pixels
-        };
-        break;
+      case 'browser_scroll': {
+        const result = await _browserScroll(args, apiKey);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
-      case 'browser_type':
-        commandType = 'type';
-        commandParams = {
-          tab_id: args.tab_id,
-          text: args.text,
-          ref: args.ref,
-          selector: args.selector,
-          delay: args.delay || 50,
-          pressEnter: args.pressEnter || false
-        };
-        break;
+      case 'browser_type': {
+        const result = await _browserType(args, apiKey);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
 
       case 'browser_request_chain': {
         const steps = args.steps;
