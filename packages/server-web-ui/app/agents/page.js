@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
 import BackLink from '../../components/BackLink';
 import ConfirmModal from '../../components/ConfirmModal';
+import PairAgentModal from '../../components/PairAgentModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import {
@@ -20,31 +21,13 @@ import { createUiEventsClient } from '../../lib/ws';
  * Agents — pairing-first layout.
  *
  * Sections (top → bottom):
- *   1. Pair a new agent  — always-visible single bar. One block of natural-
- *                          language instructions (with the actual MCP server
- *                          URL inline) + one Copy button. Self-sufficient for
- *                          both AI-driven pairing and manual .mcp.json setup.
+ *   1. Pair a new agent  — slim bar with a single CTA button. Clicking opens
+ *                          PairAgentModal, which holds the instructions text
+ *                          + Copy button. Used rarely, so it stays out of the
+ *                          way until invoked.
  *   2. Paired agents     — list. Filtered by ?profile=<directoryName> when
  *                          set (with a small "Clear" banner above).
  */
-
-// The pairing instructions the user copies and pastes into their AI agent.
-// Includes the actual MCP server URL inline so a human reading it can also
-// drop it into .mcp.json by hand without needing a separate snippet.
-function buildAgentPrompt(port) {
-  const portStr = port ? String(port) : '<port>';
-  return (
-    `Connect to my WebPilot MCP server at http://localhost:${portStr}/sse — ` +
-    `that's the URL for your .mcp.json if you need it.\n\n` +
-    `You don't have an API key yet. Call request_pairing with a memorable ` +
-    `agent_name (e.g. the project or client name). The tool returns a ` +
-    `pairing_id and instructions; follow them — surface the approval URL ` +
-    `to me, wait for me to approve, then call check_pairing_status with ` +
-    `the pairing_id to retrieve your api_key. Once you have the key, ` +
-    `include it as the api_key parameter on each tool call, or tell me to ` +
-    `paste it into .mcp.json under headers."X-API-Key" and restart this client.`
-  );
-}
 
 export default function AgentsPage() {
   // useSearchParams() requires a Suspense boundary for static export. The
@@ -85,6 +68,7 @@ function AgentsPageInner() {
   const [port, setPort]       = useState(null);
   const [error, setError]     = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
+  const [pairOpen, setPairOpen] = useState(false);
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
@@ -184,8 +168,6 @@ function AgentsPageInner() {
     ? agents.filter((a) => a.profileId === profileFilter)
     : agents;
 
-  const agentPrompt = buildAgentPrompt(port);
-
   return (
     <>
       {profileFilter ? <BackLink href="/ui/profiles/" label="Profiles" /> : null}
@@ -206,13 +188,28 @@ function AgentsPageInner() {
         </div>
       ) : null}
 
-      {/* Single pair-agent bar — self-sufficient for both AI and manual setup. */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Pair a new agent</h2>
-        </div>
-        <PairingPromptHero prompt={agentPrompt} />
-      </section>
+      {/* Slim pair-agent bar — opens PairAgentModal with the instructions. */}
+      <div
+        className="wp-card"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 'var(--s-4)',
+          padding: 'var(--s-3) var(--s-4)',
+        }}
+      >
+        <span style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
+          Pair a new agent
+        </span>
+        <button
+          type="button"
+          className="wp-btn wp-btn-primary"
+          onClick={() => setPairOpen(true)}
+        >
+          Pair a new agent
+        </button>
+      </div>
 
       {/* Paired agents */}
       {agentsLoading ? (
@@ -252,7 +249,7 @@ function AgentsPageInner() {
               <div className="wp-empty" style={{ padding: 0 }}>
                 {profileFilter
                   ? `No agents paired to ${filterDisplayName} yet.`
-                  : 'No agents paired yet. Copy the prompt above into your AI agent to get started.'}
+                  : 'No agents paired yet. Use “Pair a new agent” above to copy the setup prompt for your AI agent.'}
               </div>
             </div>
           ) : (
@@ -286,47 +283,12 @@ function AgentsPageInner() {
         onConfirm={confirmRevoke}
         onCancel={() => setRevokeTarget(null)}
       />
-    </>
-  );
-}
 
-/**
- * Single pair-agent bar. One heading, one subhead, the copy-text in a
- * <pre class="wp-code"> with an overlay Copy button. Self-sufficient for
- * both AI-driven pairing (copy → paste into agent) and manual setup
- * (read the URL out of the copy-text and drop it into .mcp.json).
- */
-function PairingPromptHero({ prompt }) {
-  const [copied, setCopied] = useState(false);
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(prompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch (_e) { /* ignore */ }
-  }
-  return (
-    <div className="wp-card wp-card-lg">
-      <p
-        style={{
-          margin: 0,
-          marginBottom: 'var(--s-4)',
-          color: 'var(--wp-fg-secondary)',
-          maxWidth: '62ch',
-        }}
-      >
-        Copy this and paste it into your AI agent — or use the URL to set it up manually.
-      </p>
-      <div className="wp-code-wrap">
-        <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{prompt}</pre>
-        <button
-          type="button"
-          className="wp-btn wp-btn-primary wp-btn-compact wp-code-copy"
-          onClick={handleCopy}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-    </div>
+      <PairAgentModal
+        open={pairOpen}
+        onClose={() => setPairOpen(false)}
+        port={port}
+      />
+    </>
   );
 }
