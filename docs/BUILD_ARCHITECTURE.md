@@ -297,7 +297,7 @@ Each `dist:*` script chains the server build and the Electron build in sequence.
                               (loaded unpacked)       |
                                                       |
 [Electron App] ───────────────────────────────────────┘
-  Management UI:
-    - Onboarding wizard (guides sideloading)
+  Status pane:
+    - Status pane ("Onboarding goes here" placeholder; canonical UI is server-hosted at /ui/)
     - Status dashboard (service health, config)
 ```

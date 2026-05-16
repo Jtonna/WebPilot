@@ -58,7 +58,17 @@ Once the WebSocket is open the extension sends a `hello` message **before any ot
 - `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
 - `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (`extension-installs.json`) survives config wipes.
 
-The server resolves the binding using `installId` first, then `gaiaEmail`, then a profile-picker fallback. It replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
+The server resolves the binding in five ordered steps (see `server.js` around lines 980-1090):
+
+1. **Direct `profileId`** — if the extension already has a previously-resolved profile in `chrome.storage.local`, the hello message carries it and the server uses it as-is.
+2. **`installId` lookup** — the server consults `extension-installs.json` (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
+3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
+4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
+5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the popup, which renders the picker via `profileIdentifyView`. Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
+
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
+
+> Step 4 (inference-by-exclusion) is the path most likely to "auto-bind to the wrong profile" when a user has several profiles whose `Local State` entries lack a `gaia_email`. If that happens, click **Change** on the popup's profile row to force `RESET_PROFILE_ID` and pick explicitly.
 
 ### Message handlers
 

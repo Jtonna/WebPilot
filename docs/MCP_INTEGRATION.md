@@ -169,18 +169,18 @@ Get information about available platform-specific formatters and instructions fo
 **Returns:**
 ```json
 {
-  "version": "1.0.0",
+  "version": "1",
   "platforms": {
     "threads": {
       "name": "threads",
       "match": "threads.com",
-      "description": "Formats Threads pages (home, activity, search, profiles) into structured JSON",
+      "description": "Platform-specific formatter for sites matching hostname \"threads.com\"",
       "source": "auto-updated"
     },
     "zillow": {
       "name": "zillow",
       "match": "zillow.com",
-      "description": "Formats Zillow pages (home, search, detail) into structured JSON",
+      "description": "Platform-specific formatter for sites matching hostname \"zillow.com\"",
       "source": "auto-updated"
     }
   },
@@ -194,10 +194,12 @@ Get information about available platform-specific formatters and instructions fo
 }
 ```
 
+> The `description` field shown above is the fallback that `formatter-manager.js` generates when a manifest entry has no `description` of its own — the current shipped `accessibility-tree-formatters/manifest.json` does not declare per-platform descriptions, so this fallback is what callers see today. The `version` value is the literal string in the manifest (currently `"1"`).
+
 **Returns (when `platform` filter does not match):**
 ```json
 {
-  "version": "1.0.0",
+  "version": "1",
   "platforms": null,
   "message": "Platform \"foo\" not found. Available platforms: threads, zillow",
   "default": { "entry": "default.js" },
@@ -249,12 +251,12 @@ This tool does not require authentication.
 ```json
 {
   "reloaded": true,
-  "version": "1.0.0",
+  "version": "1",
   "platforms": {
     "threads": {
       "name": "threads",
       "match": "threads.com",
-      "description": "...",
+      "description": "Platform-specific formatter for sites matching hostname \"threads.com\"",
       "source": "auto-updated"
     }
   },

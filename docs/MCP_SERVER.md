@@ -74,7 +74,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 - On startup, opens `chromeManager` for the user's default Chrome `user-data-dir`. The manager is queried per tool call via a cheap PID liveness check, with full re-detection only on cache miss.
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
-- Exposes `GET /health` (server status with `extensionConnected` and `sessions` count) and `GET /connect` (returns `apiKey`, `serverUrl`, `sseUrl`, and `networkMode` for extension auto-connect)
+- Exposes `GET /health` (server status with `extensionConnected`, `connectedProfiles`, and `sessions` count) and `GET /connect` (returns `apiKey`, `serverUrl`, `sseUrl`, and `networkMode` for extension auto-connect)
 
 ## Source Files
 
@@ -84,7 +84,7 @@ Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
 - **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. The auth-exempt set is `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp. Auth enforcement is gated by `isPairingRequired()` — the server retains a legacy code path where pairing-required can be disabled. In the current build it is always true.
-- **Per-agent profile routing** -- `resolveTargetProfile(apiKey)` looks up the entry's `profileId` (set during approval or via `PATCH /api/ui/agents/:key`) and returns it. Tool calls are then routed to the extension WS bound to that profile via `extensionBridge.sendCommand(..., { profileId })`. Legacy entries with `profileId: null` fall back to the server-wide `managedProfile` config. The auth gate's resolved key is threaded into `handleToolCall(params, effectiveKey)` so routing and auth share a single key resolution.
+- **Per-agent profile routing** -- `resolveTargetProfile(apiKey)` looks up the entry's `profileId` (set during approval or via `PATCH /api/ui/agents/:key`) and returns it. Tool calls are then routed to the extension WS bound to that profile via `extensionBridge.sendCommand(profileId, ...)`. Legacy entries with `profileId: null` fall back to the server-wide `managedProfile` config. The auth gate's resolved key is threaded into `handleToolCall(params, effectiveKey)` so routing and auth share a single key resolution.
 - **request_pairing short-circuit** -- If the caller already presents a valid API key, `request_pairing` returns the existing identity (`agentName`, `profileId`) instead of minting a new pending entry. This handles subagents that inherit `.mcp.json` from a parent and reflexively re-pair.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
 - **Tool routing** -- Maps MCP tool names to extension command types and parameters.
@@ -97,7 +97,7 @@ Implements the MCP protocol:
 
 WebSocket bridge supporting **multiple simultaneous extension connections**, keyed by Chrome profile directory name. One extension install per profile is expected; the most recent connection wins for a given profile.
 
-- `setConnection(ws, profileId)` / `clearConnection(ws)` / `getConnectedProfiles()` -- per-profile connection lifecycle. `clearConnection(ws)` only removes the matching profile, not all connections.
+- `setConnection(profileId, ws)` / `clearConnection(ws)` / `getConnectedProfiles()` -- per-profile connection lifecycle. `clearConnection(ws)` only removes the matching profile, not all connections.
 - `sendCommand(profileId, type, params, options)` — `profileId` is the first positional arg. Sends a command to the extension bound to that profile (resolved by per-agent routing in the MCP handler). Returns a Promise that resolves on matching response, or rejects on timeout (30 seconds) or disconnect.
 - `notify(profileId, message)` / `notifyAll(message)` -- Push-only fire-and-forget. Used for `store_refs` after formatting, `paired_agents_list` broadcasts after approve/revoke/rename, and similar.
 - `handleResponse(message)` -- Routes incoming responses to their pending Promise by ID.
