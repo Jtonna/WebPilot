@@ -138,6 +138,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
             type: 'string',
             description: 'The URL to open in the new tab'
           },
+          intent: {
+            type: 'string',
+            description: 'Optional. Short human-readable description of WHY you\'re making this call (e.g. \'opening Discord to find #general\', \'clicking Send after typing message text\'). Used for server-side debug logs and the upcoming Formatters/MCP observability surfaces. Not required, but strongly encouraged for non-trivial flows — it makes traces dramatically easier to debug.'
+          },
           api_key: {
             type: 'string',
             description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
@@ -155,6 +159,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           tab_id: {
             type: 'number',
             description: 'The ID of the tab to close'
+          },
+          intent: {
+            type: 'string',
+            description: 'Optional. Short human-readable description of WHY you\'re making this call (e.g. \'opening Discord to find #general\', \'clicking Send after typing message text\'). Used for server-side debug logs and the upcoming Formatters/MCP observability surfaces. Not required, but strongly encouraged for non-trivial flows — it makes traces dramatically easier to debug.'
           },
           api_key: {
             type: 'string',
@@ -290,6 +298,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
             type: 'boolean',
             description: 'Show visual cursor indicator on screen (default: true)'
           },
+          intent: {
+            type: 'string',
+            description: 'Optional. Short human-readable description of WHY you\'re making this call (e.g. \'opening Discord to find #general\', \'clicking Send after typing message text\'). Used for server-side debug logs and the upcoming Formatters/MCP observability surfaces. Not required, but strongly encouraged for non-trivial flows — it makes traces dramatically easier to debug.'
+          },
           api_key: {
             type: 'string',
             description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
@@ -319,6 +331,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           pixels: {
             type: 'number',
             description: 'Pixels to scroll, positive=down, negative=up (mutually exclusive with ref/selector)'
+          },
+          intent: {
+            type: 'string',
+            description: 'Optional. Short human-readable description of WHY you\'re making this call (e.g. \'opening Discord to find #general\', \'clicking Send after typing message text\'). Used for server-side debug logs and the upcoming Formatters/MCP observability surfaces. Not required, but strongly encouraged for non-trivial flows — it makes traces dramatically easier to debug.'
           },
           api_key: {
             type: 'string',
@@ -357,6 +373,10 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           pressEnter: {
             type: 'boolean',
             description: 'Press Enter key after typing (default: false)'
+          },
+          intent: {
+            type: 'string',
+            description: 'Optional. Short human-readable description of WHY you\'re making this call (e.g. \'opening Discord to find #general\', \'clicking Send after typing message text\'). Used for server-side debug logs and the upcoming Formatters/MCP observability surfaces. Not required, but strongly encouraged for non-trivial flows — it makes traces dramatically easier to debug.'
           },
           api_key: {
             type: 'string',
@@ -588,6 +608,15 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
         }
         console.log(`[auth] Authorized tool call: ${params.name}`);
         pairedKeys.touchKey(effectiveKey);
+      }
+
+      // Surface caller-supplied intent for navigational tools into the server
+      // log so operators (and the upcoming Formatters/MCP observability
+      // surfaces) can see WHY each step was taken. The `intent` arg is purely
+      // additive — its presence is optional and is not validated beyond the
+      // type check below.
+      if (typeof params.arguments?.intent === 'string' && params.arguments.intent.length > 0) {
+        console.log(`[mcp:intent] ${params.name}: ${params.arguments.intent}`);
       }
 
       try {

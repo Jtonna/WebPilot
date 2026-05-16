@@ -1,0 +1,12 @@
+{
+  "name": "discord",
+  "version": "1.0.0",
+  "match": "discord.com",
+  "source": "remote",
+  "description": "Discord chat — exposes channels, members, message stream, and the composer for DMs and server channels.",
+  "notes": "Routes by URL: discord.com/channels/@me is the DM list, /@me/<id> is a DM conversation, /<serverId>/<channelId> is a server channel. The composer is a textbox whose accessible name starts with 'Message #' (server channel) or 'Message @' (DM). Boolean ARIA properties (checked/selected/expanded) are normalized from CDP's stringy 'true'/'false' values into real booleans so consumers can use === true safely.",
+  "errorHandling": {
+    "fallbackToRawTree": true
+  },
+  "workflows": []
+}
