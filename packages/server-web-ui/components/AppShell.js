@@ -7,6 +7,7 @@ import {
   KeyIcon as KeyOutline,
   UserCircleIcon as UserCircleOutline,
   CpuChipIcon as CpuChipOutline,
+  CommandLineIcon as CommandLineOutline,
   Cog6ToothIcon as Cog6ToothOutline,
   Bars3Icon,
 } from '@heroicons/react/24/outline';
@@ -15,6 +16,7 @@ import {
   KeyIcon as KeySolid,
   UserCircleIcon as UserCircleSolid,
   CpuChipIcon as CpuChipSolid,
+  CommandLineIcon as CommandLineSolid,
   Cog6ToothIcon as Cog6ToothSolid,
 } from '@heroicons/react/24/solid';
 import { getStatus } from '../lib/api';
@@ -63,6 +65,13 @@ const NAV_WORKSPACE = [
     match: (p) => p.startsWith('/ui/agents'),
     IconOutline: CpuChipOutline,
     IconSolid: CpuChipSolid,
+  },
+  {
+    href: '/ui/formatters/',
+    label: 'Formatters',
+    match: (p) => p.startsWith('/ui/formatters'),
+    IconOutline: CommandLineOutline,
+    IconSolid: CommandLineSolid,
   },
   {
     href: '/ui/pairings/',
