@@ -1,27 +1,15 @@
-# Pre-Launch Tracking
+# Open Items
 
-Slim record of what shipped on `QOL-Features` and what is still pending
-before v1 of this branch lands. The branch's git history is the durable
-record; this file just answers "what's left."
-
-Last triage: 2026-05-16.
+Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 
 ---
 
-## Completed on this branch
-
-This branch shipped ~70 changes across server, web UI, extension, notifications, and tooling. See `git log main..HEAD --no-merges --oneline` for the full set, and `docs/` for the resulting architecture.
-
----
-
-## Open
-
-### P0 — required before pushing / opening PR
+## P0 — required before pushing / opening PR
 
 - **Live extension end-to-end smoke test on Windows.** Load the unpacked extension into Default + Profile 2; exercise full pairing flow, `browser_create_tab` flow, and restart-on-flag-missing flow. Only validatable live.
 - **Misattributed commit `87dd359`.** Has A3's "scaffold web UI" message but contains A2's pairing code. Cosmetic only. Decision: leave + note in PR description, or rewrite via filter-branch.
 
-### P1 — should-fix before launch
+## P1 — should-fix before launch
 
 - **macOS detector / launcher / closer / notifications.** Scaffolded honestly per spec, never tested on real macOS hardware. Will surface real issues on first non-Windows user.
 - **Linux detector / launcher / closer / notifications.** Same as above for Linux.
@@ -31,7 +19,7 @@ This branch shipped ~70 changes across server, web UI, extension, notifications,
 - **Auth comparison uses `===`, not `crypto.timingSafeEqual`.** `server.js` UI middleware + WS handshake + extension WS auth all use short-circuit string equality on the shared `apiKey`. Localhost today; LAN-exposed once network mode is on. (Server review C4.)
 - **Single shared `apiKey` reused for extension transport + UI admin.** Compromise of one = compromise of both. At minimum restrict mutating UI endpoints (`/api/ui/agents/*`, `/api/ui/settings/network-mode`, `/api/ui/profiles`) to localhost regardless of header. (Server review C3.)
 
-### P2 — nice to have
+## P2 — nice to have
 
 - **`ChromeManager.ensureReady` running+hasFlag path skips per-profile WS check** that the spec calls for. Currently compensated by an `isConnected` throw in `mcp-handler.js`, but UX intent is a relaunch, not an error. (Server review I2.)
 - **`ChromeManager.refresh()` picks `ours[0]` arbitrarily** when multiple browser-parents match the user-data-dir. Should prefer `hasFlag === true` or warn on mixed sets. (Server review I1.)
@@ -58,30 +46,29 @@ This branch shipped ~70 changes across server, web UI, extension, notifications,
 - **`apiFetch` doesn't pass `X-API-Key`.** Blocks non-localhost UI usage with auth. Add `setApiKey()`. (Web UI review I10.)
 - **`PairingPromptCard.selectedProfile` doesn't refresh when `profileOptions` changes** — classic derived-state-in-state. (Web UI review I11.)
 - **"Default" fallback masks empty-profiles case** in `pairings/page.js`. Render a warning + disable dropdown instead. (Web UI review I12.)
-- **Inline `<span onClick>` rename is not keyboard-accessible** (also in I14 above). (Web UI review I14.)
 - **Profile-create input lacks Enter-to-submit.** Wrap in `<form onSubmit>`. (Web UI review I15.)
 - **WebSocket `error` event log prints `undefined`** — `Event` objects don't carry `.message`. (Web UI review I16.)
 - **Stub `console.log` paths still in shipped components** (`AgentRow`, `PairingPromptCard`). Treat missing handler as programmer error, drop stubs. (Web UI review I2.)
 - **Extension `manuallyDisconnected` is persisted, but `connectionStatus`/`connectionError`/`pendingCommands` are not.** Worker termination loses them. (Extension review I1.)
-- **Extension `set_pairing_required` was removed (✅), but related cleanup remains:** the `auth_failed` and `FORGET_CONFIG` paths still don't clear `webpilot.profileId` / `webpilot.knownProfiles`. (Extension review C2.)
-- **Extension `chrome.identity.getProfileUserInfo` "user denied" path** has no re-prompt UX. Need a "Change profile" affordance in connected view. (Extension review C3 — partially shipped via `57d7f1a` change-profile UI; verify the auth-failed reset path is also covered.) (verify)
+- **Extension `auth_failed` and `FORGET_CONFIG` paths still don't clear `webpilot.profileId` / `webpilot.knownProfiles`.** (Extension review C2.)
+- **Extension `chrome.identity.getProfileUserInfo` "user denied" path** has no re-prompt UX. Need a "Change profile" affordance in connected view. (Extension review C3 — partially shipped via `57d7f1a`; verify the auth-failed reset path is also covered.) (verify)
 - **Extension formatter-update temp-handler replaces `wsConnection.onmessage`** — drops in-flight `store_refs` / `identify_required` / `hello_ack` / `paired_agents_list` / commands during the window. Pre-existing but now worse with multi-extension. (Extension review C4.)
 - **Hello-ack not enforced as a gate on command processing client-side.** Server gates correctly; extension should defensively reject `handleServerCommand` until `hello_ack` arrives. (Extension review I2.)
-- **`set_pairing_required` was sent in `onopen` before hello and dropped** — fixed by removal (`595df13`). Confirm no remaining pre-hello sends. (verify)
+- **Confirm no remaining pre-hello sends in extension `onopen`** after `595df13`. (verify)
 - **`handleServerCommand` default branch responds with `Unknown command type` for every unknown server message** — pollutes server's pending-commands map for messages without `id`. (Extension review I4.)
 - **`paired_agents_list` cached in storage with no reader.** Dead write. Either commit to a contract or delete. (Extension review I5.)
 - **Connected status shown before `hello_ack`** — popup says green when server hasn't yet registered the profile. (Extension review I11.)
 - **`identity.email` permission triggers install-time warning** for an opportunistic-only path. Consider dropping. (Extension review I10.)
 - **Empty `knownProfiles` deadlocks the profile picker.** No "empty state" fallback. (Extension review I8.)
 
-### P3 — backlog (would not block v1 push)
+## P3 — backlog (would not block v1 push)
 
 - **Web UI auth model for LAN deployments.** Currently localhost-only. If LAN access is needed, design a proper session/cookie auth flow.
 - **Click-to-open from macOS / Linux notifications.** Windows shipped `activationType=protocol`; the other two need helper apps.
 - **Bundle the server into the Electron app.** Currently a separate pkg binary the Electron app spawns.
 - **Auto-installing the extension into new profiles.** Chrome forbids it for unsigned extensions; improve the manual-load instructions in the sandbox-profile flow.
 - **Cross user-data-dir Chrome management.** Current model assumes the default user-data-dir.
-- **No tests for `paired-keys` async-pairing flow.** Integration test for `requestPairing` idempotency would prevent state-machine regressions. (Server review I-summary + Test coverage gaps.)
+- **No tests for `paired-keys` async-pairing flow.** Integration test for `requestPairing` idempotency would prevent state-machine regressions.
 - **No tests on the web UI package** — `package.json` has no `test` script.
 - **`apiFetch` swallows JSON parse error** — `.catch(() => null)`. Log at minimum. (Web UI review S3.)
 - **`<a href="/ui/...">` in nav causes full page reload.** Next.js `<Link>` would preserve WS if singleton client is adopted. (Web UI review S5.)
@@ -90,7 +77,7 @@ This branch shipped ~70 changes across server, web UI, extension, notifications,
 - **Dead CSS (`Pairing & Agents Sections`, `.tab-btn.has-badge`, `.action-btn`) in extension popup.** (Extension review S1–S3.)
 - **Inline styles in `popup.html` for the profile picker** — extract to classes. (Extension review S4.)
 - **`gaiaEmail` is logged in cleartext** in `sendHelloHandshake`. Redact or downgrade to debug. (Extension review S10.)
-- **Documentation audit pass found `docs/CHROME_EXTENSION.md` drifted; the doc commits address it but a re-read after the trim of this file is wise.** (verify)
+- **Re-read `docs/CHROME_EXTENSION.md` after the recent doc-audit pass** to confirm drift is fully closed. (verify)
 
 ---
 

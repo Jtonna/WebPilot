@@ -25,5 +25,5 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Project planning (temporary)
 
-- [`../PRE_LAUNCH_TRACKING.md`](../PRE_LAUNCH_TRACKING.md) -- Pre-launch tracking: open items (P0/P1/P2/P3) and intentional non-goals before this branch's v1 ships. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
+- [`../OPEN_ITEMS.md`](../OPEN_ITEMS.md) -- Open items (P0/P1/P2/P3) and intentional non-goals before this branch's v1 ships. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
 
