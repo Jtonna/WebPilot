@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle, Info, WarningCircle, X } from '@phosphor-icons/react';
+import {
+  CheckCircleIcon,
+  InformationCircleIcon,
+  ExclamationCircleIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 
 /**
  * Toast — a single toast notification. Rendered by ToastRegion.
@@ -17,9 +22,9 @@ export default function Toast({ id, flavor = 'info', message, onDismiss, duratio
   const [leaving, setLeaving] = useState(false);
 
   const FlavorIcon =
-    flavor === 'success' ? CheckCircle :
-    flavor === 'error'   ? WarningCircle :
-    Info;
+    flavor === 'success' ? CheckCircleIcon :
+    flavor === 'error'   ? ExclamationCircleIcon :
+    InformationCircleIcon;
 
   const effective =
     typeof duration === 'number'
@@ -47,7 +52,7 @@ export default function Toast({ id, flavor = 'info', message, onDismiss, duratio
       className={`wp-toast${leaving ? ' is-leaving' : ''}`}
     >
       <span className="wp-toast-icon" aria-hidden="true">
-        <FlavorIcon size={20} weight="regular" />
+        <FlavorIcon style={{ width: 20, height: 20 }} />
       </span>
       <div className="wp-toast-body">{message}</div>
       <button
@@ -56,7 +61,7 @@ export default function Toast({ id, flavor = 'info', message, onDismiss, duratio
         aria-label="Dismiss"
         onClick={beginDismiss}
       >
-        <X size={14} weight="bold" />
+        <XMarkIcon style={{ width: 14, height: 14 }} />
       </button>
     </div>
   );

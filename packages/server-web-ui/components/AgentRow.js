@@ -1,7 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Copy, Pencil, Trash, Check } from '@phosphor-icons/react';
+import {
+  DocumentDuplicateIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  CheckIcon,
+} from '@heroicons/react/24/outline';
 
 function shortKey(key) {
   if (!key) return '';
@@ -112,11 +117,11 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}
         >
           {copyState === 'copied' ? (
-            <><Check size={14} weight="bold" /> Copied</>
+            <><CheckIcon style={{ width: 14, height: 14 }} /> Copied</>
           ) : copyState === 'error' ? (
             <>Copy failed</>
           ) : (
-            <><Copy size={14} weight="regular" /> Copy config</>
+            <><DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy config</>
           )}
         </button>
         <button
@@ -126,7 +131,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           aria-label="Rename"
           title="Rename"
         >
-          <Pencil size={14} weight="regular" /> Rename
+          <PencilSquareIcon style={{ width: 14, height: 14 }} /> Rename
         </button>
         <button
           type="button"
@@ -135,7 +140,7 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
           aria-label="Revoke"
           title="Revoke"
         >
-          <Trash size={14} weight="regular" /> Revoke
+          <TrashIcon style={{ width: 14, height: 14 }} /> Revoke
         </button>
       </div>
     </div>

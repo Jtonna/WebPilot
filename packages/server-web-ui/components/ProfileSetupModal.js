@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowSquareOut, Copy, Check } from '@phosphor-icons/react';
+import {
+  ArrowTopRightOnSquareIcon,
+  DocumentDuplicateIcon,
+  CheckIcon,
+} from '@heroicons/react/24/outline';
 
 /**
  * ProfileSetupModal — walkthrough for loading the WebPilot unpacked extension
@@ -79,7 +83,7 @@ export default function ProfileSetupModal({ open, profileName, extensionPath, on
                     className="wp-link"
                   >
                     chrome://extensions
-                    <ArrowSquareOut size={14} weight="regular" style={{ marginLeft: 4, verticalAlign: '-2px' }} />
+                    <ArrowTopRightOnSquareIcon style={{ width: 14, height: 14, marginLeft: 4, verticalAlign: '-2px', display: 'inline-block' }} />
                   </a>{' '}
                   in {profileName ? <strong>{profileName}</strong> : 'this profile'}.
                 </>
@@ -164,11 +168,11 @@ function InlineCopy({ text }) {
     >
       {copied ? (
         <>
-          <Check size={14} weight="bold" /> Copied
+          <CheckIcon style={{ width: 14, height: 14 }} /> Copied
         </>
       ) : (
         <>
-          <Copy size={14} weight="regular" /> Copy {text}
+          <DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy {text}
         </>
       )}
     </button>

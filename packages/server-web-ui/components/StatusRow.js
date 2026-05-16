@@ -5,7 +5,7 @@
  *
  * Props:
  *   label       — string label (e.g. "Chrome").
- *   icon        — Phosphor component (rendered at 20px, regular weight).
+ *   icon        — Heroicon component (rendered at 20px).
  *   state       — 'ok' | 'warn' | 'danger' | 'unknown'. Drives dot color.
  *   value       — string shown on the right.
  *   actionLabel — optional inline action label (e.g. "Restart Chrome").
@@ -22,7 +22,7 @@ export default function StatusRow({
   return (
     <div className="wp-status-row" data-state={state}>
       <span className="wp-status-row-icon" aria-hidden="true">
-        {Icon ? <Icon size={20} weight="regular" /> : null}
+        {Icon ? <Icon style={{ width: 20, height: 20 }} /> : null}
       </span>
       <div className="wp-status-row-body">
         <span className="wp-status-row-label">{label}</span>

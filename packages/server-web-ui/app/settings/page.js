@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Copy } from '@phosphor-icons/react';
+import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useToast } from '../../components/ToastRegion';
 import {
@@ -277,7 +277,7 @@ export default function SettingsPage() {
                 onClick={() => copyToClipboard(paths.dataDir || '', 'Data directory')}
                 disabled={!paths.dataDir}
               >
-                <Copy size={14} weight="regular" /> Copy
+                <DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy
               </button>
             </div>
 
@@ -292,7 +292,7 @@ export default function SettingsPage() {
                 onClick={() => copyToClipboard(paths.logPath || '', 'Log file path')}
                 disabled={!paths.logPath}
               >
-                <Copy size={14} weight="regular" /> Copy
+                <DocumentDuplicateIcon style={{ width: 14, height: 14 }} /> Copy
               </button>
             </div>
           </div>

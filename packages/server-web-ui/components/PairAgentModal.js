@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle } from '@phosphor-icons/react';
+import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from './PairingPromptCard';
 import { createUiEventsClient } from '../lib/ws';
 import { approvePairing, denyPairing, getStatus } from '../lib/api';
@@ -216,7 +216,7 @@ function SuccessView({ agentName }) {
   return (
     <div className="wp-modal-body" style={{ textAlign: 'center', paddingTop: 'var(--s-3)' }}>
       <div style={{ color: 'var(--wp-success)', display: 'flex', justifyContent: 'center', marginBottom: 'var(--s-3)' }}>
-        <CheckCircle size={32} weight="regular" />
+        <CheckCircleIcon style={{ width: 32, height: 32 }} />
       </div>
       <p style={{ margin: 0, color: 'var(--wp-fg)' }}>
         <strong>{agentName}</strong> is now in your agent list. You can close this.

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Browser, PlugsConnected, Pulse } from '@phosphor-icons/react';
+import { GlobeAltIcon, SignalIcon, ServerIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from '../components/PairingPromptCard';
 import StatusRow from '../components/StatusRow';
 import { useToast } from '../components/ToastRegion';
@@ -261,7 +261,7 @@ export default function HomePage() {
           <div className="wp-card">
             <StatusRow
               label="Chrome"
-              icon={Browser}
+              icon={GlobeAltIcon}
               state={chromeState}
               value={chromeValue}
               actionLabel={chromeAction?.label}
@@ -269,13 +269,13 @@ export default function HomePage() {
             />
             <StatusRow
               label="Extension"
-              icon={PlugsConnected}
+              icon={SignalIcon}
               state={extState}
               value={extValue}
             />
             <StatusRow
               label="Server"
-              icon={Pulse}
+              icon={ServerIcon}
               state={serverState}
               value={serverValue}
             />

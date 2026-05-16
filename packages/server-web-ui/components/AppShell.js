@@ -3,13 +3,20 @@
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  House,
-  Handshake,
-  UserCircle,
-  Robot,
-  GearSix,
-  List as ListIcon,
-} from '@phosphor-icons/react';
+  HomeIcon as HomeOutline,
+  KeyIcon as KeyOutline,
+  UserCircleIcon as UserCircleOutline,
+  CpuChipIcon as CpuChipOutline,
+  Cog6ToothIcon as Cog6ToothOutline,
+  Bars3Icon,
+} from '@heroicons/react/24/outline';
+import {
+  HomeIcon as HomeSolid,
+  KeyIcon as KeySolid,
+  UserCircleIcon as UserCircleSolid,
+  CpuChipIcon as CpuChipSolid,
+  Cog6ToothIcon as Cog6ToothSolid,
+} from '@heroicons/react/24/solid';
 import { getStatus } from '../lib/api';
 
 /**
@@ -39,31 +46,36 @@ const NAV = [
     href: '/ui/',
     label: 'Dashboard',
     match: (p) => p === '/ui' || p === '/ui/',
-    Icon: House,
+    IconOutline: HomeOutline,
+    IconSolid: HomeSolid,
   },
   {
     href: '/ui/pairings/',
     label: 'Pairings',
     match: (p) => p.startsWith('/ui/pairings'),
-    Icon: Handshake,
+    IconOutline: KeyOutline,
+    IconSolid: KeySolid,
   },
   {
     href: '/ui/profiles/',
     label: 'Profiles',
     match: (p) => p.startsWith('/ui/profiles'),
-    Icon: UserCircle,
+    IconOutline: UserCircleOutline,
+    IconSolid: UserCircleSolid,
   },
   {
     href: '/ui/agents/',
     label: 'Agents',
     match: (p) => p.startsWith('/ui/agents'),
-    Icon: Robot,
+    IconOutline: CpuChipOutline,
+    IconSolid: CpuChipSolid,
   },
   {
     href: '/ui/settings/',
     label: 'Settings',
     match: (p) => p.startsWith('/ui/settings'),
-    Icon: GearSix,
+    IconOutline: Cog6ToothOutline,
+    IconSolid: Cog6ToothSolid,
   },
 ];
 
@@ -101,7 +113,7 @@ function SidebarNav({ pathname, onItemClick }) {
     <nav className="wp-nav" aria-label="Primary">
       {NAV.map((item) => {
         const active = item.match(pathname);
-        const Icon = item.Icon;
+        const Icon = active ? item.IconSolid : item.IconOutline;
         return (
           <a
             key={item.href}
@@ -111,7 +123,7 @@ function SidebarNav({ pathname, onItemClick }) {
             onClick={onItemClick}
           >
             <span className="wp-nav-icon" aria-hidden="true">
-              <Icon size={20} weight={active ? 'duotone' : 'regular'} />
+              <Icon style={{ width: 20, height: 20 }} />
             </span>
             <span>{item.label}</span>
           </a>
@@ -206,7 +218,7 @@ export default function AppShell({ children }) {
             aria-expanded={drawerOpen}
             onClick={() => setDrawerOpen((v) => !v)}
           >
-            <ListIcon size={24} weight="regular" />
+            <Bars3Icon style={{ width: 24, height: 24 }} />
           </button>
         </div>
       </header>
