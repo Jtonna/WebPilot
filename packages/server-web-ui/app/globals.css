@@ -1,54 +1,220 @@
 /* ===========================================================================
- * WebPilot · Apple Quiet
+ * WebPilot · Phase 1 design foundation
  *
- * Single typeface (Geist), near-monochrome with one accent (Apple systemBlue),
- * hierarchy through opacity and background lift rather than borders. Generous
- * spacing, calm motion. Inspiration: macOS Sonoma, Linear, Raycast.
+ * Sources of truth:
+ *   docs/design/PALETTE.md   — light + dark palettes (cool-neutral + sky accent)
+ *   docs/design/ELEGANCE.md  — typography, spacing, sizing, radii, shadows,
+ *                              motion, composition, responsive breakpoints
+ *   docs/design/UX.md        — IA + breakpoints (sidebar at ≥ 900px)
+ *
+ * Theme resolution: light is the default under :root; dark applies under either
+ * :root[data-theme="dark"] (explicit user choice) OR via prefers-color-scheme
+ * when no explicit choice exists (see media block below).
  * ========================================================================= */
 
+/* ---------------------------------------------------------------------------
+ * Tokens — palette (light), typography, spacing, radii, shadows, motion.
+ * ------------------------------------------------------------------------- */
+
 :root {
-  /* Surfaces — pure black base, Apple secondary/tertiary system backgrounds. */
-  --wp-bg: #000000;
-  --wp-bg-card: #1c1c1e;
-  --wp-bg-elevated: #2c2c2e;
-  --wp-bg-hover: #242426;
+  /* Surfaces */
+  --wp-bg: #F7F8FA;
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #FFFFFF;
 
-  /* Foreground — pure white plus opacity ladder. */
-  --wp-fg: #ffffff;
-  --wp-fg-secondary: rgba(235, 235, 245, 0.6);
-  --wp-fg-muted: rgba(235, 235, 245, 0.3);
+  /* Foreground */
+  --wp-fg: #0B1220;
+  --wp-fg-secondary: #3C4860;
+  --wp-fg-muted: #6B7588;
 
-  /* Separators — used very sparingly, only between rows. */
-  --wp-separator: rgba(255, 255, 255, 0.08);
-  --wp-separator-strong: rgba(255, 255, 255, 0.12);
+  /* Separators */
+  --wp-separator: rgba(11, 18, 32, 0.08);
+  --wp-separator-strong: rgba(11, 18, 32, 0.16);
 
-  /* Single accent + semantic colors (Apple dark-mode system palette). */
-  --wp-accent: #0a84ff;
-  --wp-accent-soft: rgba(10, 132, 255, 0.16);
-  --wp-success: #30d158;
-  --wp-warning: #ff9f0a;
-  --wp-danger: #ff453a;
-  --wp-danger-soft: rgba(255, 69, 58, 0.14);
+  /* Accent (sky) */
+  --wp-accent: #2E6FE6;
+  --wp-accent-hover: #2560CC;
+  --wp-accent-active: #1E51B0;
+  --wp-accent-focus: rgba(46, 111, 230, 0.35);
+  --wp-accent-tint: rgba(46, 111, 230, 0.10);
+  /* Contrast text used ON a filled accent button. Light mode: white. */
+  --wp-on-accent: #FFFFFF;
 
-  /* Typography — Geist only. */
+  /* Semantic */
+  --wp-success: #1F8F4E;
+  --wp-success-tint: rgba(31, 143, 78, 0.12);
+  --wp-warning: #A06400;
+  --wp-warning-tint: rgba(160, 100, 0, 0.12);
+  --wp-danger: #C13030;
+  --wp-danger-tint: rgba(193, 48, 48, 0.10);
+  --wp-info: #3B7CC4;
+  --wp-info-tint: rgba(59, 124, 196, 0.10);
+
+  /* Focus ring sizing (thicker in dark — overridden below) */
+  --wp-focus-width: 2px;
+  --wp-focus-offset: 2px;
+
+  /* Fonts */
   --wp-font-sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", system-ui, sans-serif;
   --wp-font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* Layout */
-  --wp-sidebar-w: 240px;
-  --wp-gutter: 64px;
-  --wp-card-radius: 14px;
-  --wp-elevated-radius: 16px;
-  --wp-btn-radius: 10px;
-  --wp-pill-radius: 7px;
+  /* Type scale — sizes only (paired weights/line-heights live on the tokens) */
+  --fs-display: 2rem;       /* 32px */
+  --fs-section: 1.25rem;    /* 20px */
+  --fs-subsection: 1rem;    /* 16px */
+  --fs-body: 0.9375rem;     /* 15px */
+  --fs-small: 0.8125rem;    /* 13px */
+  --fs-micro: 0.75rem;      /* 12px */
+  --fs-mono: 0.875rem;      /* 14px */
+  --fs-mono-small: 0.8125rem; /* 13px */
+
+  /* Spacing (4px base) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Shadows — light mode: two-layer Apple stack */
+  --elev-0: none;
+  --elev-1:
+    0 1px 1px rgba(15, 17, 21, 0.04),
+    0 2px 6px rgba(15, 17, 21, 0.05);
+  --elev-2:
+    0 1px 2px rgba(15, 17, 21, 0.06),
+    0 8px 24px rgba(15, 17, 21, 0.08);
+  --elev-3:
+    0 2px 4px rgba(15, 17, 21, 0.08),
+    0 16px 40px rgba(15, 17, 21, 0.12);
 
   /* Motion */
-  --wp-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --wp-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-instant: 80ms;
+  --dur-quick: 180ms;
+  --dur-normal: 240ms;
+  --dur-slow: 400ms;
+  --ease-quart-out: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-quart-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-spring-soft: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* Layout (responsive — overridden in media queries) */
+  --wp-sidebar-w: 240px;
+  --wp-content-max: 1120px;
+  --wp-gutter: var(--s-4); /* mobile default; bumps up at desktop */
+  --wp-mobile-topbar-h: 56px;
 }
 
-* {
+/* ---------------------------------------------------------------------------
+ * Dark palette — applied either explicitly (data-theme="dark") or via OS
+ * preference when the user has not chosen.
+ * ------------------------------------------------------------------------- */
+
+:root[data-theme="dark"] {
+  --wp-bg: #0F1318;
+  --wp-bg-card: #161B22;
+  --wp-bg-elevated: #1C222B;
+
+  --wp-fg: #E8ECF2;
+  --wp-fg-secondary: #B4BCCA;
+  --wp-fg-muted: #7E8696;
+
+  --wp-separator: rgba(232, 236, 242, 0.08);
+  --wp-separator-strong: rgba(232, 236, 242, 0.14);
+
+  --wp-accent: #5AA9FF;
+  --wp-accent-hover: #7BBBFF;
+  --wp-accent-active: #4F95E0;
+  --wp-accent-focus: rgba(90, 169, 255, 0.45);
+  --wp-accent-tint: rgba(90, 169, 255, 0.14);
+  /* Dark-mode primary button: near-black text on light-blue fill (AAA). */
+  --wp-on-accent: #0B1220;
+
+  --wp-success: #4CC38A;
+  --wp-success-tint: rgba(76, 195, 138, 0.14);
+  --wp-warning: #E0A24A;
+  --wp-warning-tint: rgba(224, 162, 74, 0.14);
+  --wp-danger: #F26B6B;
+  --wp-danger-tint: rgba(242, 107, 107, 0.14);
+  --wp-info: #7DB3E5;
+  --wp-info-tint: rgba(125, 179, 229, 0.14);
+
+  /* Slightly thicker focus ring in dark — same offset (Elegance §lvd) */
+  --wp-focus-width: 2.5px;
+
+  /* Dark shadows are shorter + sharper (less work to do on a dark canvas) */
+  --elev-1:
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.25);
+  --elev-2:
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+  --elev-3:
+    0 4px 8px rgba(0, 0, 0, 0.55),
+    0 16px 32px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --wp-bg: #0F1318;
+    --wp-bg-card: #161B22;
+    --wp-bg-elevated: #1C222B;
+
+    --wp-fg: #E8ECF2;
+    --wp-fg-secondary: #B4BCCA;
+    --wp-fg-muted: #7E8696;
+
+    --wp-separator: rgba(232, 236, 242, 0.08);
+    --wp-separator-strong: rgba(232, 236, 242, 0.14);
+
+    --wp-accent: #5AA9FF;
+    --wp-accent-hover: #7BBBFF;
+    --wp-accent-active: #4F95E0;
+    --wp-accent-focus: rgba(90, 169, 255, 0.45);
+    --wp-accent-tint: rgba(90, 169, 255, 0.14);
+    --wp-on-accent: #0B1220;
+
+    --wp-success: #4CC38A;
+    --wp-success-tint: rgba(76, 195, 138, 0.14);
+    --wp-warning: #E0A24A;
+    --wp-warning-tint: rgba(224, 162, 74, 0.14);
+    --wp-danger: #F26B6B;
+    --wp-danger-tint: rgba(242, 107, 107, 0.14);
+    --wp-info: #7DB3E5;
+    --wp-info-tint: rgba(125, 179, 229, 0.14);
+
+    --wp-focus-width: 2.5px;
+
+    --elev-1:
+      0 1px 1px rgba(0, 0, 0, 0.4),
+      0 2px 4px rgba(0, 0, 0, 0.25);
+    --elev-2:
+      0 2px 4px rgba(0, 0, 0, 0.5),
+      0 8px 20px rgba(0, 0, 0, 0.35);
+    --elev-3:
+      0 4px 8px rgba(0, 0, 0, 0.55),
+      0 16px 32px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Base elements
+ * ------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -59,24 +225,27 @@ body {
   background-color: var(--wp-bg);
   color: var(--wp-fg);
   font-family: var(--wp-font-sans);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: var(--fs-body);
+  line-height: 1.55;
   font-weight: 400;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "ss01", "cv11";
   text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv11', 'tnum';
+  transition:
+    background-color var(--dur-quick) var(--ease-quart-out),
+    color var(--dur-quick) var(--ease-quart-out);
 }
 
 a {
   color: var(--wp-accent);
   text-decoration: none;
-  transition: opacity 120ms linear, color 120ms linear;
+  transition: color var(--dur-instant) var(--ease-quart-out);
 }
 
 a:hover {
-  opacity: 0.78;
+  color: var(--wp-accent-hover);
 }
 
 button,
@@ -92,24 +261,29 @@ button {
   cursor: pointer;
 }
 
-code {
+code,
+kbd {
   font-family: var(--wp-font-mono);
-  font-size: 0.92em;
-  color: inherit;
-  background: transparent;
-  padding: 0;
-  font-feature-settings: "ss01", "ss02";
+  font-size: var(--fs-mono-small);
+  background: var(--wp-separator);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
 }
 
 ::selection {
-  background: var(--wp-accent-soft);
+  background: var(--wp-accent-tint);
   color: var(--wp-fg);
 }
 
+/* Focus ring — accent, offset, never alters the element border. */
+:focus {
+  outline: none;
+}
+
 :focus-visible {
-  outline: 2px solid var(--wp-accent);
-  outline-offset: 2px;
-  border-radius: 6px;
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: var(--wp-focus-offset);
+  border-radius: inherit;
 }
 
 hr {
@@ -119,7 +293,10 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * App shell — sidebar + main column. No top strip.
+ * Application shell
+ *
+ * Desktop (≥ 900px): persistent left sidebar + centered content column.
+ * Mobile (< 900px):  56px top bar + slide-in sheet (handled in AppShell.js).
  * ------------------------------------------------------------------------- */
 
 .wp-shell {
@@ -127,20 +304,76 @@ hr {
   min-height: 100vh;
 }
 
-.wp-body {
-  display: grid;
-  grid-template-columns: var(--wp-sidebar-w) 1fr;
-  min-height: 100vh;
-}
-
-.wp-sidebar {
-  padding: 32px 16px 24px;
+/* Mobile top bar (default; hidden on desktop) */
+.wp-topbar {
   position: sticky;
   top: 0;
-  align-self: start;
-  height: 100vh;
+  z-index: 40;
+  height: var(--wp-mobile-topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--s-4);
+  background: var(--wp-bg);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-topbar-brand {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--wp-fg);
+  letter-spacing: -0.01em;
+}
+
+.wp-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.wp-topbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-topbar-dot[data-state="ok"]   { background: var(--wp-success); }
+.wp-topbar-dot[data-state="down"] { background: var(--wp-danger); }
+
+.wp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: var(--wp-fg);
+  border: none;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-icon-btn:hover {
+  background: var(--wp-bg-elevated);
+}
+
+/* Sidebar — used both on desktop (persistent) and mobile (inside drawer) */
+.wp-sidebar {
+  width: var(--wp-sidebar-w);
+  padding: var(--s-6) var(--s-4) var(--s-5);
   display: flex;
   flex-direction: column;
+  background: var(--wp-bg);
+}
+
+.wp-sidebar-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .wp-brand {
@@ -152,12 +385,11 @@ hr {
   color: var(--wp-fg);
   text-decoration: none;
   letter-spacing: -0.01em;
-  padding: 4px 12px;
-  margin-bottom: 28px;
+  padding: var(--s-1) var(--s-3);
+  margin-bottom: var(--s-5);
 }
 
 .wp-brand:hover {
-  opacity: 1;
   color: var(--wp-fg);
 }
 
@@ -170,39 +402,51 @@ hr {
 .wp-nav-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
   font-family: var(--wp-font-sans);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   color: var(--wp-fg-secondary);
   text-decoration: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   letter-spacing: -0.005em;
-  transition: background-color 180ms var(--wp-ease-out),
-    color 180ms var(--wp-ease-out);
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-nav-item:hover {
-  background-color: var(--wp-bg-card);
-  color: var(--wp-fg);
-  opacity: 1;
-}
-
-.wp-nav-item.is-active {
   background-color: var(--wp-bg-elevated);
   color: var(--wp-fg);
 }
 
+.wp-nav-item.is-active {
+  background-color: var(--wp-accent-tint);
+  color: var(--wp-accent);
+}
+
+.wp-nav-item.is-active:hover {
+  color: var(--wp-accent);
+}
+
+.wp-nav-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
 .wp-sidebar-footer {
   margin-top: auto;
-  padding: 12px;
+  padding: var(--s-3);
   font-family: var(--wp-font-sans);
-  font-size: 12px;
+  font-size: var(--fs-small);
   font-weight: 400;
   color: var(--wp-fg-muted);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .wp-sidebar-status-dot {
@@ -211,132 +455,183 @@ hr {
   border-radius: 50%;
   background: var(--wp-fg-muted);
   flex-shrink: 0;
-  transition: background-color 220ms var(--wp-ease-out);
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
 }
 
-.wp-sidebar-status-dot[data-state="ok"] {
-  background: var(--wp-success);
+.wp-sidebar-status-dot[data-state="ok"]   { background: var(--wp-success); }
+.wp-sidebar-status-dot[data-state="down"] { background: var(--wp-danger); }
+
+/* Mobile drawer (sheet) */
+.wp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 18, 32, 0.4);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-normal) var(--ease-quart-out);
 }
 
-.wp-sidebar-status-dot[data-state="down"] {
-  background: var(--wp-danger);
+.wp-drawer-backdrop.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.wp-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 80vw;
+  max-width: 320px;
+  background: var(--wp-bg);
+  border-right: 1px solid var(--wp-separator);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-12px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dur-normal) var(--ease-quart-out),
+    opacity var(--dur-normal) var(--ease-quart-out);
+  box-shadow: var(--elev-2);
+}
+
+.wp-drawer.is-open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Body layouts — desktop two-column, mobile single-column */
+.wp-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* On mobile the inline (desktop) sidebar is hidden — the drawer takes its place. */
+.wp-body > .wp-sidebar {
+  display: none;
 }
 
 .wp-main {
-  padding: 64px var(--wp-gutter) 96px;
-  max-width: 1080px;
+  flex: 1;
+  width: 100%;
+  max-width: calc(var(--wp-content-max) + (var(--wp-gutter) * 2));
+  margin: 0 auto;
+  padding: var(--s-6) var(--wp-gutter) var(--s-8);
   display: flex;
   flex-direction: column;
-  gap: 48px;
+  gap: var(--s-7);
 }
 
 /* ---------------------------------------------------------------------------
- * Page head — quiet title block, no kicker, no italic.
+ * Page head — quiet h1 + 1-sentence lede
  * ------------------------------------------------------------------------- */
 
 .wp-page-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--s-2);
 }
 
 .wp-page-title {
   font-family: var(--wp-font-sans);
+  font-size: var(--fs-display);
   font-weight: 500;
-  font-size: clamp(32px, 4.2vw, 44px);
-  line-height: 1.1;
-  margin: 0;
-  letter-spacing: -0.025em;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
   color: var(--wp-fg);
+  margin: 0;
 }
 
 .wp-page-sub {
   margin: 0;
   font-family: var(--wp-font-sans);
-  font-size: 16px;
+  font-size: var(--fs-subsection);
   font-weight: 400;
   line-height: 1.55;
   color: var(--wp-fg-secondary);
   max-width: 62ch;
-  letter-spacing: -0.005em;
 }
 
 /* ---------------------------------------------------------------------------
- * Section — heading, then content. No numbered prefix, no rule.
+ * Section
  * ------------------------------------------------------------------------- */
 
 .wp-section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--s-4);
 }
 
 .wp-section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 4px;
+  gap: var(--s-4);
 }
 
 .wp-section-title {
   font-family: var(--wp-font-sans);
+  font-size: var(--fs-section);
   font-weight: 500;
-  font-size: 19px;
   line-height: 1.3;
-  margin: 0;
+  letter-spacing: -0.01em;
   color: var(--wp-fg);
-  letter-spacing: -0.015em;
+  margin: 0;
 }
 
 .wp-section-aside {
   font-family: var(--wp-font-sans);
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 400;
   color: var(--wp-fg-muted);
+  letter-spacing: 0.005em;
 }
 
 /* ---------------------------------------------------------------------------
- * Cards & rows
+ * Cards
+ *
+ * Default: no visible border. Depth comes from background-tone (--wp-bg-card
+ * vs --wp-bg). A faint hairline shows only as a whisper (separator-subtle)
+ * because we follow lift-via-background.
  * ------------------------------------------------------------------------- */
 
 .wp-card {
   background-color: var(--wp-bg-card);
-  border: none;
-  border-radius: var(--wp-card-radius);
-  padding: 28px 32px;
-  transition: background-color 180ms var(--wp-ease-out);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  padding: var(--s-5);
+  box-shadow: var(--elev-1);
+  transition:
+    background-color var(--dur-quick) var(--ease-quart-out),
+    border-color var(--dur-quick) var(--ease-quart-out);
 }
 
-.wp-card-tight {
-  padding: 20px 24px;
+.wp-card-lg {
+  background-color: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-lg);
+  padding: var(--s-6);
+  box-shadow: var(--elev-1);
 }
 
-.wp-card h2,
-.wp-card h3 {
-  margin: 0 0 16px;
-  font-family: var(--wp-font-sans);
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--wp-fg);
-}
+/* ---------------------------------------------------------------------------
+ * Rows
+ * ------------------------------------------------------------------------- */
 
 .wp-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--wp-separator);
-  position: relative;
-  transition: background-color 180ms var(--wp-ease-out);
-  margin: 0 -16px;
-  border-radius: 8px;
-}
-
-.wp-row:first-child {
-  padding-top: 14px;
+  margin: 0 calc(var(--s-4) * -1);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-row:last-child {
@@ -344,7 +639,7 @@ hr {
 }
 
 .wp-row:hover {
-  background-color: var(--wp-bg-hover);
+  background-color: var(--wp-bg-elevated);
 }
 
 .wp-row-grow {
@@ -355,18 +650,18 @@ hr {
 .wp-row-title {
   font-family: var(--wp-font-sans);
   font-weight: 500;
-  font-size: 15px;
+  font-size: var(--fs-body);
   color: var(--wp-fg);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
 }
 
 .wp-row-sub {
   font-family: var(--wp-font-sans);
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 400;
   color: var(--wp-fg-secondary);
-  margin-top: 3px;
-  letter-spacing: -0.005em;
+  margin-top: var(--s-1);
+  letter-spacing: 0.005em;
 }
 
 .wp-row-sub .wp-mono {
@@ -375,102 +670,59 @@ hr {
 
 .wp-row-sep {
   color: var(--wp-fg-muted);
-  margin: 0 8px;
+  margin: 0 var(--s-2);
 }
 
 /* ---------------------------------------------------------------------------
- * Instruments — the KPI grid. Soft cards, generous space, large numbers.
+ * Key-value pairs
  * ------------------------------------------------------------------------- */
 
-.wp-instruments {
+.wp-kv {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.wp-instrument {
-  padding: 24px 26px;
-  border: none;
-  border-radius: var(--wp-card-radius);
-  background: var(--wp-bg-card);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  position: relative;
-  overflow: hidden;
-  transition: background-color 180ms var(--wp-ease-out);
-}
-
-.wp-instrument:hover {
-  background-color: var(--wp-bg-hover);
-}
-
-.wp-instrument-label {
+  grid-template-columns: 160px 1fr;
+  gap: var(--s-3) var(--s-5);
   font-family: var(--wp-font-sans);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-body);
+}
+
+.wp-kv-label {
   color: var(--wp-fg-secondary);
-  letter-spacing: -0.005em;
-}
-
-.wp-instrument-value {
-  font-family: var(--wp-font-sans);
-  font-weight: 500;
-  font-size: 36px;
-  line-height: 1;
-  color: var(--wp-fg);
-  letter-spacing: -0.03em;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.wp-instrument-value-mono {
-  font-family: var(--wp-font-sans);
-  font-weight: 500;
-  font-size: 36px;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
-.wp-instrument-detail {
-  font-family: var(--wp-font-sans);
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 400;
-  color: var(--wp-fg-secondary);
-  line-height: 1.4;
-  letter-spacing: -0.005em;
+  align-self: center;
 }
 
-.wp-instrument-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
+.wp-kv-value {
+  color: var(--wp-fg);
+  font-weight: 500;
+  word-break: break-word;
+  font-size: var(--fs-body);
+  letter-spacing: -0.005em;
 }
 
 /* ---------------------------------------------------------------------------
- * Status pills — the one place we accept a pill shape.
+ * Pills — semantic, tinted backgrounds + colored dot + foreground from palette
  * ------------------------------------------------------------------------- */
 
 .wp-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: var(--s-1);
+  padding: 2px 8px;
   border: none;
-  border-radius: var(--wp-pill-radius);
+  border-radius: var(--radius-xs);
   font-family: var(--wp-font-sans);
-  font-size: 12px;
+  font-size: var(--fs-micro);
   font-weight: 500;
   color: var(--wp-fg-secondary);
-  background: transparent;
+  background: var(--wp-separator);
   white-space: nowrap;
   line-height: 1.4;
-  letter-spacing: -0.005em;
-  transition: background-color 180ms var(--wp-ease-out),
-    color 180ms var(--wp-ease-out);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-pill-dot {
@@ -478,114 +730,90 @@ hr {
   height: 6px;
   border-radius: 50%;
   background: var(--wp-fg-muted);
-  position: relative;
   flex-shrink: 0;
-  transition: background-color 180ms var(--wp-ease-out);
-}
-
-.wp-pill[data-state="active"] {
-  color: var(--wp-fg);
-  background: var(--wp-accent-soft);
-}
-
-.wp-pill[data-state="active"] .wp-pill-dot {
-  background: var(--wp-accent);
-}
-
-.wp-pill[data-state="ready"] {
-  color: var(--wp-fg-secondary);
-}
-
-.wp-pill[data-state="ready"] .wp-pill-dot {
-  background: var(--wp-fg-secondary);
-}
-
-.wp-pill[data-state="needs_setup"] {
-  color: var(--wp-fg-muted);
-}
-
-.wp-pill[data-state="needs_setup"] .wp-pill-dot {
-  background: var(--wp-fg-muted);
-}
-
-.wp-pill[data-state="warn"] {
-  color: var(--wp-fg);
-  background: rgba(255, 159, 10, 0.14);
-}
-
-.wp-pill[data-state="warn"] .wp-pill-dot {
-  background: var(--wp-warning);
-}
-
-.wp-pill[data-state="danger"] {
-  color: var(--wp-fg);
-  background: var(--wp-danger-soft);
-}
-
-.wp-pill[data-state="danger"] .wp-pill-dot {
-  background: var(--wp-danger);
-}
-
-/* Active dot ignition — subtler than the brutalist pass: 1.0→1.3→1.0,
- * ring at 70% max, 320ms. Plays once on data-state="active" mount. */
-.wp-pill[data-state="active"] .wp-pill-dot::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  border: 1px solid var(--wp-accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: wp-ignition 320ms var(--wp-ease);
-}
-
-@keyframes wp-ignition {
-  0% { transform: scale(1); opacity: 0.7; }
-  60% { transform: scale(2.1); opacity: 0.35; }
-  100% { transform: scale(2.8); opacity: 0; }
 }
 
 .wp-pill-label {
   display: inline-block;
-  animation: wp-label-fade 200ms var(--wp-ease);
 }
 
-@keyframes wp-label-fade {
-  from { opacity: 0; transform: translateY(1px); }
-  to { opacity: 1; transform: translateY(0); }
+.wp-pill[data-state="active"] {
+  color: var(--wp-accent);
+  background: var(--wp-accent-tint);
 }
+.wp-pill[data-state="active"] .wp-pill-dot { background: var(--wp-accent); }
+
+.wp-pill[data-state="ready"] {
+  color: var(--wp-success);
+  background: var(--wp-success-tint);
+}
+.wp-pill[data-state="ready"] .wp-pill-dot { background: var(--wp-success); }
+
+.wp-pill[data-state="needs_setup"] {
+  color: var(--wp-fg-muted);
+  background: var(--wp-separator);
+}
+.wp-pill[data-state="needs_setup"] .wp-pill-dot { background: var(--wp-fg-muted); }
+
+.wp-pill[data-state="warn"] {
+  color: var(--wp-warning);
+  background: var(--wp-warning-tint);
+}
+.wp-pill[data-state="warn"] .wp-pill-dot { background: var(--wp-warning); }
+
+.wp-pill[data-state="danger"] {
+  color: var(--wp-danger);
+  background: var(--wp-danger-tint);
+}
+.wp-pill[data-state="danger"] .wp-pill-dot { background: var(--wp-danger); }
+
+.wp-pill[data-state="info"] {
+  color: var(--wp-info);
+  background: var(--wp-info-tint);
+}
+.wp-pill[data-state="info"] .wp-pill-dot { background: var(--wp-info); }
 
 /* ---------------------------------------------------------------------------
- * Buttons — Apple style. Rounded, no lift, smooth bg transition.
+ * Buttons
+ *
+ *   .wp-btn         — ghost / tertiary default. Transparent at rest.
+ *   .wp-btn-primary — filled accent. Dark-mode text becomes #0B1220.
+ *   .wp-btn-danger  — destructive (delete, deny).
+ *   .wp-btn-compact — 28px height, table-cell sized.
+ *   .wp-btn-cta     — 40px tall, primary CTA on hero cards.
+ *
+ * Hover/active use background tone or opacity changes — never translateY.
  * ------------------------------------------------------------------------- */
 
 .wp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  background: var(--wp-bg-elevated);
+  gap: var(--s-2);
+  height: 32px;
+  padding: 0 var(--s-3);
+  background: transparent;
   color: var(--wp-fg);
-  border: none;
-  border-radius: var(--wp-btn-radius);
-  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   font-family: var(--wp-font-sans);
-  font-size: 13px;
+  font-size: var(--fs-small);
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1;
   letter-spacing: -0.005em;
   white-space: nowrap;
-  transition: background-color 180ms var(--wp-ease-out),
-    color 180ms var(--wp-ease-out), opacity 120ms linear;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out),
+    opacity var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-btn:hover:not(:disabled) {
-  background: #3a3a3c;
+  background: var(--wp-accent-tint);
 }
 
 .wp-btn:active:not(:disabled) {
-  opacity: 0.75;
-  transition-duration: 60ms;
+  opacity: 0.85;
 }
 
 .wp-btn:disabled {
@@ -595,39 +823,41 @@ hr {
 
 .wp-btn-primary {
   background: var(--wp-accent);
-  color: #ffffff;
+  color: var(--wp-on-accent);
+  border-color: transparent;
 }
 
 .wp-btn-primary:hover:not(:disabled) {
-  background: #339cff;
+  background: var(--wp-accent-hover);
+  color: var(--wp-on-accent);
+}
+
+.wp-btn-primary:active:not(:disabled) {
+  background: var(--wp-accent-active);
+  opacity: 1;
 }
 
 .wp-btn-danger {
   color: var(--wp-danger);
-  background: var(--wp-danger-soft);
+  background: var(--wp-danger-tint);
 }
 
 .wp-btn-danger:hover:not(:disabled) {
-  background: rgba(255, 69, 58, 0.22);
+  background: var(--wp-danger-tint);
+  color: var(--wp-danger);
+  filter: brightness(0.97);
 }
 
-.wp-btn-ghost {
-  background: transparent;
-  color: var(--wp-fg-secondary);
-  padding: 6px 12px;
-  font-size: 12px;
+.wp-btn-compact {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-micro);
 }
 
-.wp-btn-ghost:hover:not(:disabled) {
-  background: var(--wp-bg-elevated);
-  color: var(--wp-fg);
-}
-
-/* Subtle "Copied!" feedback — bg flash, no scale bump. */
-.wp-btn.is-copied {
-  background: var(--wp-accent-soft) !important;
-  color: var(--wp-accent) !important;
-  transition: background-color 220ms var(--wp-ease-out), color 220ms var(--wp-ease-out);
+.wp-btn-cta {
+  height: 40px;
+  padding: 0 var(--s-4);
+  font-size: var(--fs-body);
 }
 
 /* ---------------------------------------------------------------------------
@@ -636,31 +866,35 @@ hr {
 
 .wp-input,
 .wp-select {
-  background: var(--wp-bg-elevated);
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--s-3);
+  background: var(--wp-bg-card);
   color: var(--wp-fg);
-  border: 1px solid transparent;
-  border-radius: var(--wp-btn-radius);
-  padding: 9px 14px;
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-sm);
   font-family: var(--wp-font-sans);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 400;
   line-height: 1.4;
-  letter-spacing: -0.005em;
   outline: none;
-  transition: background-color 160ms var(--wp-ease-out),
-    border-color 160ms var(--wp-ease-out);
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    border-color var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-input:hover,
 .wp-select:hover {
-  background: #3a3a3c;
+  border-color: var(--wp-fg-muted);
 }
 
-.wp-input:focus,
-.wp-select:focus {
-  background: var(--wp-bg-elevated);
+.wp-input:focus-visible,
+.wp-select:focus-visible {
   border-color: var(--wp-accent);
-  outline: none;
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 0;
 }
 
 .wp-input::placeholder {
@@ -668,384 +902,120 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Code blocks — quiet, no scanner, soft fade-in.
- * ------------------------------------------------------------------------- */
-
-.wp-code-wrap {
-  position: relative;
-  margin: 12px 0;
-}
-
-.wp-code-block {
-  font-family: var(--wp-font-mono);
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1.6;
-  background: var(--wp-bg-elevated);
-  border: none;
-  border-radius: var(--wp-btn-radius);
-  padding: 18px 22px;
-  padding-right: 88px;
-  overflow-x: auto;
-  margin: 0;
-  color: var(--wp-fg);
-  white-space: pre-wrap;
-  word-break: break-word;
-  opacity: 0;
-  animation: wp-soft-fade 320ms var(--wp-ease-out) 60ms forwards;
-}
-
-@keyframes wp-soft-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.wp-code-copy {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-}
-
-/* ---------------------------------------------------------------------------
- * Helpers
+ * Helpers / text utilities
  * ------------------------------------------------------------------------- */
 
 .wp-mono {
   font-family: var(--wp-font-mono);
-  font-size: 13px;
+  font-size: var(--fs-mono);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-}
-
-.wp-muted {
-  color: var(--wp-fg-muted);
-  font-size: 14px;
 }
 
 .wp-secondary {
   color: var(--wp-fg-secondary);
 }
 
+.wp-muted {
+  color: var(--wp-fg-muted);
+  font-size: var(--fs-small);
+}
+
 .wp-empty {
   font-family: var(--wp-font-sans);
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 400;
   color: var(--wp-fg-muted);
-  padding: 8px 0;
-  letter-spacing: -0.005em;
+  padding: var(--s-3) 0;
 }
 
-.wp-kv {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 14px 24px;
-  font-family: var(--wp-font-sans);
-  font-size: 14px;
-}
-
-.wp-kv-label {
-  color: var(--wp-fg-secondary);
-  font-size: 13px;
-  font-weight: 400;
-  align-self: center;
-}
-
-.wp-kv-value {
-  color: var(--wp-fg);
-  font-weight: 500;
-  word-break: break-all;
-  font-size: 14px;
-  letter-spacing: -0.005em;
-}
-
-.wp-kv-value-mono {
-  font-family: var(--wp-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-weight: 400;
-}
-
-.wp-kv-value-accent {
-  color: var(--wp-accent);
-}
-
-/* Legacy class kept for backward compat in any markup not yet migrated. */
+/* Legacy class kept for any leftover markup */
 .wp-status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: 6px;
+  margin-right: var(--s-1);
   vertical-align: middle;
+  background: var(--wp-fg-muted);
 }
 
 /* ---------------------------------------------------------------------------
- * Page entrance — subtle fade + rise. 40ms stagger. Apple snappy.
+ * Responsive — UX breakpoints
+ *   < 600px : phone defaults (handled by base styles)
+ *   ≥ 600px : tablet — slightly larger gutter
+ *   ≥ 900px : desktop — persistent sidebar appears (component swap in JS)
+ *   ≥ 1200px: comfortable — extra breathing room
+ *   ≥ 1440px: sidebar widens to 280px
  * ------------------------------------------------------------------------- */
 
-@keyframes wp-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+@media (min-width: 600px) {
+  :root {
+    --wp-gutter: var(--s-5);
   }
 }
 
-@keyframes wp-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-.wp-main > * {
-  opacity: 0;
-  transform: translateY(8px);
-  animation: wp-enter 320ms var(--wp-ease) forwards;
-}
-
-.wp-main > *:nth-child(1) { animation-delay: 0ms; }
-.wp-main > *:nth-child(2) { animation-delay: 80ms; }
-.wp-main > *:nth-child(3) { animation-delay: 120ms; }
-.wp-main > *:nth-child(4) { animation-delay: 160ms; }
-.wp-main > *:nth-child(5) { animation-delay: 200ms; }
-.wp-main > *:nth-child(6) { animation-delay: 240ms; }
-.wp-main > *:nth-child(7) { animation-delay: 280ms; }
-.wp-main > *:nth-child(8) { animation-delay: 320ms; }
-.wp-main > *:nth-child(n+9) { animation-delay: 360ms; }
-
-/* Scroll-revealed sections — hold hidden until they enter viewport. */
-.wp-reveal-on-scroll {
-  opacity: 0;
-  transform: translateY(10px);
-  animation: none !important;
-  transition: opacity 360ms var(--wp-ease),
-    transform 360ms var(--wp-ease);
-}
-
-.wp-reveal-on-scroll.is-revealed {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Pill on active also gets a slow ambient pulse to read as "live". Very faint. */
-.wp-pill[data-state="active"] .wp-pill-dot {
-  animation: wp-pulse 2.8s ease-in-out infinite;
-}
-
-/* ---------------------------------------------------------------------------
- * Value-change flash — barely-perceptible blue tint on data update.
- * ------------------------------------------------------------------------- */
-
-.wp-flash {
-  animation: wp-value-flash 300ms var(--wp-ease-out);
-}
-
-@keyframes wp-value-flash {
-  0% { color: rgba(10, 132, 255, 0.7); }
-  100% { color: inherit; }
-}
-
-/* ---------------------------------------------------------------------------
- * Pairing row arrival — soft slide-down, no accent bar.
- * ------------------------------------------------------------------------- */
-
-.wp-row-enter {
-  animation: wp-row-enter 360ms var(--wp-ease);
-}
-
-@keyframes wp-row-enter {
-  from {
-    transform: translateY(-8px);
-    opacity: 0;
+@media (min-width: 900px) {
+  :root {
+    --wp-gutter: var(--s-6);
   }
-  to {
-    transform: translateY(0);
-    opacity: 1;
+
+  /* Desktop: two-column shell. The mobile topbar is hidden; sidebar visible. */
+  .wp-topbar {
+    display: none;
+  }
+
+  .wp-body {
+    display: grid;
+    grid-template-columns: var(--wp-sidebar-w) 1fr;
+    align-items: stretch;
+  }
+
+  .wp-body > .wp-sidebar {
+    display: flex;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+  }
+
+  .wp-main {
+    padding-top: var(--s-8);
+    padding-bottom: var(--s-9);
+  }
+
+  /* On desktop the drawer is irrelevant. */
+  .wp-drawer,
+  .wp-drawer-backdrop {
+    display: none;
+  }
+}
+
+@media (min-width: 1200px) {
+  .wp-main {
+    padding-left: var(--s-6);
+    padding-right: var(--s-6);
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --wp-sidebar-w: 280px;
   }
 }
 
 /* ---------------------------------------------------------------------------
- * Agent row leave — fade + slight shrink. No clip-path drama.
- * ------------------------------------------------------------------------- */
-
-.wp-row-leave {
-  animation: wp-row-leave 200ms var(--wp-ease-out) forwards;
-  pointer-events: none;
-}
-
-@keyframes wp-row-leave {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.98);
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Modal — opacity + small scale entrance. Apple style.
- * ------------------------------------------------------------------------- */
-
-.wp-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  animation: wp-modal-fade 220ms var(--wp-ease-out) forwards;
-}
-
-.wp-modal-backdrop.is-closing {
-  animation: wp-modal-fade-out 160ms ease-in forwards;
-}
-
-@keyframes wp-modal-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes wp-modal-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-.wp-modal {
-  background: var(--wp-bg-elevated);
-  border: 1px solid var(--wp-separator);
-  border-radius: var(--wp-elevated-radius);
-  padding: 28px 32px 22px;
-  width: min(440px, calc(100% - 48px));
-  position: relative;
-  box-shadow: 0 20px 60px -12px rgba(0, 0, 0, 0.6);
-  opacity: 0;
-  transform: scale(0.96);
-  animation: wp-modal-pop 220ms var(--wp-ease) forwards;
-}
-
-.wp-modal-backdrop.is-closing .wp-modal {
-  animation: wp-modal-pop-out 160ms ease-in forwards;
-}
-
-@keyframes wp-modal-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes wp-modal-pop-out {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-}
-
-.wp-modal-title {
-  font-family: var(--wp-font-sans);
-  font-weight: 500;
-  font-size: 18px;
-  line-height: 1.3;
-  margin: 0 0 8px;
-  letter-spacing: -0.015em;
-  color: var(--wp-fg);
-}
-
-.wp-modal-body {
-  font-family: var(--wp-font-sans);
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.5;
-  color: var(--wp-fg-secondary);
-  margin-bottom: 24px;
-  letter-spacing: -0.005em;
-}
-
-.wp-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-/* ---------------------------------------------------------------------------
- * Reduced motion — all our animations collapse to instant.
+ * Reduced motion
  * ------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .wp-main > *,
-  .wp-reveal-on-scroll,
-  .wp-page-title,
-  .wp-page-sub,
-  .wp-modal,
-  .wp-modal-backdrop,
-  .wp-code-block,
-  .wp-row-enter,
-  .wp-row-leave {
-    animation: none !important;
-    transition: none !important;
-    opacity: 1 !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+  .wp-drawer {
     transform: none !important;
-  }
-  .wp-pill[data-state="active"] .wp-pill-dot,
-  .wp-pill[data-state="active"] .wp-pill-dot::before {
-    animation: none !important;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Responsive — collapse sidebar at narrow widths.
- * ------------------------------------------------------------------------- */
-
-@media (max-width: 880px) {
-  .wp-body {
-    grid-template-columns: 1fr;
-  }
-  .wp-sidebar {
-    position: static;
-    height: auto;
-    padding: 20px 16px 8px;
-  }
-  .wp-sidebar-footer {
-    display: none;
-  }
-  .wp-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .wp-main {
-    padding: 36px 24px 60px;
-    gap: 36px;
-  }
-  .wp-page-title {
-    font-size: clamp(28px, 8vw, 36px);
-  }
-  .wp-card {
-    padding: 20px 22px;
-  }
-  .wp-section-head {
-    padding: 0;
-  }
-  .wp-row {
-    margin: 0;
-    padding-left: 0;
-    padding-right: 0;
-    border-radius: 0;
-  }
-  .wp-row:hover {
-    background: transparent;
   }
 }
