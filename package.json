@@ -6,13 +6,19 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "echo Available commands: && echo   npm run dev:server     - Start the MCP server in watch mode && echo   npm run dev:onboarding  - Start the onboarding UI && echo   npm run dist:win        - Build Windows installer && echo   npm run dist:mac        - Build macOS installer && echo   npm run dist:linux      - Build Linux installer && exit 1",
-    "dev:server": "npm run dev --workspace=packages/server-for-chrome-extension",
+    "dev": "concurrently -k -n server,web --prefix-colors blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "cross-env WEBPILOT_DEV=1 node packages/server-for-chrome-extension/cli.js --foreground",
+    "dev:web": "npm run dev --workspace=packages/server-web-ui",
     "dev:onboarding": "npm run dev --workspace=packages/electron",
-    "start": "npm run start --workspace=packages/server-for-chrome-extension",
+    "build:web": "npm run build --workspace=packages/server-web-ui",
+    "start": "npm run build:web && node packages/server-for-chrome-extension/cli.js --foreground",
     "dist:win": "npm run build:win --workspace=packages/server-for-chrome-extension && npm run dist:win --workspace=packages/electron",
     "dist:mac": "npm run build:mac --workspace=packages/server-for-chrome-extension && npm run dist:mac --workspace=packages/electron",
     "dist:linux": "npm run build:linux --workspace=packages/server-for-chrome-extension && npm run dist:linux --workspace=packages/electron",
     "version:sync": "node scripts/bump-version.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3"
   }
 }

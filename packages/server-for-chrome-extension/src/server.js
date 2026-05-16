@@ -178,6 +178,37 @@ function _resolveWebUiFile(rootDir, urlPath) {
 }
 
 function mountWebUiStatic(app) {
+  // Dev mode: proxy /ui/* to the Next.js dev server so hot reload Just Works.
+  // Activated by `npm run dev` at the repo root (which sets WEBPILOT_DEV=1 and
+  // spawns `next dev` on port 3100 — see packages/server-web-ui/package.json).
+  // The pkg-binary install path never sets this env var, so production
+  // continues serving the static export bundled into the pkg snapshot.
+  if (process.env.WEBPILOT_DEV === '1') {
+    let createProxyMiddleware;
+    try {
+      ({ createProxyMiddleware } = require('http-proxy-middleware'));
+    } catch (e) {
+      console.log(
+        '[web-ui:dev] WEBPILOT_DEV=1 set but http-proxy-middleware is not installed. ' +
+          'Run `npm install` at the repo root. Falling back to static serve.'
+      );
+      createProxyMiddleware = null;
+    }
+    if (createProxyMiddleware) {
+      console.log('[web-ui:dev] WEBPILOT_DEV=1 — proxying /ui/* to http://localhost:3100');
+      app.use(
+        '/ui',
+        createProxyMiddleware({
+          target: 'http://localhost:3100',
+          changeOrigin: true,
+          ws: true,
+          logLevel: 'silent',
+        })
+      );
+      return;
+    }
+  }
+
   const dir = resolveWebUiDir();
   if (!dir) {
     app.get(/^\/ui($|\/)/, (req, res) => {
