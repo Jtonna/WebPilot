@@ -3,30 +3,39 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createAgent } from '../lib/api';
 import { useToast } from './ToastRegion';
+import Toggle from './Toggle';
 
 /**
  * PairAgentModal — dialog that produces the copy-text an AI agent pastes to
  * connect to this WebPilot instance. Two flows, gated by the "Include API
- * key" toggle:
+ * key" toggle in the action row:
  *
  *   ON (default): operator picks an agent name + Chrome profile in the modal,
- *     clicks "Generate & copy"; the server mints a paired-keys entry via
+ *     clicks Copy; the server mints a paired-keys entry via
  *     POST /api/ui/agents and returns an api_key. The modal swaps the
- *     `<API_KEY>` placeholder for the real key and copies the result. The AI
- *     agent only has to set url + X-API-Key in .mcp.json — no request_pairing.
+ *     `<API_KEY>` placeholder for the real key and copies the result.
  *
  *   OFF: copy-text instructs the agent through the classic request_pairing
- *     flow, with explicit guidance to write the returned api_key into
- *     .mcp.json immediately and poll check_pairing_status every 10s up to
- *     12 attempts (2 minutes). No backend call.
+ *     flow. No backend call.
  *
- * Scaffolding (backdrop, is-closing animation, Esc / backdrop close) mirrors
- * ProfileSetupModal.
+ * Layout (mono palette / value-over-hue):
+ *   - Title + subhead that mirrors the toggle state in one short line.
+ *   - Collapsible name + profile fields (underline-style inputs), visible
+ *     when the toggle is ON.
+ *   - Code block, clean edges (no overlay copy button).
+ *   - Action row anchored to the code block: [Toggle] ... [Copy button].
+ *   - Modal-actions hosts a single Done button.
  */
 
 const URL_PLACEHOLDER = '<port>';
 const KEY_PLACEHOLDER = '<API_KEY>';
 const AGENT_NAME_MAX = 60;
+
+const SUBHEAD_ON = 'Generates a key now — agent skips approval.';
+const SUBHEAD_OFF = "Agent will request pairing — you'll approve it.";
+const TOGGLE_HELP =
+  'On — generate a key now and skip the approval step. ' +
+  "Off — agent will request pairing and you'll approve it.";
 
 function buildPromptWithKey(port, apiKey) {
   const portStr = port ? String(port) : URL_PLACEHOLDER;
@@ -83,7 +92,9 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   const [submitting, setSubmitting] = useState(false);
   const [nameError, setNameError] = useState(null);
   const [profileError, setProfileError] = useState(null);
+  const [confirmFlash, setConfirmFlash] = useState(null); // string | null
   const wasOpen = useRef(open);
+  const flashTimerRef = useRef(null);
   const toast = useToast();
 
   const profileList = useMemo(() => (Array.isArray(profiles) ? profiles : []), [profiles]);
@@ -129,14 +140,22 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     setSubmitting(false);
     setNameError(null);
     setProfileError(null);
+    setConfirmFlash(null);
     // Default to the first known profile so the dropdown is never blank on
-    // open. The operator can change it before clicking "Generate & copy".
+    // open. The operator can change it before clicking Copy.
     if (profileList.length > 0) {
       setSelectedProfile(profileList[0].directoryName);
     } else {
       setSelectedProfile('');
     }
   }, [open, profileList]);
+
+  // Clear the pending flash timer if the modal unmounts.
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
 
   if (!open && !closing) return null;
 
@@ -149,6 +168,10 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   const previewText = includeKey
     ? buildPromptWithKey(port, generated ? generated.apiKey : null)
     : buildPromptNoKey(port);
+
+  const subhead = confirmFlash
+    ? confirmFlash
+    : (includeKey ? SUBHEAD_ON : SUBHEAD_OFF);
 
   function validate() {
     let ok = true;
@@ -168,6 +191,15 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       setProfileError(null);
     }
     return ok;
+  }
+
+  function scheduleConfirmFlash(message) {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    setConfirmFlash(message);
+    flashTimerRef.current = setTimeout(() => {
+      setConfirmFlash(null);
+      flashTimerRef.current = null;
+    }, 3000);
   }
 
   async function handleCopy() {
@@ -190,6 +222,12 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
         toast.success('Copied — agent created.');
+        // Briefly swap the subhead to a confirmation line. The key in the
+        // code block is the persistent proof; this just acknowledges the
+        // creation without adding a permanent paragraph.
+        const profMatch = profileList.find((p) => p.directoryName === (minted.profileId || selectedProfile));
+        const profLabel = (profMatch && (profMatch.displayName || profMatch.directoryName)) || (minted.profileId || selectedProfile);
+        scheduleConfirmFlash(`Created — bound to ${profLabel}.`);
       } catch (e) {
         // Reset preview to placeholder shape so the stale (no key) text isn't
         // misleading after a failure.
@@ -212,8 +250,16 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   }
 
   const copyLabel = includeKey
-    ? (copied ? 'Copied' : (submitting ? 'Generating…' : 'Generate & copy'))
+    ? (copied ? 'Copied' : (submitting ? 'Generating…' : 'Copy'))
     : (copied ? 'Copied' : 'Copy');
+
+  // Reference the generated state to keep the lint/flow honest — the bound
+  // profile label is exposed for future use (e.g. a footnote under the code
+  // block), but the modal no longer renders the standalone "Created agent"
+  // paragraph: the key in the code block + the toast + the subhead flash
+  // carry that load.
+  void boundProfileLabel;
+  void generated;
 
   return (
     <div
@@ -228,70 +274,37 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
           Pair a new agent
         </h2>
         <div className="wp-modal-body">
-          {/* Toggle row — hairline separator below it. */}
-          <div
+          <p
             style={{
-              paddingBottom: 'var(--s-4)',
+              margin: 0,
+              marginTop: 'calc(var(--s-2) * -1)',
               marginBottom: 'var(--s-4)',
-              borderBottom: '1px solid var(--wp-separator)',
+              color: 'var(--wp-fg-secondary)',
+              fontSize: 'var(--fs-small)',
+              lineHeight: 1.5,
+              transition: 'color var(--dur-quick) var(--ease-quart-out)',
             }}
+            aria-live="polite"
           >
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--s-2)',
-                fontWeight: 500,
-                color: 'var(--wp-fg)',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={includeKey}
-                onChange={(e) => {
-                  setIncludeKey(e.target.checked);
-                  setCopied(false);
-                  // Clear any prior generation when flipping — the preview
-                  // text reverts to placeholder and the toggle-OFF path
-                  // doesn't need it anyway.
-                  setGenerated(null);
-                  setNameError(null);
-                  setProfileError(null);
-                }}
-              />
-              Include API key
-            </label>
-            <p
-              className="wp-muted"
-              style={{ margin: '6px 0 0 0', lineHeight: 1.5 }}
-            >
-              On — generate a key now and skip the approval step. Off — agent
-              will request pairing and you'll approve it.
-            </p>
-          </div>
+            {subhead}
+          </p>
 
-          {includeKey ? (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--s-3)',
-                marginBottom: 'var(--s-4)',
-              }}
-            >
-              <div>
+          <div
+            className={`wp-pair-fields${includeKey ? '' : ' is-collapsed'}`}
+            aria-hidden={!includeKey}
+          >
+            <div className="wp-pair-fields-inner">
+              <div className="wp-pair-field-row">
                 <label
                   htmlFor="wp-pair-agent-name"
-                  className="wp-muted"
-                  style={{ display: 'block', marginBottom: 4 }}
+                  className="wp-pair-field-label"
                 >
                   Agent name
                 </label>
                 <input
                   id="wp-pair-agent-name"
                   type="text"
-                  className="wp-input"
+                  className="wp-input wp-input--underline"
                   autoFocus
                   value={agentName}
                   maxLength={AGENT_NAME_MAX}
@@ -300,34 +313,30 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
                     setAgentName(e.target.value);
                     if (nameError) setNameError(null);
                   }}
-                  disabled={submitting}
+                  disabled={submitting || !includeKey}
+                  tabIndex={includeKey ? 0 : -1}
                 />
                 {nameError ? (
-                  <p
-                    className="wp-muted"
-                    style={{ color: 'var(--wp-danger)', margin: '4px 0 0 0' }}
-                  >
-                    {nameError}
-                  </p>
+                  <p className="wp-pair-field-error">{nameError}</p>
                 ) : null}
               </div>
-              <div>
+              <div className="wp-pair-field-row">
                 <label
                   htmlFor="wp-pair-agent-profile"
-                  className="wp-muted"
-                  style={{ display: 'block', marginBottom: 4 }}
+                  className="wp-pair-field-label"
                 >
                   Chrome profile
                 </label>
                 <select
                   id="wp-pair-agent-profile"
-                  className="wp-select"
+                  className="wp-select wp-input--underline"
                   value={selectedProfile}
                   onChange={(e) => {
                     setSelectedProfile(e.target.value);
                     if (profileError) setProfileError(null);
                   }}
-                  disabled={submitting || profileList.length === 0}
+                  disabled={submitting || !includeKey || profileList.length === 0}
+                  tabIndex={includeKey ? 0 : -1}
                 >
                   {profileList.length === 0 ? (
                     <option value="">(no profiles — open Chrome first)</option>
@@ -339,45 +348,34 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
                   ))}
                 </select>
                 {profileError ? (
-                  <p
-                    className="wp-muted"
-                    style={{ color: 'var(--wp-danger)', margin: '4px 0 0 0' }}
-                  >
-                    {profileError}
-                  </p>
+                  <p className="wp-pair-field-error">{profileError}</p>
                 ) : null}
               </div>
             </div>
-          ) : null}
+          </div>
 
-          {generated ? (
-            <p
-              style={{
-                margin: '0 0 var(--s-3) 0',
-                color: 'var(--wp-fg-secondary)',
-                lineHeight: 1.55,
-              }}
-            >
-              Created agent: <strong style={{ color: 'var(--wp-fg)' }}>{generated.agentName}</strong>
-              {' '}bound to <strong style={{ color: 'var(--wp-fg)' }}>{boundProfileLabel}</strong>.
-            </p>
-          ) : (
-            <p
-              style={{
-                margin: 0,
-                marginBottom: 'var(--s-3)',
-                color: 'var(--wp-fg-secondary)',
-              }}
-            >
-              Copy this and paste it into your AI agent.
-            </p>
-          )}
+          <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{previewText}</pre>
 
-          <div className="wp-code-wrap">
-            <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{previewText}</pre>
+          <div className="wp-pair-actions">
+            <Toggle
+              checked={includeKey}
+              label="Include API key"
+              title={TOGGLE_HELP}
+              onChange={(next) => {
+                setIncludeKey(next);
+                setCopied(false);
+                // Clear any prior generation when flipping — the preview
+                // text reverts to placeholder, and the toggle-OFF path
+                // doesn't need it.
+                setGenerated(null);
+                setNameError(null);
+                setProfileError(null);
+              }}
+            />
+            <span className="wp-pair-actions-spacer" />
             <button
               type="button"
-              className="wp-btn wp-btn-primary wp-btn-compact wp-code-copy"
+              className="wp-btn wp-btn-primary wp-btn-compact"
               onClick={handleCopy}
               disabled={submitting}
             >

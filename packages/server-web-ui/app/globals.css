@@ -1269,7 +1269,6 @@ hr {
   display: block;
   margin: 0;
   padding: var(--s-3) var(--s-4);
-  padding-right: 72px;
   background: var(--wp-separator);
   color: var(--wp-fg);
   border-radius: var(--radius-sm);
@@ -1279,6 +1278,11 @@ hr {
   white-space: pre;
   overflow-x: auto;
 }
+
+/* Legacy overlay-copy variant — kept for any callsite still using
+   `.wp-code-wrap > .wp-code-copy`. When the variant is in use, restore the
+   right-padding so the overlay button doesn't sit on top of text. */
+.wp-code-wrap > .wp-code { padding-right: 72px; }
 
 .wp-code-copy {
   position: absolute;
@@ -1380,6 +1384,211 @@ hr {
 .wp-switch input:focus-visible ~ .wp-switch-track {
   outline: var(--wp-focus-width) solid var(--wp-accent-focus);
   outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Toggle — mono-palette switch. Value-over-hue: off is hairline-only, on
+ * fills with --wp-fg. Knob slides via transform. Use this for new UI;
+ * .wp-switch above stays for legacy accent-tinted callsites.
+ * ------------------------------------------------------------------------- */
+
+.wp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--wp-fg);
+  line-height: 1.4;
+}
+
+.wp-toggle.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.wp-toggle-label {
+  /* Text leads, switch trails. */
+}
+
+.wp-toggle-track {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  background: transparent;
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--dur-quick) var(--ease-quart-out),
+              border-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-toggle-track.is-on {
+  background: var(--wp-fg);
+  border-color: var(--wp-fg);
+}
+
+.wp-toggle-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: inherit;
+  z-index: 1;
+}
+
+.wp-toggle-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  background: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: 50%;
+  transform: translateX(0);
+  transition: transform var(--dur-quick) var(--ease-quart-out),
+              border-color var(--dur-quick) var(--ease-quart-out);
+  pointer-events: none;
+}
+
+.wp-toggle-track.is-on .wp-toggle-knob {
+  transform: translateX(16px);
+  border-color: var(--wp-fg);
+}
+
+.wp-toggle-input:focus-visible ~ .wp-toggle-knob,
+.wp-toggle-input:focus-visible + .wp-toggle-knob {
+  /* fallback — focus styling handled on track via :has() below where supported */
+}
+
+.wp-toggle-track:has(.wp-toggle-input:focus-visible) {
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-toggle-track,
+  .wp-toggle-knob {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Input — underline variant. Hairline bottom only, no surrounding box.
+ * Used inside dense forms where the boxed --wp-input would feel heavy.
+ * ------------------------------------------------------------------------- */
+
+.wp-input--underline,
+.wp-select.wp-input--underline {
+  height: 32px;
+  padding: 0 0 2px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--wp-separator-strong);
+  border-radius: 0;
+  transition: border-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-input--underline:hover,
+.wp-select.wp-input--underline:hover {
+  border-bottom-color: var(--wp-fg-muted);
+}
+
+.wp-input--underline:focus-visible,
+.wp-select.wp-input--underline:focus-visible {
+  border-bottom-color: var(--wp-fg);
+  outline: none;
+  /* Reading-surface focus: thicker bottom line instead of an accent ring,
+     to match the mono palette's value-only treatment. */
+  box-shadow: inset 0 -1px 0 0 var(--wp-fg);
+}
+
+.wp-input--underline:disabled,
+.wp-select.wp-input--underline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+ * Pair-agent modal — collapsible inputs region and action row anchored to
+ * the code block.
+ * ------------------------------------------------------------------------- */
+
+.wp-pair-fields {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  transition: grid-template-rows var(--dur-normal) var(--ease-quart-out),
+              opacity var(--dur-normal) var(--ease-quart-out),
+              margin-bottom var(--dur-normal) var(--ease-quart-out);
+  opacity: 1;
+  margin-bottom: var(--s-4);
+}
+
+.wp-pair-fields > .wp-pair-fields-inner {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.wp-pair-fields.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.wp-pair-field-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.wp-pair-field-row > .wp-pair-field-label {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  font-weight: 400;
+}
+
+.wp-pair-field-error {
+  grid-column: 2 / 3;
+  margin: 0;
+  color: var(--wp-danger);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+
+.wp-pair-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+
+.wp-pair-actions > .wp-pair-actions-spacer { flex: 1 1 auto; }
+
+@media (max-width: 599px) {
+  .wp-pair-field-row {
+    grid-template-columns: 1fr;
+    gap: var(--s-1);
+  }
+  .wp-pair-field-error { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-pair-fields { transition: none; }
 }
 
 /* ---------------------------------------------------------------------------
