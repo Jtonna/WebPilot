@@ -179,10 +179,10 @@ export default function PairingsPage() {
               ? ''
               : pairings.length > 0
                 ? `${pairings.length} pending`
-                : 'Nothing pending.'}
+                : 'Nothing pending'}
           </span>
         </div>
-        <div className="wp-card">
+        <div className="wp-inset-group">
           {pairingsLoading ? (
             <>
               <SkeletonRow titleWidth="55%" subWidth="35%" showTrailing />
@@ -213,39 +213,41 @@ export default function PairingsPage() {
               ? ''
               : history.length > 0
                 ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}${historyCursor ? '+' : ''}`
-                : 'No decisions yet.'}
+                : 'No decisions yet'}
           </span>
         </div>
-        <div className="wp-card">
-          {historyError ? (
-            <div className="wp-empty">
-              <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-                Couldn’t load history.
-              </div>
-              <div className="wp-secondary" style={{ fontSize: 14, marginBottom: 'var(--s-3)' }}>
-                {historyError.message}
-              </div>
-              <button
-                type="button"
-                className="wp-link"
-                onClick={loadInitialHistory}
-              >
-                Retry
-              </button>
+        {historyError ? (
+          <div className="wp-card">
+            <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+              Couldn’t load history.
             </div>
-          ) : historyLoading ? (
-            <>
-              <SkeletonRow titleWidth="50%" subWidth="30%" showTrailing />
-              <SkeletonRow titleWidth="42%" subWidth="28%" showTrailing />
-              <SkeletonRow titleWidth="55%" subWidth="35%" showTrailing />
-              <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
-            </>
-          ) : history.length === 0 ? (
-            <div className="wp-empty">
+            <div className="wp-secondary" style={{ fontSize: 14, marginBottom: 'var(--s-3)' }}>
+              {historyError.message}
+            </div>
+            <button
+              type="button"
+              className="wp-link"
+              onClick={loadInitialHistory}
+            >
+              Retry
+            </button>
+          </div>
+        ) : historyLoading ? (
+          <div className="wp-inset-group">
+            <SkeletonRow titleWidth="50%" subWidth="30%" showTrailing />
+            <SkeletonRow titleWidth="42%" subWidth="28%" showTrailing />
+            <SkeletonRow titleWidth="55%" subWidth="35%" showTrailing />
+            <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
+          </div>
+        ) : history.length === 0 ? (
+          <div className="wp-card">
+            <div className="wp-empty" style={{ padding: 0 }}>
               No pairings yet. They’ll appear here after you approve or deny your first request.
             </div>
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
+            <div className="wp-row-list">
               {history.map((h, i) => {
                 const denied = h.status === 'denied';
                 const expired = h.status === 'expired';
@@ -266,21 +268,21 @@ export default function PairingsPage() {
                   </div>
                 );
               })}
-              {historyCursor ? (
-                <div style={{ marginTop: 'var(--s-4)', display: 'flex', justifyContent: 'center' }}>
-                  <button
-                    type="button"
-                    className="wp-btn wp-btn-compact"
-                    onClick={loadMoreHistory}
-                    disabled={historyLoadingMore}
-                  >
-                    {historyLoadingMore ? 'Loading…' : 'Load 50 more'}
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
+            </div>
+            {historyCursor ? (
+              <div style={{ marginTop: 'var(--s-3)', display: 'flex', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  className="wp-btn wp-btn-compact"
+                  onClick={loadMoreHistory}
+                  disabled={historyLoadingMore}
+                >
+                  {historyLoadingMore ? 'Loading…' : 'Load 50 more'}
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
     </>
   );

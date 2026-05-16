@@ -1,75 +1,42 @@
 /* ===========================================================================
- * WebPilot · Phase 1 design foundation
+ * WebPilot — structural redesign + three togglable palettes.
  *
- * Sources of truth:
- *   docs/design/PALETTE.md   — light + dark palettes (cool-neutral + sky accent)
- *   docs/design/ELEGANCE.md  — typography, spacing, sizing, radii, shadows,
- *                              motion, composition, responsive breakpoints
- *   docs/design/UX.md        — IA + breakpoints (sidebar at ≥ 900px)
+ * Palettes (toggleable via [data-palette] on <html>):
+ *   - apple   (default) — Apple HIG semantic colors, systemBlue accent.
+ *   - pastel             — Apple canvas + systemMint accent.
+ *   - mono               — Warm monochrome with a deep-slate accent.
  *
- * Theme resolution: light is the default under :root; dark applies under either
- * :root[data-theme="dark"] (explicit user choice) OR via prefers-color-scheme
- * when no explicit choice exists (see media block below).
+ * Theme (toggleable via [data-theme] on <html>):
+ *   - light (default), dark, or unset (= system via prefers-color-scheme).
+ *
+ * Per-palette light/dark variants live under matching combined selectors.
+ * Structural classes (sidebar source-list, inset groups, hairline rows, etc.)
+ * sit below the token blocks and pull only from semantic vars.
  * ========================================================================= */
 
 /* ---------------------------------------------------------------------------
- * Tokens — palette (light), typography, spacing, radii, shadows, motion.
+ * Static (palette-independent) tokens — typography, spacing, radii, motion,
+ * layout. Only color tokens are palette-specific.
  * ------------------------------------------------------------------------- */
 
 :root {
-  /* Surfaces */
-  --wp-bg: #F7F8FA;
-  --wp-bg-card: #FFFFFF;
-  --wp-bg-elevated: #FFFFFF;
-
-  /* Foreground */
-  --wp-fg: #0B1220;
-  --wp-fg-secondary: #3C4860;
-  --wp-fg-muted: #6B7588;
-
-  /* Separators */
-  --wp-separator: rgba(11, 18, 32, 0.08);
-  --wp-separator-strong: rgba(11, 18, 32, 0.16);
-
-  /* Accent (sky) */
-  --wp-accent: #2E6FE6;
-  --wp-accent-hover: #2560CC;
-  --wp-accent-active: #1E51B0;
-  --wp-accent-focus: rgba(46, 111, 230, 0.35);
-  --wp-accent-tint: rgba(46, 111, 230, 0.10);
-  /* Contrast text used ON a filled accent button. Light mode: white. */
-  --wp-on-accent: #FFFFFF;
-
-  /* Semantic */
-  --wp-success: #1F8F4E;
-  --wp-success-tint: rgba(31, 143, 78, 0.12);
-  --wp-warning: #A06400;
-  --wp-warning-tint: rgba(160, 100, 0, 0.12);
-  --wp-danger: #C13030;
-  --wp-danger-tint: rgba(193, 48, 48, 0.10);
-  --wp-info: #3B7CC4;
-  --wp-info-tint: rgba(59, 124, 196, 0.10);
-
-  /* Focus ring sizing (thicker in dark — overridden below) */
-  --wp-focus-width: 2px;
-  --wp-focus-offset: 2px;
-
   /* Fonts */
   --wp-font-sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", system-ui, sans-serif;
   --wp-font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  /* Type scale — sizes only (paired weights/line-heights live on the tokens) */
-  --fs-display: 2rem;       /* 32px */
-  --fs-section: 1.25rem;    /* 20px */
-  --fs-subsection: 1rem;    /* 16px */
-  --fs-body: 0.9375rem;     /* 15px */
-  --fs-small: 0.8125rem;    /* 13px */
-  --fs-micro: 0.75rem;      /* 12px */
-  --fs-mono: 0.875rem;      /* 14px */
+  /* Type scale */
+  --fs-display: 2rem;        /* 32px */
+  --fs-section: 1.25rem;     /* 20px */
+  --fs-subsection: 1rem;     /* 16px */
+  --fs-body: 0.9375rem;      /* 15px */
+  --fs-small: 0.8125rem;     /* 13px */
+  --fs-micro: 0.75rem;       /* 12px */
+  --fs-nano: 0.6875rem;      /* 11px — group-header micro caps */
+  --fs-mono: 0.875rem;       /* 14px */
   --fs-mono-small: 0.8125rem; /* 13px */
 
-  /* Spacing (4px base) */
+  /* Spacing */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
@@ -88,7 +55,7 @@
   --radius-xl: 20px;
   --radius-pill: 999px;
 
-  /* Shadows — light mode: two-layer Apple stack */
+  /* Shadows (kept for popovers/modals — resting cards are flat) */
   --elev-0: none;
   --elev-1:
     0 1px 1px rgba(15, 17, 21, 0.04),
@@ -109,51 +76,91 @@
   --ease-quart-in-out: cubic-bezier(0.76, 0, 0.24, 1);
   --ease-spring-soft: cubic-bezier(0.34, 1.3, 0.64, 1);
 
-  /* Layout (responsive — overridden in media queries) */
+  /* Focus ring */
+  --wp-focus-width: 2px;
+  --wp-focus-offset: 2px;
+
+  /* Layout */
   --wp-sidebar-w: 240px;
   --wp-content-max: 1120px;
-  --wp-gutter: var(--s-4); /* mobile default; bumps up at desktop */
+  --wp-gutter: var(--s-4);
   --wp-mobile-topbar-h: 56px;
 }
 
-/* ---------------------------------------------------------------------------
- * Dark palette — applied either explicitly (data-theme="dark") or via OS
- * preference when the user has not chosen.
- * ------------------------------------------------------------------------- */
+/* ===========================================================================
+ * PALETTE 1 — apple (Apple Cool, default)
+ *
+ * Verbatim Apple HIG semantic colors. systemBlue accent.
+ * ========================================================================= */
 
-:root[data-theme="dark"] {
-  --wp-bg: #0F1318;
-  --wp-bg-card: #161B22;
-  --wp-bg-elevated: #1C222B;
+/* Light is the default when [data-palette="apple"] or no palette set. */
+:root,
+:root[data-palette="apple"] {
+  /* Surfaces */
+  --wp-bg: #F2F2F7;              /* systemGroupedBackground light */
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #FFFFFF;
 
-  --wp-fg: #E8ECF2;
-  --wp-fg-secondary: #B4BCCA;
-  --wp-fg-muted: #7E8696;
+  /* Foreground (Apple `label` hierarchy — alpha on ink) */
+  --wp-fg: #000000;
+  --wp-fg-secondary: rgba(60, 60, 67, 0.6);
+  --wp-fg-muted: rgba(60, 60, 67, 0.3);
 
-  --wp-separator: rgba(232, 236, 242, 0.08);
-  --wp-separator-strong: rgba(232, 236, 242, 0.14);
+  /* Separators */
+  --wp-separator: rgba(60, 60, 67, 0.12);
+  --wp-separator-strong: rgba(60, 60, 67, 0.18);
 
-  --wp-accent: #5AA9FF;
-  --wp-accent-hover: #7BBBFF;
-  --wp-accent-active: #4F95E0;
-  --wp-accent-focus: rgba(90, 169, 255, 0.45);
-  --wp-accent-tint: rgba(90, 169, 255, 0.14);
-  /* Dark-mode primary button: near-black text on light-blue fill (AAA). */
-  --wp-on-accent: #0B1220;
+  /* Accent */
+  --wp-accent: #007AFF;
+  --wp-accent-hover: #0070EB;
+  --wp-accent-active: #005FCE;
+  --wp-accent-focus: rgba(0, 122, 255, 0.35);
+  --wp-accent-tint: rgba(0, 122, 255, 0.10);
+  --wp-on-accent: #FFFFFF;
 
-  --wp-success: #4CC38A;
-  --wp-success-tint: rgba(76, 195, 138, 0.14);
-  --wp-warning: #E0A24A;
-  --wp-warning-tint: rgba(224, 162, 74, 0.14);
-  --wp-danger: #F26B6B;
-  --wp-danger-tint: rgba(242, 107, 107, 0.14);
-  --wp-info: #7DB3E5;
-  --wp-info-tint: rgba(125, 179, 229, 0.14);
+  /* Semantic */
+  --wp-success: #34C759;
+  --wp-success-tint: rgba(52, 199, 89, 0.12);
+  --wp-warning: #FF9500;
+  --wp-warning-tint: rgba(255, 149, 0, 0.12);
+  --wp-danger: #FF3B30;
+  --wp-danger-tint: rgba(255, 59, 48, 0.10);
+  --wp-info: #007AFF;
+  --wp-info-tint: rgba(0, 122, 255, 0.10);
+}
 
-  /* Slightly thicker focus ring in dark — same offset (Elegance §lvd) */
+/* Apple dark — explicit choice */
+:root[data-theme="dark"],
+:root[data-palette="apple"][data-theme="dark"] {
+  --wp-bg: #000000;
+  --wp-bg-card: #1C1C1E;
+  --wp-bg-elevated: #2C2C2E;
+
+  --wp-fg: #FFFFFF;
+  --wp-fg-secondary: rgba(235, 235, 245, 0.6);
+  --wp-fg-muted: rgba(235, 235, 245, 0.3);
+
+  --wp-separator: rgba(84, 84, 88, 0.45);
+  --wp-separator-strong: rgba(84, 84, 88, 0.65);
+
+  --wp-accent: #0A84FF;
+  --wp-accent-hover: #2A95FF;
+  --wp-accent-active: #0070EB;
+  --wp-accent-focus: rgba(10, 132, 255, 0.45);
+  --wp-accent-tint: rgba(10, 132, 255, 0.14);
+  --wp-on-accent: #FFFFFF;
+
+  --wp-success: #30D158;
+  --wp-success-tint: rgba(48, 209, 88, 0.14);
+  --wp-warning: #FF9F0A;
+  --wp-warning-tint: rgba(255, 159, 10, 0.14);
+  --wp-danger: #FF453A;
+  --wp-danger-tint: rgba(255, 69, 58, 0.14);
+  --wp-info: #0A84FF;
+  --wp-info-tint: rgba(10, 132, 255, 0.14);
+
   --wp-focus-width: 2.5px;
 
-  /* Dark shadows are shorter + sharper (less work to do on a dark canvas) */
   --elev-1:
     0 1px 1px rgba(0, 0, 0, 0.4),
     0 2px 4px rgba(0, 0, 0, 0.25);
@@ -165,34 +172,36 @@
     0 16px 32px rgba(0, 0, 0, 0.45);
 }
 
+/* Apple dark — via OS preference, no explicit theme. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --wp-bg: #0F1318;
-    --wp-bg-card: #161B22;
-    --wp-bg-elevated: #1C222B;
+  :root:not([data-theme]):not([data-palette]),
+  :root[data-palette="apple"]:not([data-theme]) {
+    --wp-bg: #000000;
+    --wp-bg-card: #1C1C1E;
+    --wp-bg-elevated: #2C2C2E;
 
-    --wp-fg: #E8ECF2;
-    --wp-fg-secondary: #B4BCCA;
-    --wp-fg-muted: #7E8696;
+    --wp-fg: #FFFFFF;
+    --wp-fg-secondary: rgba(235, 235, 245, 0.6);
+    --wp-fg-muted: rgba(235, 235, 245, 0.3);
 
-    --wp-separator: rgba(232, 236, 242, 0.08);
-    --wp-separator-strong: rgba(232, 236, 242, 0.14);
+    --wp-separator: rgba(84, 84, 88, 0.45);
+    --wp-separator-strong: rgba(84, 84, 88, 0.65);
 
-    --wp-accent: #5AA9FF;
-    --wp-accent-hover: #7BBBFF;
-    --wp-accent-active: #4F95E0;
-    --wp-accent-focus: rgba(90, 169, 255, 0.45);
-    --wp-accent-tint: rgba(90, 169, 255, 0.14);
-    --wp-on-accent: #0B1220;
+    --wp-accent: #0A84FF;
+    --wp-accent-hover: #2A95FF;
+    --wp-accent-active: #0070EB;
+    --wp-accent-focus: rgba(10, 132, 255, 0.45);
+    --wp-accent-tint: rgba(10, 132, 255, 0.14);
+    --wp-on-accent: #FFFFFF;
 
-    --wp-success: #4CC38A;
-    --wp-success-tint: rgba(76, 195, 138, 0.14);
-    --wp-warning: #E0A24A;
-    --wp-warning-tint: rgba(224, 162, 74, 0.14);
-    --wp-danger: #F26B6B;
-    --wp-danger-tint: rgba(242, 107, 107, 0.14);
-    --wp-info: #7DB3E5;
-    --wp-info-tint: rgba(125, 179, 229, 0.14);
+    --wp-success: #30D158;
+    --wp-success-tint: rgba(48, 209, 88, 0.14);
+    --wp-warning: #FF9F0A;
+    --wp-warning-tint: rgba(255, 159, 10, 0.14);
+    --wp-danger: #FF453A;
+    --wp-danger-tint: rgba(255, 69, 58, 0.14);
+    --wp-info: #0A84FF;
+    --wp-info-tint: rgba(10, 132, 255, 0.14);
 
     --wp-focus-width: 2.5px;
 
@@ -205,6 +214,226 @@
     --elev-3:
       0 4px 8px rgba(0, 0, 0, 0.55),
       0 16px 32px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* ===========================================================================
+ * PALETTE 2 — pastel (Apple Pastel, systemMint accent)
+ *
+ * Identical to apple except the accent family.
+ * ========================================================================= */
+
+:root[data-palette="pastel"] {
+  --wp-bg: #F2F2F7;
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #FFFFFF;
+
+  --wp-fg: #000000;
+  --wp-fg-secondary: rgba(60, 60, 67, 0.6);
+  --wp-fg-muted: rgba(60, 60, 67, 0.3);
+
+  --wp-separator: rgba(60, 60, 67, 0.12);
+  --wp-separator-strong: rgba(60, 60, 67, 0.18);
+
+  --wp-accent: #00C7BE;
+  --wp-accent-hover: #00B5AC;
+  --wp-accent-active: #009E96;
+  --wp-accent-focus: rgba(0, 199, 190, 0.35);
+  --wp-accent-tint: rgba(0, 199, 190, 0.10);
+  --wp-on-accent: #FFFFFF;
+
+  --wp-success: #34C759;
+  --wp-success-tint: rgba(52, 199, 89, 0.12);
+  --wp-warning: #FF9500;
+  --wp-warning-tint: rgba(255, 149, 0, 0.12);
+  --wp-danger: #FF3B30;
+  --wp-danger-tint: rgba(255, 59, 48, 0.10);
+  --wp-info: #00C7BE;
+  --wp-info-tint: rgba(0, 199, 190, 0.10);
+}
+
+:root[data-palette="pastel"][data-theme="dark"] {
+  --wp-bg: #000000;
+  --wp-bg-card: #1C1C1E;
+  --wp-bg-elevated: #2C2C2E;
+
+  --wp-fg: #FFFFFF;
+  --wp-fg-secondary: rgba(235, 235, 245, 0.6);
+  --wp-fg-muted: rgba(235, 235, 245, 0.3);
+
+  --wp-separator: rgba(84, 84, 88, 0.45);
+  --wp-separator-strong: rgba(84, 84, 88, 0.65);
+
+  --wp-accent: #63E6E2;
+  --wp-accent-hover: #7BEDE9;
+  --wp-accent-active: #4DD9D5;
+  --wp-accent-focus: rgba(99, 230, 226, 0.35);
+  --wp-accent-tint: rgba(99, 230, 226, 0.14);
+  /* Dark-mode mint button: near-black text on mint fill. */
+  --wp-on-accent: #0B1220;
+
+  --wp-success: #30D158;
+  --wp-success-tint: rgba(48, 209, 88, 0.14);
+  --wp-warning: #FF9F0A;
+  --wp-warning-tint: rgba(255, 159, 10, 0.14);
+  --wp-danger: #FF453A;
+  --wp-danger-tint: rgba(255, 69, 58, 0.14);
+  --wp-info: #63E6E2;
+  --wp-info-tint: rgba(99, 230, 226, 0.14);
+
+  --wp-focus-width: 2.5px;
+
+  --elev-1:
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.25);
+  --elev-2:
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+  --elev-3:
+    0 4px 8px rgba(0, 0, 0, 0.55),
+    0 16px 32px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="pastel"]:not([data-theme]) {
+    --wp-bg: #000000;
+    --wp-bg-card: #1C1C1E;
+    --wp-bg-elevated: #2C2C2E;
+
+    --wp-fg: #FFFFFF;
+    --wp-fg-secondary: rgba(235, 235, 245, 0.6);
+    --wp-fg-muted: rgba(235, 235, 245, 0.3);
+
+    --wp-separator: rgba(84, 84, 88, 0.45);
+    --wp-separator-strong: rgba(84, 84, 88, 0.65);
+
+    --wp-accent: #63E6E2;
+    --wp-accent-hover: #7BEDE9;
+    --wp-accent-active: #4DD9D5;
+    --wp-accent-focus: rgba(99, 230, 226, 0.35);
+    --wp-accent-tint: rgba(99, 230, 226, 0.14);
+    --wp-on-accent: #0B1220;
+
+    --wp-success: #30D158;
+    --wp-success-tint: rgba(48, 209, 88, 0.14);
+    --wp-warning: #FF9F0A;
+    --wp-warning-tint: rgba(255, 159, 10, 0.14);
+    --wp-danger: #FF453A;
+    --wp-danger-tint: rgba(255, 69, 58, 0.14);
+    --wp-info: #63E6E2;
+    --wp-info-tint: rgba(99, 230, 226, 0.14);
+
+    --wp-focus-width: 2.5px;
+  }
+}
+
+/* ===========================================================================
+ * PALETTE 3 — mono (Warm Monochrome)
+ *
+ * Warm ivory/anthracite neutrals, deep-slate accent.
+ * ========================================================================= */
+
+:root[data-palette="mono"] {
+  --wp-bg: #FBFAF7;
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #F4F2EE;
+
+  --wp-fg: #1A1815;
+  --wp-fg-secondary: rgba(26, 24, 21, 0.62);
+  --wp-fg-muted: rgba(26, 24, 21, 0.36);
+
+  --wp-separator: rgba(26, 24, 21, 0.08);
+  --wp-separator-strong: rgba(26, 24, 21, 0.14);
+
+  --wp-accent: #3F4147;
+  --wp-accent-hover: #2A2C30;
+  --wp-accent-active: #1A1815;
+  --wp-accent-focus: rgba(63, 65, 71, 0.35);
+  --wp-accent-tint: rgba(63, 65, 71, 0.08);
+  --wp-on-accent: #FBFAF7;
+
+  --wp-success: #5A7A4A;
+  --wp-success-tint: rgba(90, 122, 74, 0.12);
+  --wp-warning: #B47A33;
+  --wp-warning-tint: rgba(180, 122, 51, 0.12);
+  --wp-danger: #9A3D3D;
+  --wp-danger-tint: rgba(154, 61, 61, 0.10);
+  --wp-info: #3F4147;
+  --wp-info-tint: rgba(63, 65, 71, 0.08);
+}
+
+:root[data-palette="mono"][data-theme="dark"] {
+  --wp-bg: #161412;
+  --wp-bg-card: #1F1D1A;
+  --wp-bg-elevated: #2A2724;
+
+  --wp-fg: #F0EDE8;
+  --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+  --wp-fg-muted: rgba(240, 237, 232, 0.36);
+
+  --wp-separator: rgba(240, 237, 232, 0.10);
+  --wp-separator-strong: rgba(240, 237, 232, 0.16);
+
+  --wp-accent: #BFB7A8;
+  --wp-accent-hover: #D5CDBE;
+  --wp-accent-active: #A89E8F;
+  --wp-accent-focus: rgba(191, 183, 168, 0.4);
+  --wp-accent-tint: rgba(191, 183, 168, 0.12);
+  /* Dark-mode bone button: near-black text on bone fill. */
+  --wp-on-accent: #161412;
+
+  --wp-success: #8FAA7F;
+  --wp-success-tint: rgba(143, 170, 127, 0.14);
+  --wp-warning: #D4A663;
+  --wp-warning-tint: rgba(212, 166, 99, 0.14);
+  --wp-danger: #C97373;
+  --wp-danger-tint: rgba(201, 115, 115, 0.14);
+  --wp-info: #BFB7A8;
+  --wp-info-tint: rgba(191, 183, 168, 0.14);
+
+  --wp-focus-width: 2.5px;
+
+  --elev-1:
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.25);
+  --elev-2:
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+  --elev-3:
+    0 4px 8px rgba(0, 0, 0, 0.55),
+    0 16px 32px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="mono"]:not([data-theme]) {
+    --wp-bg: #161412;
+    --wp-bg-card: #1F1D1A;
+    --wp-bg-elevated: #2A2724;
+
+    --wp-fg: #F0EDE8;
+    --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+    --wp-fg-muted: rgba(240, 237, 232, 0.36);
+
+    --wp-separator: rgba(240, 237, 232, 0.10);
+    --wp-separator-strong: rgba(240, 237, 232, 0.16);
+
+    --wp-accent: #BFB7A8;
+    --wp-accent-hover: #D5CDBE;
+    --wp-accent-active: #A89E8F;
+    --wp-accent-focus: rgba(191, 183, 168, 0.4);
+    --wp-accent-tint: rgba(191, 183, 168, 0.12);
+    --wp-on-accent: #161412;
+
+    --wp-success: #8FAA7F;
+    --wp-success-tint: rgba(143, 170, 127, 0.14);
+    --wp-warning: #D4A663;
+    --wp-warning-tint: rgba(212, 166, 99, 0.14);
+    --wp-danger: #C97373;
+    --wp-danger-tint: rgba(201, 115, 115, 0.14);
+    --wp-info: #BFB7A8;
+    --wp-info-tint: rgba(191, 183, 168, 0.14);
+
+    --wp-focus-width: 2.5px;
   }
 }
 
@@ -275,7 +504,6 @@ kbd {
   color: var(--wp-fg);
 }
 
-/* Focus ring — accent, offset, never alters the element border. */
 :focus {
   outline: none;
 }
@@ -294,9 +522,6 @@ hr {
 
 /* ---------------------------------------------------------------------------
  * Application shell
- *
- * Desktop (≥ 900px): persistent left sidebar + centered content column.
- * Mobile (< 900px):  56px top bar + slide-in sheet (handled in AppShell.js).
  * ------------------------------------------------------------------------- */
 
 .wp-shell {
@@ -304,7 +529,7 @@ hr {
   min-height: 100vh;
 }
 
-/* Mobile top bar (default; hidden on desktop) */
+/* Mobile topbar */
 .wp-topbar {
   position: sticky;
   top: 0;
@@ -360,7 +585,14 @@ hr {
   background: var(--wp-bg-elevated);
 }
 
-/* Sidebar — used both on desktop (persistent) and mobile (inside drawer) */
+/* ---------------------------------------------------------------------------
+ * Sidebar — Mail/Reminders source-list pattern.
+ *
+ * Layout: brand header → hairline → groups (sections), each with an uppercase
+ * micro-caps header and a stack of nav items. Active state: neutral fill +
+ * 2px left-edge hairline in accent color, primary-fg text, solid icon variant.
+ * ------------------------------------------------------------------------- */
+
 .wp-sidebar {
   width: var(--wp-sidebar-w);
   padding: var(--s-6) var(--s-4) var(--s-5);
@@ -374,6 +606,16 @@ hr {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+}
+
+/* Brand block — wordmark + accent hairline. */
+.wp-sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 0 var(--s-3);
+  margin-bottom: var(--s-5);
 }
 
 .wp-brand {
@@ -385,12 +627,41 @@ hr {
   color: var(--wp-fg);
   text-decoration: none;
   letter-spacing: -0.01em;
-  padding: var(--s-1) var(--s-3);
-  margin-bottom: var(--s-5);
 }
 
-.wp-brand:hover {
-  color: var(--wp-fg);
+.wp-brand:hover { color: var(--wp-fg); }
+
+.wp-sidebar-brand-rule {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: var(--wp-accent);
+  border: none;
+  margin: 0;
+}
+
+/* Groups */
+.wp-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--s-3);
+}
+
+.wp-sidebar-group:first-of-type {
+  padding-top: 0;
+}
+
+.wp-sidebar-group-title {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  padding: 0 var(--s-3);
+  margin: 0 0 var(--s-2);
+  line-height: 1.2;
 }
 
 .wp-nav {
@@ -400,16 +671,17 @@ hr {
 }
 
 .wp-nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--s-3);
   padding: var(--s-2) var(--s-3);
   font-family: var(--wp-font-sans);
   font-size: var(--fs-body);
-  font-weight: 500;
+  font-weight: 400;
   color: var(--wp-fg-secondary);
   text-decoration: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   letter-spacing: -0.005em;
   transition:
     background-color var(--dur-instant) var(--ease-quart-out),
@@ -421,13 +693,29 @@ hr {
   color: var(--wp-fg);
 }
 
+/* Active: neutral elevated fill, primary-fg text, 2px accent left edge.
+   The left edge is a pseudo-element so it sits flush at the row's left side
+   regardless of padding. */
 .wp-nav-item.is-active {
-  background-color: var(--wp-accent-tint);
-  color: var(--wp-accent);
+  background-color: var(--wp-bg-elevated);
+  color: var(--wp-fg);
+  font-weight: 500;
+}
+
+.wp-nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--wp-accent);
+  border-radius: 2px;
 }
 
 .wp-nav-item.is-active:hover {
-  color: var(--wp-accent);
+  color: var(--wp-fg);
+  background-color: var(--wp-bg-elevated);
 }
 
 .wp-nav-icon {
@@ -435,6 +723,22 @@ hr {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-nav-item.is-active .wp-nav-icon {
+  color: var(--wp-fg);
+}
+
+.wp-nav-item-grow { flex: 1; min-width: 0; }
+
+/* Typeset numeral count to the right (no badge bg) — Geist Mono 13px. */
+.wp-nav-count {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: var(--s-2);
 }
 
 .wp-sidebar-footer {
@@ -461,7 +765,7 @@ hr {
 .wp-sidebar-status-dot[data-state="ok"]   { background: var(--wp-success); }
 .wp-sidebar-status-dot[data-state="down"] { background: var(--wp-danger); }
 
-/* Mobile drawer (sheet) */
+/* Mobile drawer */
 .wp-drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -504,14 +808,13 @@ hr {
   pointer-events: auto;
 }
 
-/* Body layouts — desktop two-column, mobile single-column */
+/* Body layouts */
 .wp-body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
-/* On mobile the inline (desktop) sidebar is hidden — the drawer takes its place. */
 .wp-body > .wp-sidebar {
   display: none;
 }
@@ -528,7 +831,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Page head — quiet h1 + 1-sentence lede
+ * Page head — bare title (no trailing period) + subtitle.
  * ------------------------------------------------------------------------- */
 
 .wp-page-head {
@@ -558,13 +861,16 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Section
+ * Section — title (optional) + body.
+ *
+ * Section title is Apple's grouped-list group header: uppercase 11px mono,
+ * tertiary color, letter-spaced. The card / row block sits below it.
  * ------------------------------------------------------------------------- */
 
 .wp-section {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-3);
 }
 
 .wp-section-head {
@@ -572,32 +878,35 @@ hr {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-4);
+  padding: 0 var(--s-4);
 }
 
 .wp-section-title {
-  font-family: var(--wp-font-sans);
-  font-size: var(--fs-section);
-  font-weight: 500;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  color: var(--wp-fg);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
   margin: 0;
+  line-height: 1.2;
 }
 
 .wp-section-aside {
-  font-family: var(--wp-font-sans);
-  font-size: var(--fs-small);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
   font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--wp-fg-muted);
-  letter-spacing: 0.005em;
+  line-height: 1.2;
 }
 
 /* ---------------------------------------------------------------------------
- * Cards
+ * Cards — flat, hairline-bordered, no resting shadow.
  *
- * Default: no visible border. Depth comes from background-tone (--wp-bg-card
- * vs --wp-bg). A faint hairline shows only as a whisper (separator-subtle)
- * because we follow lift-via-background.
+ * Cards lift via the bg tone-step (canvas vs card surface) + a 1px hairline.
+ * Shadows are reserved for popovers/modals.
  * ------------------------------------------------------------------------- */
 
 .wp-card {
@@ -605,7 +914,7 @@ hr {
   border: 1px solid var(--wp-separator);
   border-radius: var(--radius-md);
   padding: var(--s-5);
-  box-shadow: var(--elev-1);
+  box-shadow: none;
   transition:
     background-color var(--dur-quick) var(--ease-quart-out),
     border-color var(--dur-quick) var(--ease-quart-out);
@@ -616,11 +925,66 @@ hr {
   border: 1px solid var(--wp-separator);
   border-radius: var(--radius-lg);
   padding: var(--s-6);
-  box-shadow: var(--elev-1);
+  box-shadow: none;
+}
+
+/* Inset group — Apple grouped-list pattern: a single card containing a
+   stack of hairline-separated rows. Rows handle their own internal padding
+   so the card has no inset padding of its own. */
+.wp-inset-group {
+  background-color: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.wp-inset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+  background: transparent;
+}
+
+.wp-inset-row:last-child {
+  border-bottom: none;
+}
+
+.wp-inset-row-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.wp-inset-row-title {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-inset-row-sub {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  color: var(--wp-fg-secondary);
+  margin-top: var(--s-1);
+  letter-spacing: 0.005em;
+}
+
+/* Optional section footnote (Apple grouped-list footnote pattern). */
+.wp-section-footnote {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-muted);
+  padding: var(--s-2) var(--s-4) 0;
+  max-width: 62ch;
+  line-height: 1.55;
 }
 
 /* ---------------------------------------------------------------------------
- * Rows
+ * Rows (hairline-row list, used outside cards for tabular data)
  * ------------------------------------------------------------------------- */
 
 .wp-row {
@@ -629,8 +993,7 @@ hr {
   gap: var(--s-4);
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--wp-separator);
-  margin: 0 calc(var(--s-4) * -1);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   transition: background-color var(--dur-instant) var(--ease-quart-out);
 }
 
@@ -673,6 +1036,13 @@ hr {
   margin: 0 var(--s-2);
 }
 
+/* Hairline-row list wrapper — vertical stack of rows with a top + bottom
+   hairline (Linear/Stripe-Docs table pattern). */
+.wp-row-list {
+  border-top: 1px solid var(--wp-separator);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
 /* ---------------------------------------------------------------------------
  * Key-value pairs
  * ------------------------------------------------------------------------- */
@@ -701,28 +1071,26 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Pills — semantic, tinted backgrounds + colored dot + foreground from palette
+ * Pills — Linear-style: transparent bg, hairline border, mono caps label,
+ * colored dot. Only the dot carries state color.
  * ------------------------------------------------------------------------- */
 
 .wp-pill {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-1);
+  gap: 6px;
   padding: 2px 8px;
-  border: none;
-  border-radius: var(--radius-xs);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
   font-family: var(--wp-font-sans);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-nano);
   font-weight: 500;
   color: var(--wp-fg-secondary);
-  background: var(--wp-separator);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   white-space: nowrap;
   line-height: 1.4;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  transition:
-    background-color var(--dur-instant) var(--ease-quart-out),
-    color var(--dur-instant) var(--ease-quart-out);
 }
 
 .wp-pill-dot {
@@ -737,52 +1105,16 @@ hr {
   display: inline-block;
 }
 
-.wp-pill[data-state="active"] {
-  color: var(--wp-accent);
-  background: var(--wp-accent-tint);
-}
-.wp-pill[data-state="active"] .wp-pill-dot { background: var(--wp-accent); }
-
-.wp-pill[data-state="ready"] {
-  color: var(--wp-success);
-  background: var(--wp-success-tint);
-}
-.wp-pill[data-state="ready"] .wp-pill-dot { background: var(--wp-success); }
-
-.wp-pill[data-state="needs_setup"] {
-  color: var(--wp-fg-muted);
-  background: var(--wp-separator);
-}
-.wp-pill[data-state="needs_setup"] .wp-pill-dot { background: var(--wp-fg-muted); }
-
-.wp-pill[data-state="warn"] {
-  color: var(--wp-warning);
-  background: var(--wp-warning-tint);
-}
-.wp-pill[data-state="warn"] .wp-pill-dot { background: var(--wp-warning); }
-
-.wp-pill[data-state="danger"] {
-  color: var(--wp-danger);
-  background: var(--wp-danger-tint);
-}
-.wp-pill[data-state="danger"] .wp-pill-dot { background: var(--wp-danger); }
-
-.wp-pill[data-state="info"] {
-  color: var(--wp-info);
-  background: var(--wp-info-tint);
-}
-.wp-pill[data-state="info"] .wp-pill-dot { background: var(--wp-info); }
+.wp-pill[data-state="active"]      .wp-pill-dot { background: var(--wp-success); }
+.wp-pill[data-state="ready"]       .wp-pill-dot { background: var(--wp-accent); }
+.wp-pill[data-state="needs_setup"] .wp-pill-dot { background: var(--wp-warning); }
+.wp-pill[data-state="warn"]        .wp-pill-dot { background: var(--wp-warning); }
+.wp-pill[data-state="danger"]      .wp-pill-dot { background: var(--wp-danger); }
+.wp-pill[data-state="info"]        .wp-pill-dot { background: var(--wp-info); }
+.wp-pill[data-state="unknown"]     .wp-pill-dot { background: var(--wp-fg-muted); }
 
 /* ---------------------------------------------------------------------------
  * Buttons
- *
- *   .wp-btn         — ghost / tertiary default. Transparent at rest.
- *   .wp-btn-primary — filled accent. Dark-mode text becomes #0B1220.
- *   .wp-btn-danger  — destructive (delete, deny).
- *   .wp-btn-compact — 28px height, table-cell sized.
- *   .wp-btn-cta     — 40px tall, primary CTA on hero cards.
- *
- * Hover/active use background tone or opacity changes — never translateY.
  * ------------------------------------------------------------------------- */
 
 .wp-btn {
@@ -912,9 +1244,7 @@ hr {
   font-variant-numeric: tabular-nums;
 }
 
-.wp-secondary {
-  color: var(--wp-fg-secondary);
-}
+.wp-secondary { color: var(--wp-fg-secondary); }
 
 .wp-muted {
   color: var(--wp-fg-muted);
@@ -926,29 +1256,22 @@ hr {
   font-size: var(--fs-body);
   font-weight: 400;
   color: var(--wp-fg-muted);
-  padding: var(--s-3) 0;
+  padding: var(--s-4);
 }
 
 /* ---------------------------------------------------------------------------
- * Status row — used inside the Dashboard "System status" card.
- *
- * Layout:
- *   [icon] [label … action link]                    [value · dot]
- *
- * The dot inherits semantic color from data-state. Inline action link sits
- * beneath the label and only appears when actionLabel is provided.
+ * Status row — Dashboard System status card.
  * ------------------------------------------------------------------------- */
 
 .wp-status-row {
   display: flex;
   align-items: flex-start;
   gap: var(--s-3);
-  padding: var(--s-3) 0;
+  padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--wp-separator);
 }
 
-.wp-status-row:first-child { padding-top: 0; }
-.wp-status-row:last-child  { padding-bottom: 0; border-bottom: none; }
+.wp-status-row:last-child  { border-bottom: none; }
 
 .wp-status-row-icon {
   display: inline-flex;
@@ -1018,14 +1341,7 @@ hr {
 .wp-status-row[data-state="unknown"] .wp-status-row-dot { background: var(--wp-fg-muted); }
 
 /* ---------------------------------------------------------------------------
- * Modal — used by ConfirmModal, ProfileSetupModal, PairAgentModal.
- *
- * Pattern:
- *   - Backdrop: rgba(0,0,0,0.45) light, 0.65 dark, full-viewport.
- *   - Card: 480px default; .wp-modal-lg → 640px; mobile → min(92vw, 720px).
- *   - --radius-lg corners; --elev-3 shadow.
- *   - Entrance: opacity 0→1 + translateY(8px → 0) over --dur-slow,
- *     ease-spring-soft.  Exit: opacity fade only over --dur-normal.
+ * Modal
  * ------------------------------------------------------------------------- */
 
 .wp-modal-backdrop {
@@ -1108,7 +1424,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Stepper — numbered step items inside setup modals.
+ * Stepper
  * ------------------------------------------------------------------------- */
 
 .wp-stepper {
@@ -1156,7 +1472,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Code blocks — copyable JSON/text snippets.
+ * Code blocks
  * ------------------------------------------------------------------------- */
 
 .wp-code-wrap {
@@ -1197,7 +1513,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Segmented control — used in Settings → Appearance.
+ * Segmented control
  * ------------------------------------------------------------------------- */
 
 .wp-segmented {
@@ -1227,12 +1543,12 @@ hr {
 .wp-segmented-btn:hover { color: var(--wp-fg); }
 
 .wp-segmented-btn.is-active {
-  background: var(--wp-accent-tint);
-  color: var(--wp-accent);
+  background: var(--wp-bg-card);
+  color: var(--wp-fg);
 }
 
 /* ---------------------------------------------------------------------------
- * Switch — settings toggles.
+ * Switch
  * ------------------------------------------------------------------------- */
 
 .wp-switch {
@@ -1282,8 +1598,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Toast region — fixed bottom-right (bottom-center on mobile), stack max 3.
- * Each toast: .wp-card-styled, ~320px, slide-in from right + fade.
+ * Toast region
  * ------------------------------------------------------------------------- */
 
 .wp-toast-region {
@@ -1377,10 +1692,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Page entrance cascade — single staggered fade-up for main's children.
- *
- * Children of .wp-main fade from opacity 0 + translateY(8px) to their
- * resting state over --dur-normal, staggered 40ms via nth-child.
+ * Page entrance cascade
  * ------------------------------------------------------------------------- */
 
 @keyframes wp-page-fade-up {
@@ -1443,8 +1755,6 @@ hr {
   line-height: 1.55;
 }
 
-/* Section padding inside cards-with-multiple-sub-blocks (used by some
-   settings cards that hold multiple controls). */
 .wp-card-section {
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--wp-separator);
@@ -1453,12 +1763,7 @@ hr {
 .wp-card-section:last-child  { padding-bottom: 0; border-bottom: none; }
 
 /* ---------------------------------------------------------------------------
- * Skeleton — shimmer placeholder for loading content.
- *
- * Visual:
- *   --wp-bg-elevated block with a low-amplitude linear-gradient shimmer
- *   (background-position animation, 1.4s linear infinite). No opacity flash,
- *   no scale. Respects prefers-reduced-motion (static block).
+ * Skeleton
  * ------------------------------------------------------------------------- */
 
 .wp-skeleton {
@@ -1488,7 +1793,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Long-path display — mono, tinted, breakable. Sits next to a Copy button.
+ * Long-path display
  * ------------------------------------------------------------------------- */
 
 .wp-path {
@@ -1505,9 +1810,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Reveal-on-scroll — gentle fade-up triggered by IntersectionObserver
- * (components/RevealSection.js). Sections below the fold use this; sections
- * above the fold are covered by the page entrance cascade.
+ * Reveal-on-scroll
  * ------------------------------------------------------------------------- */
 
 .wp-reveal-on-scroll {
@@ -1532,12 +1835,7 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Responsive — UX breakpoints
- *   < 600px : phone defaults (handled by base styles)
- *   ≥ 600px : tablet — slightly larger gutter
- *   ≥ 900px : desktop — persistent sidebar appears (component swap in JS)
- *   ≥ 1200px: comfortable — extra breathing room
- *   ≥ 1440px: sidebar widens to 280px
+ * Responsive
  * ------------------------------------------------------------------------- */
 
 @media (min-width: 600px) {
@@ -1551,7 +1849,6 @@ hr {
     --wp-gutter: var(--s-6);
   }
 
-  /* Desktop: two-column shell. The mobile topbar is hidden; sidebar visible. */
   .wp-topbar {
     display: none;
   }
@@ -1567,6 +1864,7 @@ hr {
     position: sticky;
     top: 0;
     height: 100vh;
+    border-right: 1px solid var(--wp-separator);
   }
 
   .wp-main {
@@ -1574,7 +1872,6 @@ hr {
     padding-bottom: var(--s-9);
   }
 
-  /* On desktop the drawer is irrelevant. */
   .wp-drawer,
   .wp-drawer-backdrop {
     display: none;

@@ -113,22 +113,24 @@ export default function ProfilesPage() {
               ? ''
               : sorted.length > 0
                 ? `${sorted.length} ${sorted.length === 1 ? 'profile' : 'profiles'}`
-                : 'None found.'}
+                : 'None found'}
           </span>
         </div>
-        <div className="wp-card">
-          {profilesLoading ? (
-            <>
-              <SkeletonRow titleWidth="45%" subWidth="60%" showTrailing />
-              <SkeletonRow titleWidth="38%" subWidth="55%" showTrailing />
-              <SkeletonRow titleWidth="52%" subWidth="50%" showTrailing />
-            </>
-          ) : sorted.length === 0 ? (
-            <div className="wp-empty">
+        {profilesLoading ? (
+          <div className="wp-inset-group">
+            <SkeletonRow titleWidth="45%" subWidth="60%" showTrailing />
+            <SkeletonRow titleWidth="38%" subWidth="55%" showTrailing />
+            <SkeletonRow titleWidth="52%" subWidth="50%" showTrailing />
+          </div>
+        ) : sorted.length === 0 ? (
+          <div className="wp-card">
+            <div className="wp-empty" style={{ padding: 0 }}>
               No profiles found. Launch Chrome once on this machine to populate the list.
             </div>
-          ) : (
-            sorted.map((p) => {
+          </div>
+        ) : (
+          <div className="wp-row-list">
+            {sorted.map((p) => {
               const needsSetup = p.webPilotStatus === 'needs_setup';
               return (
                 <div className="wp-row" key={p.directoryName} style={{ alignItems: 'flex-start' }}>
@@ -160,9 +162,9 @@ export default function ProfilesPage() {
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </section>
 
       <section className="wp-section">

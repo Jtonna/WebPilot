@@ -8,6 +8,9 @@ import {
   UserCircleIcon as UserCircleOutline,
   CpuChipIcon as CpuChipOutline,
   Cog6ToothIcon as Cog6ToothOutline,
+  ClockIcon as ClockOutline,
+  BoltIcon as BoltOutline,
+  InformationCircleIcon as InformationCircleOutline,
   Bars3Icon,
 } from '@heroicons/react/24/outline';
 import {
@@ -16,32 +19,41 @@ import {
   UserCircleIcon as UserCircleSolid,
   CpuChipIcon as CpuChipSolid,
   Cog6ToothIcon as Cog6ToothSolid,
+  ClockIcon as ClockSolid,
+  BoltIcon as BoltSolid,
+  InformationCircleIcon as InformationCircleSolid,
 } from '@heroicons/react/24/solid';
 import { getStatus } from '../lib/api';
 
 /**
- * AppShell — Phase 1 chrome.
+ * AppShell — structural redesign chrome.
  *
- * Desktop (≥ 900px, CSS-driven): persistent sidebar + content column.
- *   Layout / sidebar positioning all lives in globals.css; this component
- *   simply renders both the topbar and the sidebar — the media query in CSS
- *   hides whichever one shouldn't show. That keeps SSR stable (no
- *   matchMedia at render time) and avoids hydration mismatch.
+ * Sidebar is a three-section source list (Apple Mail / Reminders pattern):
  *
- * Mobile (< 900px):
- *   - 56px top bar with the WebPilot wordmark left, hamburger right.
- *   - Tapping the hamburger opens a left drawer (80vw) with the sidebar.
- *   - Tapping the backdrop or any nav item closes the drawer.
- *   - A tiny connection dot also lives in the top-right.
+ *   WebPilot
+ *   ─── (accent hairline)
  *
- * The connection footer in the sidebar polls /status every 15s.
+ *   WORKSPACE                       <- group header (mono nano caps)
+ *     Dashboard
+ *     Pairings           2          <- typeset count, no badge
+ *     Profiles
+ *     Agents
  *
- * Theme toggle is NOT in the chrome — it lives in Settings → Appearance
- * (Phase 2). The persisted choice is applied by an inline script in
- * app/layout.js before paint.
+ *   ACTIVITY
+ *     Recent pairings
+ *     Recent sessions
+ *
+ *   SYSTEM
+ *     Settings
+ *     About
+ *
+ *   ● Connected                     <- footer (existing dot + label)
+ *
+ * Active state: neutral elevated fill + 2px accent left-edge hairline + solid
+ * Heroicons variant + primary-fg text. No accent-tinted bg.
  */
 
-const NAV = [
+const NAV_WORKSPACE = [
   {
     href: '/ui/',
     label: 'Dashboard',
@@ -55,6 +67,7 @@ const NAV = [
     match: (p) => p.startsWith('/ui/pairings'),
     IconOutline: KeyOutline,
     IconSolid: KeySolid,
+    showCount: true,
   },
   {
     href: '/ui/profiles/',
@@ -70,12 +83,40 @@ const NAV = [
     IconOutline: CpuChipOutline,
     IconSolid: CpuChipSolid,
   },
+];
+
+const NAV_ACTIVITY = [
+  {
+    href: '/ui/pairings/?filter=recent',
+    label: 'Recent pairings',
+    // Only highlights when the explicit ?filter=recent route is hit.
+    match: (_p, q) => q === 'recent',
+    IconOutline: ClockOutline,
+    IconSolid: ClockSolid,
+  },
+  {
+    href: '/ui/agents/?filter=recent',
+    label: 'Recent sessions',
+    match: (_p, q) => q === 'recent-sessions',
+    IconOutline: BoltOutline,
+    IconSolid: BoltSolid,
+  },
+];
+
+const NAV_SYSTEM = [
   {
     href: '/ui/settings/',
     label: 'Settings',
     match: (p) => p.startsWith('/ui/settings'),
     IconOutline: Cog6ToothOutline,
     IconSolid: Cog6ToothSolid,
+  },
+  {
+    href: '/ui/settings/?section=about',
+    label: 'About',
+    match: (_p, q) => q === 'about',
+    IconOutline: InformationCircleOutline,
+    IconSolid: InformationCircleSolid,
   },
 ];
 
@@ -86,13 +127,18 @@ function normalizePath(p) {
 
 function useServerStatus() {
   const [serverOk, setServerOk] = useState(null);
+  const [pendingPairings, setPendingPairings] = useState(0);
   useEffect(() => {
     let cancelled = false;
     async function tick() {
       try {
-        await getStatus();
+        const data = await getStatus();
         if (cancelled) return;
         setServerOk(true);
+        const n = (data && Array.isArray(data.pendingPairings))
+          ? data.pendingPairings.length
+          : 0;
+        setPendingPairings(n);
       } catch (_e) {
         if (cancelled) return;
         setServerOk(false);
@@ -105,31 +151,43 @@ function useServerStatus() {
       clearInterval(id);
     };
   }, []);
-  return serverOk;
+  return { serverOk, pendingPairings };
 }
 
-function SidebarNav({ pathname, onItemClick }) {
+function SidebarGroup({ title, items, pathname, query, onItemClick, counts }) {
   return (
-    <nav className="wp-nav" aria-label="Primary">
-      {NAV.map((item) => {
-        const active = item.match(pathname);
-        const Icon = active ? item.IconSolid : item.IconOutline;
-        return (
-          <a
-            key={item.href}
-            href={item.href}
-            className={`wp-nav-item${active ? ' is-active' : ''}`}
-            aria-current={active ? 'page' : undefined}
-            onClick={onItemClick}
-          >
-            <span className="wp-nav-icon" aria-hidden="true">
-              <Icon style={{ width: 20, height: 20 }} />
-            </span>
-            <span>{item.label}</span>
-          </a>
-        );
-      })}
-    </nav>
+    <div className="wp-sidebar-group">
+      {title ? <div className="wp-sidebar-group-title">{title}</div> : null}
+      <nav className="wp-nav" aria-label={title || 'Primary'}>
+        {items.map((item) => {
+          const active = item.match(pathname, query);
+          const Icon = active ? item.IconSolid : item.IconOutline;
+          const count =
+            item.showCount && counts && counts[item.label]
+              ? counts[item.label]
+              : null;
+          return (
+            <a
+              key={item.href}
+              href={item.href}
+              className={`wp-nav-item${active ? ' is-active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              onClick={onItemClick}
+            >
+              <span className="wp-nav-icon" aria-hidden="true">
+                <Icon style={{ width: 20, height: 20 }} />
+              </span>
+              <span className="wp-nav-item-grow">{item.label}</span>
+              {count ? (
+                <span className="wp-nav-count" aria-label={`${count} pending`}>
+                  {count}
+                </span>
+              ) : null}
+            </a>
+          );
+        })}
+      </nav>
+    </div>
   );
 }
 
@@ -149,14 +207,42 @@ function SidebarFooter({ serverOk }) {
   );
 }
 
-function SidebarContents({ pathname, serverOk, onNavClick }) {
+function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClick }) {
+  const counts = { Pairings: pendingPairings || 0 };
   return (
     <>
       <div className="wp-sidebar-scroll">
-        <a href="/ui/" className="wp-brand" onClick={onNavClick}>
-          WebPilot
-        </a>
-        <SidebarNav pathname={pathname} onItemClick={onNavClick} />
+        <div className="wp-sidebar-brand">
+          <a href="/ui/" className="wp-brand" onClick={onNavClick}>
+            WebPilot
+          </a>
+          <span className="wp-sidebar-brand-rule" aria-hidden="true" />
+        </div>
+
+        <SidebarGroup
+          items={NAV_WORKSPACE}
+          title="Workspace"
+          pathname={pathname}
+          query={query}
+          counts={counts}
+          onItemClick={onNavClick}
+        />
+        <SidebarGroup
+          items={NAV_ACTIVITY}
+          title="Activity"
+          pathname={pathname}
+          query={query}
+          counts={counts}
+          onItemClick={onNavClick}
+        />
+        <SidebarGroup
+          items={NAV_SYSTEM}
+          title="System"
+          pathname={pathname}
+          query={query}
+          counts={counts}
+          onItemClick={onNavClick}
+        />
       </div>
       <SidebarFooter serverOk={serverOk} />
     </>
@@ -166,10 +252,26 @@ function SidebarContents({ pathname, serverOk, onNavClick }) {
 export default function AppShell({ children }) {
   const rawPath = usePathname() || '/ui/';
   const pathname = normalizePath(rawPath);
-  const serverOk = useServerStatus();
+  const { serverOk, pendingPairings } = useServerStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
-  // Lock body scroll while drawer is open
+  // Read the ?filter=… query param client-side so Activity items can match.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function readQuery() {
+      try {
+        const u = new URL(window.location.href);
+        setQuery(u.searchParams.get('filter') || '');
+      } catch (_e) {
+        setQuery('');
+      }
+    }
+    readQuery();
+    window.addEventListener('popstate', readQuery);
+    return () => window.removeEventListener('popstate', readQuery);
+  }, [pathname]);
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const prev = document.body.style.overflow;
@@ -181,7 +283,6 @@ export default function AppShell({ children }) {
     };
   }, [drawerOpen]);
 
-  // Close drawer on Escape
   useEffect(() => {
     if (!drawerOpen) return;
     function onKey(e) {
@@ -196,7 +297,6 @@ export default function AppShell({ children }) {
 
   return (
     <div className="wp-shell">
-      {/* Mobile top bar (hidden on desktop via CSS) */}
       <header className="wp-topbar" role="banner">
         <a href="/ui/" className="wp-topbar-brand">WebPilot</a>
         <div className="wp-topbar-right">
@@ -223,7 +323,6 @@ export default function AppShell({ children }) {
         </div>
       </header>
 
-      {/* Mobile drawer (sheet). Hidden on desktop via CSS. */}
       <div
         className={`wp-drawer-backdrop${drawerOpen ? ' is-open' : ''}`}
         onClick={() => setDrawerOpen(false)}
@@ -237,16 +336,22 @@ export default function AppShell({ children }) {
         <div className="wp-sidebar" style={{ width: '100%', height: '100%' }}>
           <SidebarContents
             pathname={pathname}
+            query={query}
             serverOk={serverOk}
+            pendingPairings={pendingPairings}
             onNavClick={onNavClick}
           />
         </div>
       </aside>
 
       <div className="wp-body">
-        {/* Desktop sidebar (hidden on mobile via CSS) */}
         <aside className="wp-sidebar" aria-label="Primary">
-          <SidebarContents pathname={pathname} serverOk={serverOk} />
+          <SidebarContents
+            pathname={pathname}
+            query={query}
+            serverOk={serverOk}
+            pendingPairings={pendingPairings}
+          />
         </aside>
 
         <main className="wp-main">{children}</main>

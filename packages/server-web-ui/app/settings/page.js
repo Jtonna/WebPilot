@@ -11,18 +11,19 @@ import {
   setNotificationSettings,
   restartServer,
 } from '../../lib/api';
-import { getTheme, setTheme } from '../../lib/theme';
+import { getTheme, setTheme, getPalette, setPalette } from '../../lib/theme';
 
 /**
- * Settings — per UX §Settings.
+ * Settings — Apple-style grouped inset cards.
  *
- * Cards (top → bottom):
- *   1. Appearance     — theme: System / Light / Dark segmented control.
- *   2. Network        — LAN toggle (existing behavior).
- *   3. Notifications  — system notifications + sound. Persisted server-side
- *                       (Phase 3 B) so the daemon honors them when firing.
- *   4. Server         — port, data directory, log file paths, Restart server.
- *   5. About          — version + links.
+ * Four groups:
+ *   1. General        — Theme, Palette, About (version + links).
+ *   2. Notifications  — System notifications, sound.
+ *   3. Network        — LAN toggle.
+ *   4. Advanced       — Server paths + Restart server.
+ *
+ * Each group is a single .wp-inset-group containing hairline-separated rows.
+ * Group headers (mono nano caps) sit OUTSIDE the card, above it.
  */
 
 export default function SettingsPage() {
@@ -34,9 +35,8 @@ export default function SettingsPage() {
   const [pendingToggle, setPendingToggle] = useState(null);
   const [pendingRestart, setPendingRestart] = useState(false);
   const [whatsThisOpen, setWhatsThisOpen] = useState(false);
-  // Theme — three-state: 'system' (null in storage), 'light', 'dark'.
   const [theme, setThemeState] = useState('system');
-  // Notifications — server-persisted (Phase 3 B). Hydrate from /api/ui/status.
+  const [palette, setPaletteState] = useState('apple');
   const [notifOn, setNotifOn] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
   const toast = useToast();
@@ -63,14 +63,19 @@ export default function SettingsPage() {
 
   useEffect(() => {
     refresh();
-    // Read persisted theme on mount (SSR-safe).
-    const stored = getTheme();
-    setThemeState(stored || 'system');
+    const storedTheme = getTheme();
+    setThemeState(storedTheme || 'system');
+    setPaletteState(getPalette());
   }, []);
 
   function handleThemeChange(value) {
     setThemeState(value);
     setTheme(value);
+  }
+
+  function handlePaletteChange(value) {
+    setPaletteState(value);
+    setPalette(value);
   }
 
   async function handleNotifChange(on) {
@@ -112,9 +117,6 @@ export default function SettingsPage() {
     setPendingRestart(false);
     setBusy(true);
     try {
-      // Fire-and-forget. The connection may drop mid-request, which is fine —
-      // we reload the page after a short delay so the UI reconnects to the
-      // freshly-spawned daemon.
       restartServer().catch(() => { /* expected: connection dropped */ });
       toast.info('Restarting…');
       setTimeout(() => {
@@ -144,16 +146,16 @@ export default function SettingsPage() {
         </p>
       </header>
 
-      {/* ---- Appearance ---- */}
+      {/* ---- General (Appearance + About) ---- */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Appearance</h2>
+          <h2 className="wp-section-title">General</h2>
         </div>
-        <div className="wp-card">
-          <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
-            <div className="wp-row-grow">
-              <div className="wp-row-title">Theme</div>
-              <div className="wp-row-sub">Follow your system, or pin to light or dark.</div>
+        <div className="wp-inset-group">
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title">Theme</div>
+              <div className="wp-inset-row-sub">Follow your system, or pin to light or dark.</div>
             </div>
             <div className="wp-segmented" role="radiogroup" aria-label="Theme">
               {[
@@ -174,6 +176,91 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
+
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title">Palette</div>
+              <div className="wp-inset-row-sub">The color signature of the UI.</div>
+            </div>
+            <div className="wp-segmented" role="radiogroup" aria-label="Palette">
+              {[
+                { v: 'apple',  label: 'Apple'  },
+                { v: 'pastel', label: 'Pastel' },
+                { v: 'mono',   label: 'Mono'   },
+              ].map((opt) => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  role="radio"
+                  aria-checked={palette === opt.v}
+                  className={`wp-segmented-btn${palette === opt.v ? ' is-active' : ''}`}
+                  onClick={() => handlePaletteChange(opt.v)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title">WebPilot v1.0.0</div>
+              <div className="wp-inset-row-sub">A local-first browser bridge for MCP agents.</div>
+            </div>
+          </div>
+
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div style={{ display: 'flex', gap: 'var(--s-4)', flexWrap: 'wrap' }}>
+                <a href="https://github.com/Jtonna/WebPilot" target="_blank" rel="noopener noreferrer" className="wp-link">
+                  GitHub
+                </a>
+                <a href="https://github.com/Jtonna/WebPilot/issues" target="_blank" rel="noopener noreferrer" className="wp-link">
+                  Report an issue
+                </a>
+                <a href="https://github.com/Jtonna/WebPilot#readme" target="_blank" rel="noopener noreferrer" className="wp-link">
+                  Docs
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ---- Notifications ---- */}
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <h2 className="wp-section-title">Notifications</h2>
+        </div>
+        <div className="wp-inset-group">
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title">System notifications for pairing requests</div>
+              <div className="wp-inset-row-sub">Show a system notification when an agent requests pairing.</div>
+            </div>
+            <Switch
+              checked={notifOn}
+              onChange={handleNotifChange}
+              ariaLabel="System notifications"
+            />
+          </div>
+
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title" style={{ opacity: notifOn ? 1 : 0.5 }}>
+                Play a sound
+              </div>
+              <div className="wp-inset-row-sub" style={{ opacity: notifOn ? 1 : 0.5 }}>
+                A short chime alongside the system notification.
+              </div>
+            </div>
+            <Switch
+              checked={soundOn}
+              disabled={!notifOn}
+              onChange={handleSoundChange}
+              ariaLabel="Notification sound"
+            />
+          </div>
         </div>
       </section>
 
@@ -182,15 +269,15 @@ export default function SettingsPage() {
         <div className="wp-section-head">
           <h2 className="wp-section-title">Network</h2>
         </div>
-        <div className="wp-card">
-          <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
-            <div className="wp-row-grow">
-              <div className="wp-row-title">
+        <div className="wp-inset-group">
+          <div className="wp-inset-row">
+            <div className="wp-inset-row-grow">
+              <div className="wp-inset-row-title">
                 {loading
                   ? <Skeleton width="40%" height={14} />
                   : (networkMode ? 'LAN access' : 'Localhost only')}
               </div>
-              <div className="wp-row-sub">
+              <div className="wp-inset-row-sub">
                 Other devices on your network can reach this server. The server will restart.
               </div>
               <button
@@ -217,131 +304,83 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ---- Notifications ---- */}
+      {/* ---- Advanced (Server paths + Restart) ---- */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Notifications</h2>
+          <h2 className="wp-section-title">Advanced</h2>
         </div>
-        <div className="wp-card">
-          <div className="wp-card-section">
-            <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
-              <div className="wp-row-grow">
-                <div className="wp-row-title">System notifications for pairing requests</div>
-                <div className="wp-row-sub">Show a system notification when an agent requests pairing.</div>
-              </div>
-              <Switch
-                checked={notifOn}
-                onChange={handleNotifChange}
-                ariaLabel="System notifications"
-              />
-            </div>
-          </div>
-          <div className="wp-card-section">
-            <div className="wp-row" style={{ alignItems: 'center', borderBottom: 'none', margin: 0 }}>
-              <div className="wp-row-grow">
-                <div className="wp-row-title" style={{ opacity: notifOn ? 1 : 0.5 }}>
-                  Play a sound
-                </div>
-                <div className="wp-row-sub" style={{ opacity: notifOn ? 1 : 0.5 }}>
-                  A short chime alongside the system notification.
-                </div>
-              </div>
-              <Switch
-                checked={soundOn}
-                disabled={!notifOn}
-                onChange={handleSoundChange}
-                ariaLabel="Notification sound"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ---- Server ---- */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Server</h2>
-        </div>
-        <div className="wp-card">
+        <div className="wp-inset-group">
           {loading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
-              <SkeletonRow titleWidth="20%" subWidth="35%" padded={false} />
-              <SkeletonRow titleWidth="35%" subWidth="75%" padded={false} />
-              <SkeletonRow titleWidth="30%" subWidth="70%" padded={false} />
-              <SkeletonRow titleWidth="25%" subWidth="40%" padded={false} />
+            <div className="wp-inset-row">
+              <div className="wp-inset-row-grow" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+                <SkeletonRow titleWidth="20%" subWidth="35%" padded={false} />
+                <SkeletonRow titleWidth="35%" subWidth="75%" padded={false} />
+                <SkeletonRow titleWidth="30%" subWidth="70%" padded={false} />
+              </div>
             </div>
           ) : (
-          <>
-          <div className="wp-kv">
-            <div className="wp-kv-label">Port</div>
-            <div className="wp-kv-value">
-              <span className="wp-mono">{port ?? '—'}</span>
-            </div>
+            <>
+              <div className="wp-inset-row">
+                <div className="wp-inset-row-grow">
+                  <div className="wp-inset-row-title">Port</div>
+                </div>
+                <span className="wp-mono">{port ?? '—'}</span>
+              </div>
 
-            <div className="wp-kv-label">Data directory</div>
-            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
-              <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
-                {paths.dataDir || '—'}
-              </span>
-              <button
-                type="button"
-                className="wp-btn wp-btn-compact"
-                onClick={() => copyToClipboard(paths.dataDir || '', 'Data directory')}
-                disabled={!paths.dataDir}
-              >
-                <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
-              </button>
-            </div>
+              <div className="wp-inset-row">
+                <div className="wp-inset-row-grow" style={{ minWidth: 0 }}>
+                  <div className="wp-inset-row-title">Data directory</div>
+                  <div style={{ marginTop: 'var(--s-1)', display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
+                    <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
+                      {paths.dataDir || '—'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="wp-btn wp-btn-compact"
+                  onClick={() => copyToClipboard(paths.dataDir || '', 'Data directory')}
+                  disabled={!paths.dataDir}
+                >
+                  <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
+                </button>
+              </div>
 
-            <div className="wp-kv-label">Log file</div>
-            <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
-              <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
-                {paths.logPath || '—'}
-              </span>
-              <button
-                type="button"
-                className="wp-btn wp-btn-compact"
-                onClick={() => copyToClipboard(paths.logPath || '', 'Log file path')}
-                disabled={!paths.logPath}
-              >
-                <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
-              </button>
-            </div>
-          </div>
-          <div style={{ marginTop: 'var(--s-5)', display: 'flex' }}>
-            <button
-              type="button"
-              className="wp-btn wp-btn-primary"
-              onClick={() => setPendingRestart(true)}
-              disabled={busy}
-            >
-              {busy ? 'Restarting…' : 'Restart server'}
-            </button>
-          </div>
-          </>
+              <div className="wp-inset-row">
+                <div className="wp-inset-row-grow" style={{ minWidth: 0 }}>
+                  <div className="wp-inset-row-title">Log file</div>
+                  <div style={{ marginTop: 'var(--s-1)', display: 'flex', alignItems: 'center', gap: 'var(--s-2)', flexWrap: 'wrap', minWidth: 0 }}>
+                    <span className="wp-path" style={{ flex: '1 1 auto', minWidth: 0 }}>
+                      {paths.logPath || '—'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="wp-btn wp-btn-compact"
+                  onClick={() => copyToClipboard(paths.logPath || '', 'Log file path')}
+                  disabled={!paths.logPath}
+                >
+                  <DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy
+                </button>
+              </div>
+
+              <div className="wp-inset-row">
+                <div className="wp-inset-row-grow">
+                  <div className="wp-inset-row-title">Restart server</div>
+                  <div className="wp-inset-row-sub">Active agents will reconnect automatically.</div>
+                </div>
+                <button
+                  type="button"
+                  className="wp-btn wp-btn-primary"
+                  onClick={() => setPendingRestart(true)}
+                  disabled={busy}
+                >
+                  {busy ? 'Restarting…' : 'Restart'}
+                </button>
+              </div>
+            </>
           )}
-        </div>
-      </section>
-
-      {/* ---- About ---- */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">About</h2>
-        </div>
-        <div className="wp-card">
-          <div className="wp-row-title">WebPilot v1.0.0</div>
-          <div className="wp-row-sub">A local-first browser bridge for MCP agents.</div>
-          <div style={{ display: 'flex', gap: 'var(--s-4)', marginTop: 'var(--s-4)', flexWrap: 'wrap' }}>
-            <a href="https://github.com/Jtonna/WebPilot" target="_blank" rel="noopener noreferrer" className="wp-link">
-              GitHub
-            </a>
-            <a href="https://github.com/Jtonna/WebPilot/issues" target="_blank" rel="noopener noreferrer" className="wp-link">
-              Report an issue
-            </a>
-            <a href="https://github.com/Jtonna/WebPilot#readme" target="_blank" rel="noopener noreferrer" className="wp-link">
-              Docs
-            </a>
-          </div>
         </div>
       </section>
 
@@ -370,10 +409,6 @@ export default function SettingsPage() {
   );
 }
 
-/**
- * Switch — accessible toggle. Calls `onChange(next)` with the would-be value
- * — does NOT flip its own state. Lets the parent prompt for confirmation.
- */
 function Switch({ checked, disabled = false, onChange, ariaLabel }) {
   return (
     <label className="wp-switch" aria-label={ariaLabel}>

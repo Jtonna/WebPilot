@@ -8,16 +8,21 @@ export const metadata = {
 };
 
 /**
- * Inline theme application — runs synchronously before <body> paints so we
- * never see a flash of the wrong theme on reload. Reads localStorage
- * `webpilotTheme` (set by lib/theme.js setTheme) and writes it to
- * `documentElement.dataset.theme`. Absence means "system" — we leave the
- * attribute unset and let the CSS prefers-color-scheme media query decide.
+ * Inline theme + palette application — runs synchronously before <body>
+ * paints so we never see a flash of the wrong palette/theme on reload.
+ *
+ * Reads:
+ *   localStorage.webpilotTheme   → 'light' | 'dark' (absent = system)
+ *   localStorage.webpilotPalette → 'apple' | 'pastel' | 'mono' (absent = apple)
+ *
+ * Writes to:
+ *   <html data-theme="…">    (omitted when system)
+ *   <html data-palette="…">  (always set — defaults to 'apple')
  *
  * Wrapped in try/catch because some browsers (private mode, storage disabled)
- * throw on localStorage access and we'd rather render light-mode than crash.
+ * throw on localStorage access and we'd rather render defaults than crash.
  */
-const themeBootScript = `(function(){try{var t=localStorage.getItem('webpilotTheme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t;}}catch(e){}})();`;
+const themeBootScript = `(function(){try{var t=localStorage.getItem('webpilotTheme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t;}var p=localStorage.getItem('webpilotPalette');if(p!=='apple'&&p!=='pastel'&&p!=='mono'){p='apple';}document.documentElement.dataset.palette=p;}catch(e){try{document.documentElement.dataset.palette='apple';}catch(_){}}})();`;
 
 export default function RootLayout({ children }) {
   return (

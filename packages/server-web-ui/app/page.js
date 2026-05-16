@@ -217,10 +217,10 @@ export default function HomePage() {
             <span className="wp-section-aside">
               {pendingPairings.length > 0
                 ? `${pendingPairings.length} pending`
-                : 'All clear.'}
+                : 'All clear'}
             </span>
           </div>
-          <div className="wp-card">
+          <div className="wp-inset-group">
             {pendingPairings.length === 0 ? (
               <div className="wp-empty">Nothing pending right now.</div>
             ) : (
@@ -250,7 +250,7 @@ export default function HomePage() {
               letterSpacing: '-0.01em',
               color: 'var(--wp-fg)',
             }}>
-              Welcome to WebPilot.
+              Welcome to WebPilot
             </h3>
             <p style={{
               margin: 0,
@@ -272,7 +272,7 @@ export default function HomePage() {
           <div className="wp-section-head">
             <h2 className="wp-section-title">System status</h2>
           </div>
-          <div className="wp-card">
+          <div className="wp-inset-group">
             <StatusRow
               label="Chrome"
               icon={GlobeAltIcon}

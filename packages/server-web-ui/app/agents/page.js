@@ -118,7 +118,7 @@ export default function AgentsPage() {
           <div className="wp-section-head">
             <h2 className="wp-section-title">Paired agents</h2>
           </div>
-          <div className="wp-card">
+          <div className="wp-inset-group">
             <SkeletonRow titleWidth="40%" subWidth="50%" showTrailing />
             <SkeletonRow titleWidth="48%" subWidth="45%" showTrailing />
           </div>
@@ -153,7 +153,7 @@ export default function AgentsPage() {
               {agents.length} {agents.length === 1 ? 'agent' : 'agents'}
             </span>
           </div>
-          <div className="wp-card">
+          <div className="wp-row-list">
             {agents.map((a) => (
               <AgentRow
                 key={a.key}
