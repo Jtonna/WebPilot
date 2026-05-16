@@ -20,6 +20,7 @@ const STATUS_ORDER = { active: 0, ready: 1, needs_setup: 2, unknown: 3 };
 
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
+  const [extensionPath, setExtensionPath] = useState(null);
   const [error, setError]       = useState(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName]   = useState('');
@@ -35,6 +36,7 @@ export default function ProfilesPage() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
       setProfiles(data.profiles || []);
+      setExtensionPath((data.paths && data.paths.extensionPath) || null);
       setError(null);
     } catch (err) {
       setError(err);
@@ -185,6 +187,7 @@ export default function ProfilesPage() {
       <ProfileSetupModal
         open={!!setupTarget}
         profileName={setupTarget ? (setupTarget.displayName || setupTarget.directoryName) : null}
+        extensionPath={extensionPath}
         onClose={() => setSetupTarget(null)}
       />
     </>

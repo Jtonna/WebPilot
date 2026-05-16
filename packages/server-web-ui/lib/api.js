@@ -97,6 +97,51 @@ export function setNetworkMode(enabled) {
   });
 }
 
+// Pairings history (Phase 3 A). Cursor-paginated.
+//
+//   getPairingHistory({ cursor, limit }) -> { entries, nextCursor }
+//
+// Pass `cursor` from the previous response to fetch the next page; pass null
+// or omit for the first page. `limit` defaults to 50, max 200.
+export function getPairingHistory({ cursor = null, limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString();
+  return apiFetch(`/api/ui/pairings/history${qs ? `?${qs}` : ''}`);
+}
+
+// Notification settings (Phase 3 B).
+export function getNotificationSettings() {
+  return apiFetch('/api/ui/settings/notifications');
+}
+
+export function setNotificationSettings(partial) {
+  return apiFetch('/api/ui/settings/notifications', {
+    method: 'POST',
+    body: partial || {},
+  });
+}
+
+// Chrome action (Phase 3 D). One endpoint handles "restart with flag" and
+// "launch fresh" via chromeManager.ensureReady.
+export function restartChrome() {
+  return apiFetch('/api/ui/chrome/restart', {
+    method: 'POST',
+    body: {},
+  });
+}
+
+// Server restart (Phase 3 D3). Fire-and-forget — the response may arrive
+// before the daemon exits, or the connection may drop mid-request. Callers
+// should not rely on the resolved value.
+export function restartServer() {
+  return apiFetch('/api/ui/server/restart', {
+    method: 'POST',
+    body: {},
+  });
+}
+
 // Race guard for pages that refresh from BOTH REST and WS events.
 //
 // Without this, a slow REST `refresh()` issued before a WS event lands can

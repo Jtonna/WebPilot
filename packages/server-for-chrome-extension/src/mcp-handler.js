@@ -669,22 +669,39 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       // Fire a server-side native notification if a fresh pending entry was just created.
       // Lazy-require so this code keeps working before the notifications module lands.
       if (result.created && result.status === 'pending') {
+        // Honor user preferences (Phase 3 B). If systemNotifications is off,
+        // skip the toast entirely; if sound is off, pass sound:false.
+        let prefs = { systemNotifications: true, sound: true };
         try {
-          const { notify } = require('./notifications');
-          console.log(
-            `[pairing] firing native notification for new pairing pairingId=${result.pairingId}`
-          );
-          notify({
-            title: 'WebPilot pairing request',
-            body: `Agent "${agentName}" is requesting access. Open WebPilot to approve.`,
-            url: webUiUrl,
-          }).catch((err) => {
-            console.log(`[pairing] notify() rejected: ${err && err.message}`);
-          });
+          const notificationsSettings = require('./notifications-settings');
+          prefs = notificationsSettings.getSettings();
         } catch (e) {
+          console.log(`[pairing] could not load notifications prefs (${e.message}) — using defaults`);
+        }
+
+        if (prefs.systemNotifications === false) {
           console.log(
-            `[pairing] notifications module not available yet (${e.message}) — skipping toast`
+            `[pairing] skipping native notification for pairingId=${result.pairingId} — disabled by user preference`
           );
+        } else {
+          try {
+            const { notify } = require('./notifications');
+            console.log(
+              `[pairing] firing native notification for new pairing pairingId=${result.pairingId} sound=${prefs.sound !== false}`
+            );
+            notify({
+              title: 'WebPilot pairing request',
+              body: `Agent "${agentName}" is requesting access. Open WebPilot to approve.`,
+              url: webUiUrl,
+              sound: prefs.sound !== false,
+            }).catch((err) => {
+              console.log(`[pairing] notify() rejected: ${err && err.message}`);
+            });
+          } catch (e) {
+            console.log(
+              `[pairing] notifications module not available yet (${e.message}) — skipping toast`
+            );
+          }
         }
       }
 

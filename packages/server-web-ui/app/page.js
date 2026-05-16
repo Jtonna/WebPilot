@@ -5,7 +5,7 @@ import { Browser, PlugsConnected, Pulse } from '@phosphor-icons/react';
 import PairingPromptCard from '../components/PairingPromptCard';
 import StatusRow from '../components/StatusRow';
 import { useToast } from '../components/ToastRegion';
-import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../lib/api';
+import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
 /**
@@ -89,6 +89,25 @@ export default function HomePage() {
     }
   }
 
+  async function handleChromeAction(kind) {
+    setBusy(true);
+    try {
+      await restartChrome();
+      if (kind === 'launch') {
+        toast.success('Chrome launched.');
+      } else {
+        toast.success('Chrome restarted with debug flag.');
+      }
+      // ensureReady is mostly synchronous; small delay lets the new Chrome
+      // PID register so `/api/ui/status` reflects it.
+      setTimeout(() => { refresh(); }, 750);
+    } catch (e) {
+      toast.error(e.message || 'Chrome action failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const pendingPairings = status?.pendingPairings ?? [];
   const chrome = status?.chrome ?? {};
   const chromeRunning = !!chrome.running;
@@ -124,11 +143,11 @@ export default function HomePage() {
   } else if (chromeRunning && !chromeHasFlag) {
     chromeState = 'warn';
     chromeValue = 'Running · debug flag missing';
-    chromeAction = { label: 'Restart Chrome', onClick: () => { /* Phase 3+ */ } };
+    chromeAction = { label: 'Restart Chrome', onClick: () => handleChromeAction('restart') };
   } else {
     chromeState = 'unknown';
     chromeValue = 'Not detected';
-    chromeAction = { label: 'Launch Chrome', onClick: () => { /* Phase 3+ */ } };
+    chromeAction = { label: 'Launch Chrome', onClick: () => handleChromeAction('launch') };
   }
 
   // ---- Extension row state ----

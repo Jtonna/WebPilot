@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import PairingPromptCard from '../../components/PairingPromptCard';
 import { useToast } from '../../components/ToastRegion';
-import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../../lib/api';
+import {
+  createSequencedFetcher,
+  getStatus,
+  approvePairing,
+  denyPairing,
+  getPairingHistory,
+} from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 /**
@@ -11,12 +17,19 @@ import { createUiEventsClient } from '../../lib/ws';
  *
  * Two sections:
  *   1. Awaiting review — identical inline approve/deny card as Dashboard.
- *   2. History         — session-scoped for Phase 2 (Phase 3 swaps to a
- *                        server-backed paginated endpoint).
+ *   2. History         — server-backed, cursor-paginated. Initial page is the
+ *                        most recent 50 terminal decisions; "Load 50 more"
+ *                        button appears when more exist.
  */
+const HISTORY_PAGE_SIZE = 50;
+
 export default function PairingsPage() {
   const [pairings, setPairings] = useState([]);
   const [history, setHistory]   = useState([]);
+  const [historyCursor, setHistoryCursor] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyError, setHistoryError] = useState(null);
   const [profiles, setProfiles] = useState([]);
   const [error, setError]       = useState(null);
   const [busy, setBusy]         = useState(false);
@@ -38,21 +51,59 @@ export default function PairingsPage() {
     }
   }
 
+  async function loadInitialHistory() {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const { entries, nextCursor } = await getPairingHistory({ limit: HISTORY_PAGE_SIZE });
+      setHistory(entries || []);
+      setHistoryCursor(nextCursor || null);
+    } catch (err) {
+      setHistoryError(err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function loadMoreHistory() {
+    if (!historyCursor || historyLoadingMore) return;
+    setHistoryLoadingMore(true);
+    try {
+      const { entries, nextCursor } = await getPairingHistory({
+        cursor: historyCursor,
+        limit: HISTORY_PAGE_SIZE,
+      });
+      setHistory((h) => [...h, ...(entries || [])]);
+      setHistoryCursor(nextCursor || null);
+    } catch (err) {
+      toast.error(err.message || 'Could not load more history.');
+    } finally {
+      setHistoryLoadingMore(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     refresh();
+    loadInitialHistory();
     const client = createUiEventsClient();
     client.connect();
     const unsubs = [
       client.subscribe('pairing_requested', () => !cancelled && refresh()),
       client.subscribe('pairing_approved', (evt) => {
         if (cancelled) return;
-        setHistory((h) => [{ ...evt.pairing, decision: 'approved', decidedAt: new Date().toISOString() }, ...h]);
+        // Prepend the new entry to local history; trim to the first page size
+        // to avoid the in-memory list ballooning. Cursor unchanged.
+        if (evt && evt.pairing) {
+          setHistory((h) => [evt.pairing, ...h].slice(0, HISTORY_PAGE_SIZE));
+        }
         refresh();
       }),
       client.subscribe('pairing_denied', (evt) => {
         if (cancelled) return;
-        setHistory((h) => [{ ...evt.pairing, decision: 'denied', decidedAt: new Date().toISOString() }, ...h]);
+        if (evt && evt.pairing) {
+          setHistory((h) => [evt.pairing, ...h].slice(0, HISTORY_PAGE_SIZE));
+        }
         refresh();
       }),
     ];
@@ -156,30 +207,72 @@ export default function PairingsPage() {
         <div className="wp-section-head">
           <h2 className="wp-section-title">History</h2>
           <span className="wp-section-aside">
-            {history.length > 0
-              ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}`
-              : 'No decisions yet'}
+            {historyLoading
+              ? 'Loading…'
+              : history.length > 0
+                ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}${historyCursor ? '+' : ''}`
+                : 'No decisions yet'}
           </span>
         </div>
         <div className="wp-card">
-          {history.length === 0 ? (
-            <div className="wp-empty">No pairings yet. They’ll appear here after you approve or deny your first request.</div>
+          {historyError ? (
+            <div className="wp-empty">
+              <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+                Couldn’t load history.
+              </div>
+              <div className="wp-secondary" style={{ fontSize: 14, marginBottom: 'var(--s-3)' }}>
+                {historyError.message}
+              </div>
+              <button
+                type="button"
+                className="wp-link"
+                onClick={loadInitialHistory}
+              >
+                Retry
+              </button>
+            </div>
+          ) : historyLoading ? (
+            <div className="wp-empty">Loading…</div>
+          ) : history.length === 0 ? (
+            <div className="wp-empty">
+              No pairings yet. They’ll appear here after you approve or deny your first request.
+            </div>
           ) : (
-            history.map((h, i) => {
-              const ok = h.decision === 'approved';
-              return (
-                <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
-                  <div className="wp-row-grow">
-                    <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
-                    <div className="wp-row-sub">{fmtTimestamp(h.decidedAt)}</div>
+            <>
+              {history.map((h, i) => {
+                const ok = h.status === 'approved';
+                const denied = h.status === 'denied';
+                const expired = h.status === 'expired';
+                let label = 'Approved';
+                let state = 'ready';
+                if (denied) { label = 'Denied'; state = 'danger'; }
+                else if (expired) { label = 'Expired'; state = 'warn'; }
+                return (
+                  <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
+                    <div className="wp-row-grow">
+                      <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
+                      <div className="wp-row-sub">{fmtTimestamp(h.decidedAt || h.createdAt)}</div>
+                    </div>
+                    <span className="wp-pill" data-state={state}>
+                      <span className="wp-pill-dot" />
+                      <span className="wp-pill-label">{label}</span>
+                    </span>
                   </div>
-                  <span className="wp-pill" data-state={ok ? 'ready' : 'danger'}>
-                    <span className="wp-pill-dot" />
-                    <span className="wp-pill-label">{ok ? 'Approved' : 'Denied'}</span>
-                  </span>
+                );
+              })}
+              {historyCursor ? (
+                <div style={{ marginTop: 'var(--s-4)', display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    type="button"
+                    className="wp-btn wp-btn-compact"
+                    onClick={loadMoreHistory}
+                    disabled={historyLoadingMore}
+                  >
+                    {historyLoadingMore ? 'Loading…' : 'Load 50 more'}
+                  </button>
                 </div>
-              );
-            })
+              ) : null}
+            </>
           )}
         </div>
       </section>

@@ -10,9 +10,44 @@ const pairedKeys = require('./paired-keys');
 const extensionInstalls = require('./extension-installs');
 const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
+const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
-const { getDataDir } = require('./service/paths');
+const { getDataDir, getLogPath } = require('./service/paths');
+
+/**
+ * Resolve the absolute path to the WebPilot Chrome-extension folder the user
+ * should "Load unpacked" from.
+ *
+ * - In pkg mode (Electron-bundled installer): the extension lives at
+ *   `<install>/resources/chrome-extension/`. `process.execPath` resolves to
+ *   `<install>/resources/server/<server-exe>`, so the extension dir is
+ *   `path.resolve(execDir, '..', 'chrome-extension')`. If that does not exist
+ *   (unexpected install layout), fall back to null so the UI can render the
+ *   "find it in resources/chrome-extension" hint.
+ * - In dev: the extension lives at `<repoRoot>/packages/chrome-extension-unpacked`.
+ *   __dirname is `<repoRoot>/packages/server-for-chrome-extension/src`, so
+ *   resolve relatively.
+ */
+function resolveExtensionPath() {
+  try {
+    const inPkg = !!process.pkg ||
+      (process.platform === 'win32' &&
+        path.basename(process.execPath).toLowerCase().endsWith('.exe') &&
+        path.basename(process.execPath).toLowerCase() !== 'node.exe');
+    if (inPkg) {
+      const candidate = path.resolve(path.dirname(process.execPath), '..', 'chrome-extension');
+      if (fs.existsSync(candidate)) return candidate;
+      return null;
+    }
+    const devPath = path.resolve(__dirname, '..', '..', 'chrome-extension-unpacked');
+    if (fs.existsSync(devPath)) return devPath;
+    return devPath; // return anyway — operator can see the expected location
+  } catch (e) {
+    console.log(`[ui-api:paths] resolveExtensionPath failed: ${e.message}`);
+    return null;
+  }
+}
 
 function writePidAndPortFiles(port) {
   const dataDir = getDataDir();
@@ -353,6 +388,17 @@ function mountWebUiRoutes(app, deps) {
             return fs.existsSync(fp) && fs.readFileSync(fp, 'utf8').trim() === '1';
           } catch (e) { return false; }
         })(),
+        // Surfaces the canonical filesystem locations the Settings page and
+        // ProfileSetupModal need to render copyable absolute paths. See Phase 3 C.
+        paths: {
+          dataDir: getDataDir(),
+          logPath: getLogPath(),
+          extensionPath: resolveExtensionPath(),
+        },
+        // Server-persisted notification preferences. Source of truth for the
+        // Settings page; the daemon also consults this when firing pairing
+        // notifications. See Phase 3 B.
+        notifications: notificationsSettings.getSettings(),
       });
     } catch (e) {
       console.error('[ui-api] /status failed:', e.message);
@@ -500,6 +546,162 @@ function mountWebUiRoutes(app, deps) {
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
       console.error('[ui-api] revoke failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---- Pairings history (Phase 3 A) ----
+  // GET /api/ui/pairings/history?cursor=<isoTimestamp>&limit=<n>
+  //
+  // Returns terminal-state pairings (approved/denied/expired) sorted by
+  // decidedAt DESC, cursor-paginated. Pending entries are not "history" — they
+  // live on /api/ui/status under `pendingPairings`.
+  app.get('/api/ui/pairings/history', auth, (req, res) => {
+    try {
+      const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0
+        ? req.query.cursor
+        : null;
+      const rawLimit = parseInt(req.query.limit, 10);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(rawLimit, 200)
+        : 50;
+
+      const all = pairedKeys.listAllPairings();
+      const terminal = all.filter((p) =>
+        p.status === 'approved' || p.status === 'denied' || p.status === 'expired'
+      );
+
+      // Sort by decidedAt (fall back to createdAt) DESC
+      terminal.sort((a, b) => {
+        const ax = a.decidedAt || a.createdAt || '';
+        const bx = b.decidedAt || b.createdAt || '';
+        if (ax === bx) return 0;
+        return ax < bx ? 1 : -1;
+      });
+
+      let filtered = terminal;
+      if (cursor) {
+        filtered = filtered.filter((p) => {
+          const ts = p.decidedAt || p.createdAt || '';
+          return ts < cursor;
+        });
+      }
+
+      const page = filtered.slice(0, limit);
+      const hasMore = filtered.length > page.length;
+      const nextCursor = hasMore && page.length > 0
+        ? (page[page.length - 1].decidedAt || page[page.length - 1].createdAt || null)
+        : null;
+
+      console.log(
+        `[ui-api:pairings:history] cursor=${cursor || '(none)'} limit=${limit} ` +
+          `returned=${page.length} nextCursor=${nextCursor || '(end)'}`
+      );
+
+      res.json({ entries: page, nextCursor });
+    } catch (e) {
+      console.error('[ui-api] /pairings/history failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---- Notification settings (Phase 3 B) ----
+  app.get('/api/ui/settings/notifications', auth, (req, res) => {
+    try {
+      const settings = notificationsSettings.loadSettings();
+      res.json(settings);
+    } catch (e) {
+      console.error('[ui-api] GET /settings/notifications failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/ui/settings/notifications', auth, express.json(), (req, res) => {
+    try {
+      const body = req.body || {};
+      const partial = {};
+      if (typeof body.systemNotifications === 'boolean') {
+        partial.systemNotifications = body.systemNotifications;
+      }
+      if (typeof body.sound === 'boolean') {
+        partial.sound = body.sound;
+      }
+      console.log(`[ui-api] POST /settings/notifications partial=${JSON.stringify(partial)}`);
+      const updated = notificationsSettings.saveSettings(partial);
+      res.json(updated);
+    } catch (e) {
+      console.error('[ui-api] POST /settings/notifications failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---- Chrome restart / launch (Phase 3 D1+D2) ----
+  // POST /api/ui/chrome/restart
+  //
+  // Calls chromeManager.ensureReady — handles all three cases (running with
+  // flag → noop; running without flag → kill+relaunch; not running → launch).
+  app.post('/api/ui/chrome/restart', auth, express.json(), async (req, res) => {
+    try {
+      // Pick a sensible profile set to require:
+      //   1) Connected profiles (so we don't kill+relaunch fewer windows than
+      //      the user had).
+      //   2) `managedProfile` from server config as a fallback.
+      //   3) "Default" as the ultimate fallback.
+      const connected = extensionBridge.getConnectedProfiles();
+      let requiredProfiles = connected.slice();
+      if (requiredProfiles.length === 0) {
+        let managed = 'Default';
+        try {
+          const { loadConfig } = require('./service/paths');
+          const cfg = loadConfig() || {};
+          if (typeof cfg.managedProfile === 'string' && cfg.managedProfile.length > 0) {
+            managed = cfg.managedProfile;
+          }
+        } catch (_) { /* ignore */ }
+        requiredProfiles = [managed];
+      }
+      console.log(
+        `[ui-api:chrome:restart] requiredProfiles=${JSON.stringify(requiredProfiles)}`
+      );
+      const result = await chromeManager.ensureReady(requiredProfiles);
+      const status = await chromeManager.getStatus();
+      res.json({
+        success: true,
+        action: result.action,
+        reason: result.reason,
+        browserPid: status.browserPid,
+        hasFlag: status.hasFlag,
+        profilesLaunched: result.launched || [],
+      });
+    } catch (e) {
+      console.error('[ui-api] /chrome/restart failed:', e.message);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // ---- Server restart (Phase 3 D3) ----
+  // Identical spawn-and-exit semantics as POST /api/ui/settings/network-mode.
+  app.post('/api/ui/server/restart', auth, express.json(), (req, res) => {
+    try {
+      console.log('[ui-api] /server/restart received — spawning replacement and exiting');
+      res.json({ ok: true, restarting: true });
+      setImmediate(() => {
+        try {
+          const { spawn } = require('child_process');
+          const args = process.argv.slice(1);
+          const env = { ...process.env, WEBPILOT_FOREGROUND: '1' };
+          const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env });
+          child.unref();
+        } catch (e) {
+          console.error('[ui-api:server:restart] Failed to spawn replacement daemon:', e.message);
+        }
+        setTimeout(() => {
+          try { cleanupPidAndPortFiles(); } catch (_e) { /* ignore */ }
+          process.exit(0);
+        }, 500);
+      });
+    } catch (e) {
+      console.error('[ui-api] /server/restart failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -860,6 +1062,17 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   });
 
   formatterManager.init();
+
+  // Eagerly load notification preferences so the in-memory cache is warm
+  // before the first pairing request notification fires.
+  try {
+    const s = notificationsSettings.loadSettings();
+    console.log(
+      `[notifications-settings] startup load systemNotifications=${s.systemNotifications} sound=${s.sound}`
+    );
+  } catch (e) {
+    console.log(`[notifications-settings] startup load failed: ${e.message}`);
+  }
 
   formatterUpdater.init(formatterManager);
   formatterUpdater.checkForUpdates().catch(err => console.error('[server] Formatter update check failed:', err));

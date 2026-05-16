@@ -9,13 +9,13 @@ import { ArrowSquareOut, Copy, Check } from '@phosphor-icons/react';
  *
  * Per UX §Profiles modal: 480px wide, four numbered steps, primary `Done`.
  *
- * Step 3's mono path uses a placeholder until the server surfaces the real
- * extension path on /api/ui/status. Phase 3 will swap it in.
+ * Step 3 renders the real extension path passed from /api/ui/status. When the
+ * server can't resolve a path (pkg install layout we don't recognize), we show
+ * a fallback hint pointing the user at the install's resources directory.
  */
 const EXTENSIONS_URL = 'chrome://extensions/';
-const EXTENSION_PATH_PLACEHOLDER = '<webpilot-extension-path>';
 
-export default function ProfileSetupModal({ open, profileName, onClose }) {
+export default function ProfileSetupModal({ open, profileName, extensionPath, onClose }) {
   const [closing, setClosing] = useState(false);
   const wasOpen = useRef(open);
 
@@ -87,12 +87,26 @@ export default function ProfileSetupModal({ open, profileName, onClose }) {
               copy={EXTENSIONS_URL}
             />
             <Step n={2} text="Turn on Developer mode (top-right toggle)." />
-            <Step
-              n={3}
-              text={'Click "Load unpacked" and pick this folder:'}
-              copy={EXTENSION_PATH_PLACEHOLDER}
-              mono
-            />
+            {extensionPath ? (
+              <Step
+                n={3}
+                text={'Click "Load unpacked" and pick this folder:'}
+                copy={extensionPath}
+                mono
+              />
+            ) : (
+              <Step
+                n={3}
+                text={
+                  <>
+                    Click <strong>Load unpacked</strong> and pick the WebPilot
+                    extension in your installation’s{' '}
+                    <span className="wp-mono">resources/chrome-extension</span>{' '}
+                    folder.
+                  </>
+                }
+              />
+            )}
             <Step
               n={4}
               text="Done — come back here and the status will update to Ready."

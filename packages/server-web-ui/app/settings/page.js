@@ -4,7 +4,12 @@ import { useEffect, useState } from 'react';
 import { Copy } from '@phosphor-icons/react';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useToast } from '../../components/ToastRegion';
-import { getStatus, setNetworkMode as apiSetNetworkMode } from '../../lib/api';
+import {
+  getStatus,
+  setNetworkMode as apiSetNetworkMode,
+  setNotificationSettings,
+  restartServer,
+} from '../../lib/api';
 import { getTheme, setTheme } from '../../lib/theme';
 
 /**
@@ -13,34 +18,16 @@ import { getTheme, setTheme } from '../../lib/theme';
  * Cards (top → bottom):
  *   1. Appearance     — theme: System / Light / Dark segmented control.
  *   2. Network        — LAN toggle (existing behavior).
- *   3. Notifications  — system notifications + sound (localStorage stub;
- *                       Phase 3 wires server persistence).
- *   4. Server         — port, data directory (placeholder), log file
- *                       (placeholder), Restart server (stub).
+ *   3. Notifications  — system notifications + sound. Persisted server-side
+ *                       (Phase 3 B) so the daemon honors them when firing.
+ *   4. Server         — port, data directory, log file paths, Restart server.
  *   5. About          — version + links.
  */
-
-const NOTIF_LS_KEY = 'webpilotNotifications';
-const SOUND_LS_KEY = 'webpilotNotificationSound';
-
-function readLs(key, defaultVal) {
-  if (typeof window === 'undefined') return defaultVal;
-  try {
-    const v = window.localStorage.getItem(key);
-    if (v === '0') return false;
-    if (v === '1') return true;
-    return defaultVal;
-  } catch (_e) { return defaultVal; }
-}
-
-function writeLs(key, on) {
-  if (typeof window === 'undefined') return;
-  try { window.localStorage.setItem(key, on ? '1' : '0'); } catch (_e) { /* ignore */ }
-}
 
 export default function SettingsPage() {
   const [networkMode, setNetworkMode] = useState(false);
   const [port, setPort] = useState(null);
+  const [paths, setPaths] = useState({ dataDir: null, logPath: null, extensionPath: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pendingToggle, setPendingToggle] = useState(null);
@@ -48,7 +35,7 @@ export default function SettingsPage() {
   const [whatsThisOpen, setWhatsThisOpen] = useState(false);
   // Theme — three-state: 'system' (null in storage), 'light', 'dark'.
   const [theme, setThemeState] = useState('system');
-  // Notifications (LS-only this phase)
+  // Notifications — server-persisted (Phase 3 B). Hydrate from /api/ui/status.
   const [notifOn, setNotifOn] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
   const toast = useToast();
@@ -58,17 +45,26 @@ export default function SettingsPage() {
       const data = await getStatus();
       setNetworkMode(!!data.networkMode);
       setPort(data.port || null);
+      if (data.paths) {
+        setPaths({
+          dataDir: data.paths.dataDir || null,
+          logPath: data.paths.logPath || null,
+          extensionPath: data.paths.extensionPath || null,
+        });
+      }
+      if (data.notifications) {
+        setNotifOn(data.notifications.systemNotifications !== false);
+        setSoundOn(data.notifications.sound !== false);
+      }
     } catch (_e) { /* surface via toast below */ }
     finally { setLoading(false); }
   }
 
   useEffect(() => {
     refresh();
-    // Read persisted theme & notifications on mount (SSR-safe).
+    // Read persisted theme on mount (SSR-safe).
     const stored = getTheme();
     setThemeState(stored || 'system');
-    setNotifOn(readLs(NOTIF_LS_KEY, true));
-    setSoundOn(readLs(SOUND_LS_KEY, true));
   }, []);
 
   function handleThemeChange(value) {
@@ -76,13 +72,25 @@ export default function SettingsPage() {
     setTheme(value);
   }
 
-  function handleNotifChange(on) {
+  async function handleNotifChange(on) {
+    const previous = notifOn;
     setNotifOn(on);
-    writeLs(NOTIF_LS_KEY, on);
+    try {
+      await setNotificationSettings({ systemNotifications: on });
+    } catch (e) {
+      setNotifOn(previous);
+      toast.error(e.message || 'Could not save notification setting.');
+    }
   }
-  function handleSoundChange(on) {
+  async function handleSoundChange(on) {
+    const previous = soundOn;
     setSoundOn(on);
-    writeLs(SOUND_LS_KEY, on);
+    try {
+      await setNotificationSettings({ sound: on });
+    } catch (e) {
+      setSoundOn(previous);
+      toast.error(e.message || 'Could not save sound setting.');
+    }
   }
 
   const confirmToggle = async () => {
@@ -99,10 +107,22 @@ export default function SettingsPage() {
     } finally { setBusy(false); }
   };
 
-  const confirmRestart = () => {
+  const confirmRestart = async () => {
     setPendingRestart(false);
-    // Phase 3 will wire the real endpoint.
-    toast.info('Restart server is not wired yet — coming in Phase 3.');
+    setBusy(true);
+    try {
+      // Fire-and-forget. The connection may drop mid-request, which is fine —
+      // we reload the page after a short delay so the UI reconnects to the
+      // freshly-spawned daemon.
+      restartServer().catch(() => { /* expected: connection dropped */ });
+      toast.info('Server is restarting…');
+      setTimeout(() => {
+        try { window.location.reload(); } catch (_e) { /* ignore */ }
+      }, 2000);
+    } catch (e) {
+      toast.error(e.message || 'Could not restart server.');
+      setBusy(false);
+    }
   };
 
   async function copyToClipboard(text, label) {
@@ -248,12 +268,14 @@ export default function SettingsPage() {
 
             <div className="wp-kv-label">Data directory</div>
             <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-              <span className="wp-mono wp-secondary">{'<dataDir>'}</span>
+              <span className="wp-mono wp-secondary" style={{ wordBreak: 'break-all' }}>
+                {paths.dataDir || '—'}
+              </span>
               <button
                 type="button"
                 className="wp-btn wp-btn-compact"
-                onClick={() => copyToClipboard('<dataDir>', 'Data directory')}
-                title="Phase 3 will surface the real path"
+                onClick={() => copyToClipboard(paths.dataDir || '', 'Data directory')}
+                disabled={!paths.dataDir}
               >
                 <Copy size={14} weight="regular" /> Copy
               </button>
@@ -261,12 +283,14 @@ export default function SettingsPage() {
 
             <div className="wp-kv-label">Log file</div>
             <div className="wp-kv-value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-              <span className="wp-mono wp-secondary">{'<logPath>'}</span>
+              <span className="wp-mono wp-secondary" style={{ wordBreak: 'break-all' }}>
+                {paths.logPath || '—'}
+              </span>
               <button
                 type="button"
                 className="wp-btn wp-btn-compact"
-                onClick={() => copyToClipboard('<logPath>', 'Log file path')}
-                title="Phase 3 will surface the real path"
+                onClick={() => copyToClipboard(paths.logPath || '', 'Log file path')}
+                disabled={!paths.logPath}
               >
                 <Copy size={14} weight="regular" /> Copy
               </button>
@@ -277,8 +301,9 @@ export default function SettingsPage() {
               type="button"
               className="wp-btn wp-btn-primary"
               onClick={() => setPendingRestart(true)}
+              disabled={busy}
             >
-              Restart server
+              {busy ? 'Restarting…' : 'Restart server'}
             </button>
           </div>
         </div>
