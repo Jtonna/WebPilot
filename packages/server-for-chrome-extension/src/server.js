@@ -10,6 +10,7 @@ const pairedKeys = require('./paired-keys');
 const extensionInstalls = require('./extension-installs');
 const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
+const formatterLogs = require('./formatter-logs');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
@@ -774,6 +775,68 @@ function mountWebUiRoutes(app, deps) {
       res.json({ entries: page, nextCursor });
     } catch (e) {
       console.error('[ui-api] /pairings/history failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ---- Formatters observability (Wave B) ----
+  //
+  // Returns the list of registered formatters with their per-formatter
+  // manifest metadata fused with the runtime health/log status from
+  // formatter-logs. Powers the upcoming Web UI Formatters tab.
+  //
+  // Localhost-only via `auth`; no API key required (project policy for
+  // /api/ui/*).
+  app.get('/api/ui/formatters', auth, (req, res) => {
+    try {
+      const manifests = formatterManager.getPerFormatterManifests();
+      const statusMap = formatterLogs.listAll();
+      const out = Object.entries(manifests).map(([name, pm]) => {
+        const status = statusMap.get(name) || {
+          health: 'unknown',
+          lastError: null,
+          lastSuccessAt: null,
+          lastErrorAt: null,
+          successCount: 0,
+          errorCount: 0
+        };
+        return {
+          name,
+          version: pm.version,
+          source: pm.source,
+          description: pm.description,
+          notes: pm.notes || '',
+          match: pm.match || '',
+          errorHandling: pm.errorHandling || { fallbackToRawTree: true },
+          workflows: Array.isArray(pm.workflows) ? pm.workflows : [],
+          health: status.health,
+          lastError: status.lastError,
+          lastSuccessAt: status.lastSuccessAt,
+          lastErrorAt: status.lastErrorAt,
+          successCount: status.successCount,
+          errorCount: status.errorCount
+        };
+      });
+      res.json({ formatters: out });
+    } catch (e) {
+      console.error('[ui-api] GET /formatters failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/ui/formatters/:name/logs', auth, (req, res) => {
+    try {
+      const limitRaw = req.query.limit;
+      let limit = 50;
+      if (typeof limitRaw === 'string') {
+        const parsed = parseInt(limitRaw, 10);
+        if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(parsed, 500);
+      }
+      const logs = formatterLogs.getLogs(req.params.name, limit);
+      const status = formatterLogs.getStatus(req.params.name);
+      res.json({ name: req.params.name, status, logs });
+    } catch (e) {
+      console.error('[ui-api] GET /formatters/:name/logs failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
