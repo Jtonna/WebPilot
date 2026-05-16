@@ -928,6 +928,24 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
    * implementations. Internally each method calls the same `_browser*`
    * helper used by the MCP tool dispatch, so workflows execute
    * server-side without HTTP/SSE roundtrips.
+   *
+   * Each primitive resolves the target Chrome profile from the caller's
+   * `apiKey` (per-agent routing) and forwards to `extensionBridge.sendCommand`.
+   * The shape of the returned object — `{ getAccessibilityTree, click, type,
+   * scroll, getTabs, createTab }` — is the public contract that workflow
+   * authors rely on. Add fields here in lockstep with new workflow needs;
+   * do not remove or rename existing fields without bumping the formatter
+   * manifest schema.
+   *
+   * @param {string|null} apiKey  Resolved API key for the calling agent
+   * @returns {{
+   *   getAccessibilityTree: Function,
+   *   click: Function,
+   *   type: Function,
+   *   scroll: Function,
+   *   getTabs: Function,
+   *   createTab: Function
+   * }}
    */
   function buildBrowserPrimitives(apiKey) {
     return {

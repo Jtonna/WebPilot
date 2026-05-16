@@ -178,12 +178,29 @@ function loadWorkflowsForFormatter(platformName, baseDir, entryRelPath) {
   }
 }
 
+/**
+ * Look up a single workflow implementation by `<formatter>/<workflow>`.
+ * Returned shape:
+ *   { description: string, parameters: object, run: function }
+ * Returns null if either the formatter or the workflow is unknown.
+ *
+ * @param {string} formatterName  e.g. "discord"
+ * @param {string} workflowName   e.g. "send_message"
+ * @returns {{ description: string, parameters: object, run: Function } | null}
+ */
 function getWorkflow(formatterName, workflowName) {
   const formatterWorkflows = workflowsByFormatter[formatterName];
   if (!formatterWorkflows) return null;
   return formatterWorkflows[workflowName] || null;
 }
 
+/**
+ * Flat list of every loaded workflow across every formatter — used by tests
+ * and (eventually) admin surfaces that want to enumerate the whole set
+ * without iterating manifests.
+ *
+ * @returns {Array<{ formatter: string, name: string, description: string, parameters: object }>}
+ */
 function listWorkflows() {
   const out = [];
   for (const [formatterName, formatterWorkflows] of Object.entries(workflowsByFormatter)) {
@@ -488,9 +505,16 @@ function getHowToCreateCustomFormatter() {
   };
 }
 
-// Expose per-formatter manifests so the Web UI Formatters tab (Wave C) and
-// downstream consumers can render version/description/notes/workflows
-// without re-reading from disk.
+/**
+ * Snapshot of every loaded per-formatter manifest, keyed by formatter name.
+ * Each value carries name/version/match/source/description/notes/errorHandling/
+ * workflows. Used by the Web UI Formatters tab (`/api/ui/formatters`) and
+ * `webpilot_get_formatter_info` so consumers don't re-read manifest.json from
+ * disk. Returns a shallow copy of the internal map so callers can't mutate
+ * the live state.
+ *
+ * @returns {Object<string, object>}
+ */
 function getPerFormatterManifests() {
   return { ...perFormatterManifests };
 }
