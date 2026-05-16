@@ -49,26 +49,60 @@ function emitPairingEvent(event, payload) {
   }
 }
 
+// In-memory cache of paired-keys.json. validateKey is called twice per
+// authenticated MCP tool call (auth gate + resolveTargetProfile), and each
+// call previously hit the disk. The cache is invalidated automatically on
+// every saveKeys() write; reads also stat the file and reload when its
+// mtime changes, so an external edit between writes is still picked up on
+// the next read. Note: filesystem mtime resolution is 1 second on some
+// filesystems, so two writes from two processes within the same second
+// might not be detected — acceptable for our single-process server model.
+let cache = null;
+let cacheMTime = null;
+
+function invalidateCache() {
+  cache = null;
+  cacheMTime = null;
+}
+
 /**
  * Reads paired-keys.json from the config directory.
  * Returns a parsed array of key entries, or an empty array if the file does not exist.
+ *
+ * Backed by an in-memory cache that is refreshed when the file's mtime
+ * changes on disk; populated lazily on first read.
  */
 function loadKeys() {
   const keysPath = getKeysPath();
   try {
-    if (fs.existsSync(keysPath)) {
-      const raw = fs.readFileSync(keysPath, 'utf8');
-      return JSON.parse(raw);
+    if (!fs.existsSync(keysPath)) {
+      cache = [];
+      cacheMTime = null;
+      return cache;
     }
+    const stat = fs.statSync(keysPath);
+    if (cache !== null && cacheMTime !== null && stat.mtimeMs === cacheMTime) {
+      return cache;
+    }
+    const raw = fs.readFileSync(keysPath, 'utf8');
+    cache = JSON.parse(raw);
+    cacheMTime = stat.mtimeMs;
+    return cache;
   } catch (e) {
-    // Ignore read/parse errors — treat as empty
+    // Ignore read/parse/stat errors — treat as empty and clear cache so
+    // the next call retries the disk.
+    cache = null;
+    cacheMTime = null;
+    return [];
   }
-  return [];
 }
 
 /**
  * Writes the keys array to paired-keys.json.
  * Ensures the config directory exists before writing.
+ *
+ * Updates the in-memory cache and mtime stamp so subsequent loadKeys()
+ * calls return the just-written value without re-reading the disk.
  *
  * @param {Array} keys
  */
@@ -76,6 +110,13 @@ function saveKeys(keys) {
   const keysPath = getKeysPath();
   fs.mkdirSync(path.dirname(keysPath), { recursive: true });
   fs.writeFileSync(keysPath, JSON.stringify(keys, null, 2), 'utf8');
+  cache = keys;
+  try {
+    const stat = fs.statSync(keysPath);
+    cacheMTime = stat.mtimeMs;
+  } catch (e) {
+    cacheMTime = null;
+  }
 }
 
 /**
@@ -520,6 +561,7 @@ function cleanupExpiredPairings() {
 module.exports = {
   loadKeys,
   saveKeys,
+  invalidateCache,
   generateKey,
   addKey,
   createPairedAgent,

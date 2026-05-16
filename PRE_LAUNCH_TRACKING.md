@@ -403,7 +403,7 @@ This is the *living* list of items in the QOL-Features scope that are **not done
 
 ### P2 — Minor improvements identified by reviews
 
-- [ ] **`validateKey()` is called twice per tool call** (auth + routing). Memoize the entry from the auth gate and thread it to the routing function. Tiny I/O regression, not correctness.
+- [x] **`validateKey()` is called twice per tool call** (auth + routing). ~~Memoize the entry from the auth gate and thread it to the routing function. Tiny I/O regression, not correctness.~~ Resolved by adding an in-memory cache to `paired-keys.js` (lazy on first read, invalidated on every `saveKeys()` write, mtime-compare on subsequent reads). The double-call is no longer a per-call disk cost.
 - [ ] **Settings page race guard** — was assessed by the H2 agent as not needing it (no WS-event refresh trigger); revisit if a WS-event for settings is ever added.
 - [ ] **Per-row keyboard a11y on agent list** — review I-finding; not addressed.
 - [ ] **`formatDate` defensive fallback for null/undefined** — review S-finding.

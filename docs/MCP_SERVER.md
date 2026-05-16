@@ -145,7 +145,7 @@ Key APIs:
 - `denyPairing(pairingId)` -- Marks a pending entry as denied.
 - `createPairedAgent({ agentName, profileId })` -- **Direct pre-provisioning** path used by `POST /api/ui/agents` (no `request_pairing` round-trip). Mints a key directly with `source: 'web-ui-direct'` for audit.
 - `updateProfileBinding(apiKey, profileId)` -- Field-flip used by `PATCH /api/ui/agents/:key` to re-bind an existing agent to a different profile. No socket teardown — routing re-resolves per call.
-- `validateKey(apiKey)` -- Returns the entry object or null. Called by both the auth gate and `resolveTargetProfile` (currently twice per tool call; see `../PRE_LAUNCH_TRACKING.md` follow-ups, P2).
+- `validateKey(apiKey)` -- Returns the entry object or null. Reads from an in-memory cache populated lazily on first read and invalidated on every write via `saveKeys()`; an mtime-compare also picks up external edits on the next read. Called by both the auth gate and `resolveTargetProfile`, but each call is an in-memory lookup rather than a disk read.
 - `touchKey(apiKey)` -- Updates `lastAccessed`. Called on every authenticated tool call.
 - `renameKey(apiKey, newName)`, `revokeKey(apiKey)`, `listKeys()` -- standard CRUD + listing. `listKeys()` returns `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`.
 - `listPendingPairings()`, `listAllPairings()` -- read the async ledger. `listAllPairings()` returns terminal-state pairings too (used by `GET /api/ui/pairings/history`).
