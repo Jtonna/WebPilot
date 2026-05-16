@@ -9,6 +9,7 @@ import {
 } from '../lib/api';
 import { useToast } from './ToastRegion';
 import Toggle from './Toggle';
+import Modal from './Modal';
 import { buildMcpConfigJson } from '../lib/mcpConfig';
 
 /**
@@ -104,7 +105,6 @@ You don't have an API key yet. Steps:
 }
 
 export default function PairAgentModal({ open, onClose, port, profiles }) {
-  const [closing, setClosing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [includeKey, setIncludeKey] = useState(true);
   const [agentName, setAgentName] = useState('');
@@ -113,7 +113,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   const [submitting, setSubmitting] = useState(false);
   const [confirmFlash, setConfirmFlash] = useState(null); // string | null
 
-  const wasOpen = useRef(open);
   const flashTimerRef = useRef(null);
   const renameTimerRef = useRef(null);
   // `committed` lives in a ref because the close-handler reads it from
@@ -190,18 +189,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     }
   }
 
-  // Mirror open → closing animation. Stay mounted until the exit anim finishes.
-  useEffect(() => {
-    if (wasOpen.current && !open) {
-      setClosing(true);
-      const id = setTimeout(() => setClosing(false), 240);
-      wasOpen.current = open;
-      return () => clearTimeout(id);
-    }
-    wasOpen.current = open;
-    return undefined;
-  }, [open]);
-
   // Reset transient state + eagerly mint each time the modal opens.
   useEffect(() => {
     if (!open) return;
@@ -230,20 +217,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Esc closes (routes through the auto-revoke close handler).
-  useEffect(() => {
-    if (!open) return undefined;
-    function onKey(e) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        requestClose();
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
   // Cleanup on unmount: clear timers, and best-effort revoke if the user
   // never committed (handles the "parent unmounted the modal" edge case).
   useEffect(() => {
@@ -257,10 +230,8 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     };
   }, []);
 
-  if (!open && !closing) return null;
-
   // ---------------------------------------------------------------------------
-  // Close paths
+  // Close paths — routed through <Modal>'s onClose (Esc + backdrop click).
   // ---------------------------------------------------------------------------
   async function requestClose() {
     // Cancel any pending debounced rename so it doesn't fire post-revoke.
@@ -270,10 +241,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     }
     await revokeTentative();
     if (typeof onClose === 'function') onClose();
-  }
-
-  function handleBackdrop(e) {
-    if (e.target === e.currentTarget) requestClose();
   }
 
   // ---------------------------------------------------------------------------
@@ -463,14 +430,12 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   void boundProfileLabel;
 
   return (
-    <div
-      className={`wp-modal-backdrop${closing && !open ? ' is-closing' : ''}`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="wp-pair-agent-title"
-      onClick={handleBackdrop}
+    <Modal
+      open={open}
+      onClose={requestClose}
+      titleId="wp-pair-agent-title"
+      size="lg"
     >
-      <div className="wp-modal wp-modal-lg">
         <h2 id="wp-pair-agent-title" className="wp-modal-title">
           Pair a new agent
         </h2>
@@ -568,7 +533,6 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
             {copyLabel}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   CheckIcon,
 } from '@heroicons/react/24/outline';
+import Modal from './Modal';
 
 /**
  * ProfileSetupModal — walkthrough for loading the WebPilot unpacked extension
@@ -16,119 +17,83 @@ import {
  * Step 3 renders the real extension path passed from /api/ui/status. When the
  * server can't resolve a path (pkg install layout we don't recognize), we show
  * a fallback hint pointing the user at the install's resources directory.
+ *
+ * Migrated to use the shared <Modal> base for backdrop, Esc, and exit anim.
  */
 const EXTENSIONS_URL = 'chrome://extensions/';
 
 export default function ProfileSetupModal({ open, profileName, extensionPath, onClose }) {
-  const [closing, setClosing] = useState(false);
-  const wasOpen = useRef(open);
-
-  // Mirror open → closing animation. Stay mounted until exit anim finishes.
-  useEffect(() => {
-    if (wasOpen.current && !open) {
-      setClosing(true);
-      const id = setTimeout(() => setClosing(false), 240);
-      wasOpen.current = open;
-      return () => clearTimeout(id);
-    }
-    wasOpen.current = open;
-    return undefined;
-  }, [open]);
-
-  // Esc closes.
-  useEffect(() => {
-    if (!open) return undefined;
-    function onKey(e) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (typeof onClose === 'function') onClose();
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  if (!open && !closing) return null;
-
-  const handleBackdrop = (e) => {
-    if (e.target === e.currentTarget && typeof onClose === 'function') onClose();
-  };
-
   return (
-    <div
-      className={`wp-modal-backdrop${closing && !open ? ' is-closing' : ''}`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="wp-profile-setup-title"
-      onClick={handleBackdrop}
+    <Modal
+      open={open}
+      onClose={onClose}
+      titleId="wp-profile-setup-title"
     >
-      <div className="wp-modal">
-        <h2 id="wp-profile-setup-title" className="wp-modal-title">
-          Load the WebPilot extension
-        </h2>
-        <div className="wp-modal-body">
-          <p style={{ margin: 0, marginBottom: 'var(--s-4)' }}>
-            Four short steps — most takes about a minute.
-          </p>
-          <div className="wp-stepper">
+      <h2 id="wp-profile-setup-title" className="wp-modal-title">
+        Load the WebPilot extension
+      </h2>
+      <div className="wp-modal-body">
+        <p style={{ margin: 0, marginBottom: 'var(--s-4)' }}>
+          Four short steps — most takes about a minute.
+        </p>
+        <div className="wp-stepper">
+          <Step
+            n={1}
+            text={
+              <>
+                Open{' '}
+                <a
+                  href={EXTENSIONS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="wp-link"
+                >
+                  chrome://extensions
+                  <ArrowTopRightOnSquareIcon style={{ width: 14, height: 14, marginLeft: 4, verticalAlign: '-2px', display: 'inline-block' }} />
+                </a>{' '}
+                in {profileName ? <strong>{profileName}</strong> : 'this profile'}.
+              </>
+            }
+            copy={EXTENSIONS_URL}
+          />
+          <Step n={2} text="Turn on Developer mode (top-right toggle)." />
+          {extensionPath ? (
             <Step
-              n={1}
+              n={3}
+              text={'Click "Load unpacked" and pick this folder:'}
+              copy={extensionPath}
+              mono
+            />
+          ) : (
+            <Step
+              n={3}
               text={
                 <>
-                  Open{' '}
-                  <a
-                    href={EXTENSIONS_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="wp-link"
-                  >
-                    chrome://extensions
-                    <ArrowTopRightOnSquareIcon style={{ width: 14, height: 14, marginLeft: 4, verticalAlign: '-2px', display: 'inline-block' }} />
-                  </a>{' '}
-                  in {profileName ? <strong>{profileName}</strong> : 'this profile'}.
+                  Click <strong>Load unpacked</strong> and pick the WebPilot
+                  extension in your installation’s{' '}
+                  <span className="wp-mono">resources/chrome-extension</span>{' '}
+                  folder.
                 </>
               }
-              copy={EXTENSIONS_URL}
             />
-            <Step n={2} text="Turn on Developer mode (top-right toggle)." />
-            {extensionPath ? (
-              <Step
-                n={3}
-                text={'Click "Load unpacked" and pick this folder:'}
-                copy={extensionPath}
-                mono
-              />
-            ) : (
-              <Step
-                n={3}
-                text={
-                  <>
-                    Click <strong>Load unpacked</strong> and pick the WebPilot
-                    extension in your installation’s{' '}
-                    <span className="wp-mono">resources/chrome-extension</span>{' '}
-                    folder.
-                  </>
-                }
-              />
-            )}
-            <Step
-              n={4}
-              text="Done — come back here and the status will update to Ready."
-            />
-          </div>
-        </div>
-        <div className="wp-modal-actions">
-          <button
-            type="button"
-            className="wp-btn wp-btn-primary"
-            onClick={onClose}
-            autoFocus
-          >
-            Done
-          </button>
+          )}
+          <Step
+            n={4}
+            text="Done — come back here and the status will update to Ready."
+          />
         </div>
       </div>
-    </div>
+      <div className="wp-modal-actions">
+        <button
+          type="button"
+          className="wp-btn wp-btn-primary"
+          onClick={onClose}
+          autoFocus
+        >
+          Done
+        </button>
+      </div>
+    </Modal>
   );
 }
 
