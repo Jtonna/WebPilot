@@ -62,6 +62,10 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 
 ## P3 — backlog (would not block v1 push)
 
+- **No test coverage for the formatter-logs ring buffer.** `formatter-logs.js` has a `_resetForTests` seam and a deterministic public API (recordSuccess/recordError/getStatus/getLogs/listAll/flush) but no unit test asserting the health rule, ring eviction, 7-day TTL on hydrate, or stack truncation. Add a vitest/mocha spec under `packages/server-for-chrome-extension/test/`. (Overnight audit, this branch.)
+- **No test coverage for the workflow execution engine.** `_validateWorkflowParams` + `handleToolCall`'s `webpilot_run_workflow` branch + `formatter-manager.loadWorkflowsForFormatter`'s declared/implemented cross-check have no tests. Easy wins because all the validation is pure-function. (Overnight audit, this branch.)
+- **`intent` parameter not wired through `browser_get_accessibility_tree` or `browser_get_tabs`.** The audit added `intent` to navigational tools (create/close/click/scroll/type + run_workflow), but reading tools were skipped intentionally. Worth reconsidering — a tree-fetch with `intent: "looking for the Send button after typing"` is the highest-signal moment to capture context. (Overnight audit, this branch.)
+- **`AUTH_ERROR_MESSAGE` constant lives mid-file in `mcp-handler.js`.** Defined just before `processMessage` so it's lexically close to its use, but it's a static string — could move to the top of the file alongside other module-level constants for symmetry with `formatter-logs.js`. (Overnight audit, this branch.)
 - **Web UI auth model for LAN deployments.** Currently localhost-only. If LAN access is needed, design a proper session/cookie auth flow.
 - **Click-to-open from macOS / Linux notifications.** Windows shipped `activationType=protocol`; the other two need helper apps.
 - **Bundle the server into the Electron app.** Currently a separate pkg binary the Electron app spawns.
