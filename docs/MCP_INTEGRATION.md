@@ -1187,6 +1187,7 @@ Add the server to your `.mcp.json` file with the API key as a header:
 {
   "mcpServers": {
     "webpilot": {
+      "type": "sse",
       "url": "http://localhost:3456/sse",
       "headers": {
         "X-API-Key": "<your-key>"

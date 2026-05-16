@@ -79,6 +79,7 @@ Set both in your .mcp.json:
 {
   "mcpServers": {
     "webpilot": {
+      "type": "sse",
       "url": "http://localhost:${portStr}/sse",
       "headers": { "X-API-Key": "${keyStr}" }
     }
@@ -99,6 +100,7 @@ Set the url in your .mcp.json (no key yet):
 {
   "mcpServers": {
     "webpilot": {
+      "type": "sse",
       "url": "http://localhost:${portStr}/sse"
     }
   }
