@@ -360,15 +360,16 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       await revokeTentative();
       setGenerated(null);
     } else {
-      // Going back ON: re-roll a fresh name and re-mint. Simpler than
-      // tracking whether the user had typed a custom name pre-flip.
+      // Going back ON: re-mint with the CURRENT name + profile values. The
+      // inputs are always visible now, so the user may have edited them
+      // while the toggle was OFF — preserve that work rather than rolling
+      // a fresh autoname.
       committedRef.current = false;
-      const fresh = rollAutoName();
-      setAgentName(fresh);
+      const name = agentName.trim() || rollAutoName();
       const prof = selectedProfile || (profileList.length > 0 ? profileList[0].directoryName : '');
       if (prof) {
         if (!selectedProfile) setSelectedProfile(prof);
-        await mintTentative(fresh, prof);
+        await mintTentative(name, prof);
       }
     }
   }
@@ -484,84 +485,66 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
           Pair a new agent
         </h2>
         <div className="wp-modal-body">
-          <p
-            style={{
-              margin: 0,
-              marginTop: 'calc(var(--s-2) * -1)',
-              marginBottom: 'var(--s-4)',
-              color: 'var(--wp-fg-secondary)',
-              fontSize: 'var(--fs-small)',
-              lineHeight: 1.5,
-              transition: 'color var(--dur-quick) var(--ease-quart-out)',
-            }}
-            aria-live="polite"
-          >
-            {subhead}
-          </p>
-
-          {/* Toggle anchored to the top of the body, above the inputs and
-              the code-block preview. */}
-          <div
-            className="wp-pair-actions"
-            style={{ marginTop: 0, marginBottom: 'var(--s-3)' }}
-          >
-            <Toggle
-              checked={includeKey}
-              label="Set API key"
-              title={TOGGLE_HELP}
-              onChange={onToggleChange}
+          {/* Agent name — full-width row. Always visible regardless of the
+              Include API key toggle so the user can pre-fill / edit ahead. */}
+          <div className="wp-pair-field-row" style={{ marginBottom: 'var(--s-3)' }}>
+            <label
+              htmlFor="wp-pair-agent-name"
+              className="wp-pair-field-label"
+            >
+              Agent name
+            </label>
+            <input
+              id="wp-pair-agent-name"
+              type="text"
+              className="wp-input wp-input--underline"
+              value={agentName}
+              maxLength={AGENT_NAME_MAX}
+              placeholder="e.g. Claude Code – my-project"
+              onChange={(e) => onNameChange(e.target.value)}
             />
           </div>
 
+          {/* Chrome profile + Include API key toggle — side-by-side row. */}
           <div
-            className={`wp-pair-fields${includeKey ? '' : ' is-collapsed'}`}
-            aria-hidden={!includeKey}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-end',
+              gap: 'var(--s-4)',
+              marginBottom: 'var(--s-4)',
+            }}
           >
-            <div className="wp-pair-fields-inner">
-              <div className="wp-pair-field-row">
-                <label
-                  htmlFor="wp-pair-agent-name"
-                  className="wp-pair-field-label"
-                >
-                  Agent name
-                </label>
-                <input
-                  id="wp-pair-agent-name"
-                  type="text"
-                  className="wp-input wp-input--underline"
-                  value={agentName}
-                  maxLength={AGENT_NAME_MAX}
-                  placeholder="e.g. Claude Code – my-project"
-                  onChange={(e) => onNameChange(e.target.value)}
-                  disabled={!includeKey}
-                  tabIndex={includeKey ? 0 : -1}
-                />
-              </div>
-              <div className="wp-pair-field-row">
-                <label
-                  htmlFor="wp-pair-agent-profile"
-                  className="wp-pair-field-label"
-                >
-                  Chrome profile
-                </label>
-                <select
-                  id="wp-pair-agent-profile"
-                  className="wp-select wp-input--underline"
-                  value={selectedProfile}
-                  onChange={(e) => onProfileChange(e.target.value)}
-                  disabled={!includeKey || profileList.length === 0}
-                  tabIndex={includeKey ? 0 : -1}
-                >
-                  {profileList.length === 0 ? (
-                    <option value="">(no profiles — open Chrome first)</option>
-                  ) : null}
-                  {profileList.map((p) => (
-                    <option key={p.directoryName} value={p.directoryName}>
-                      {p.displayName || p.directoryName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="wp-pair-field-row" style={{ flex: 1, marginBottom: 0 }}>
+              <label
+                htmlFor="wp-pair-agent-profile"
+                className="wp-pair-field-label"
+              >
+                Chrome profile
+              </label>
+              <select
+                id="wp-pair-agent-profile"
+                className="wp-select wp-input--underline"
+                value={selectedProfile}
+                onChange={(e) => onProfileChange(e.target.value)}
+                disabled={profileList.length === 0}
+              >
+                {profileList.length === 0 ? (
+                  <option value="">(no profiles — open Chrome first)</option>
+                ) : null}
+                {profileList.map((p) => (
+                  <option key={p.directoryName} value={p.directoryName}>
+                    {p.displayName || p.directoryName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flexShrink: 0, paddingBottom: 4 }}>
+              <Toggle
+                checked={includeKey}
+                label="Include API key"
+                title={TOGGLE_HELP}
+                onChange={onToggleChange}
+              />
             </div>
           </div>
 
