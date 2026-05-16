@@ -163,6 +163,26 @@ export function restartServer() {
   });
 }
 
+// Formatters observability (Wave B).
+//
+// `getFormatters()` returns `{ formatters: [...] }` where each item fuses the
+// per-formatter manifest (name, version, source, match, workflows) with the
+// runtime health summary (health, successCount, errorCount, lastSuccessAt,
+// lastErrorAt, lastError). Powers the Formatters tab list.
+//
+// `getFormatterLogs(name, limit)` returns the recent ring-buffer entries for
+// a single formatter:
+//   { name, status: { health, lastSuccessAt, lastErrorAt, ... }, logs: [...] }
+export function getFormatters() {
+  return apiFetch('/api/ui/formatters');
+}
+
+export function getFormatterLogs(name, limit = 50) {
+  return apiFetch(
+    `/api/ui/formatters/${encodeURIComponent(name)}/logs?limit=${limit}`
+  );
+}
+
 // Race guard for pages that refresh from BOTH REST and WS events.
 //
 // Without this, a slow REST `refresh()` issued before a WS event lands can
