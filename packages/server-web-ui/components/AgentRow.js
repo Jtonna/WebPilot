@@ -8,22 +8,11 @@ import {
   CheckIcon,
 } from '@heroicons/react/20/solid';
 import { formatRelativeTime } from '../lib/format';
+import { buildMcpConfigJson } from '../lib/mcpConfig';
 
 function shortKey(key) {
   if (!key) return '';
   return `${String(key).slice(0, 10)}…`;
-}
-
-function buildMcpConfigSnippet({ port, apiKey }) {
-  const config = {
-    mcpServers: {
-      webpilot: {
-        url: `http://localhost:${port}/sse`,
-        headers: { 'X-API-Key': apiKey },
-      },
-    },
-  };
-  return JSON.stringify(config, null, 2);
 }
 
 export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onRebind, port }) {
@@ -59,7 +48,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
       return;
     }
     try {
-      await navigator.clipboard.writeText(buildMcpConfigSnippet({ port, apiKey: agent.key }));
+      await navigator.clipboard.writeText(buildMcpConfigJson({ port, apiKey: agent.key }));
       setCopyState('copied');
     } catch (_e) {
       setCopyState('error');

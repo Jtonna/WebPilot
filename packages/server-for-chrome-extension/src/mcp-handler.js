@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 
 async function fetchScriptFromUrl(url) {
   const parsedUrl = new URL(url);
@@ -762,7 +763,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
                 `Use this api_key for all subsequent tool calls, either via the X-API-Key ` +
                 `header in your MCP client config, or as the api_key argument on each tool call.\n\n` +
                 `Example .mcp.json for Claude Code:\n\n` +
-                `{\n  "mcpServers": {\n    "webpilot": {\n      "type": "sse",\n      "url": "http://localhost:${serverPort}/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`,
+                buildMcpConfigJson({ port: serverPort, apiKey: key }),
             },
           ],
         };
@@ -855,7 +856,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
                 `Store this api_key and use it for all future tool calls. ` +
                 `Recommended: update your MCP client config so it is sent via the X-API-Key header.\n\n` +
                 `Example .mcp.json for Claude Code:\n\n` +
-                `{\n  "mcpServers": {\n    "webpilot": {\n      "type": "sse",\n      "url": "http://localhost:${serverPort}/sse",\n      "headers": {\n        "X-API-Key": "${key}"\n      }\n    }\n  }\n}`,
+                buildMcpConfigJson({ port: serverPort, apiKey: key }),
             },
           ],
         };

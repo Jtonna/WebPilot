@@ -9,6 +9,7 @@ import {
 } from '../lib/api';
 import { useToast } from './ToastRegion';
 import Toggle from './Toggle';
+import { buildMcpConfigJson } from '../lib/mcpConfig';
 
 /**
  * PairAgentModal — dialog that produces the copy-text an AI agent pastes to
@@ -71,20 +72,13 @@ function rollAutoName() {
 function buildPromptWithKey(port, apiKey) {
   const portStr = port ? String(port) : URL_PLACEHOLDER;
   const keyStr = apiKey || KEY_PLACEHOLDER;
+  const json = buildMcpConfigJson({ port: portStr, apiKey: keyStr });
   return (
 `Connect to my WebPilot MCP server at http://localhost:${portStr}/sse with API key ${keyStr}.
 
 Set both in your .mcp.json:
 
-{
-  "mcpServers": {
-    "webpilot": {
-      "type": "sse",
-      "url": "http://localhost:${portStr}/sse",
-      "headers": { "X-API-Key": "${keyStr}" }
-    }
-  }
-}
+${json}
 
 You're already paired — no request_pairing or approval needed. Start using tools right away.`
   );
@@ -92,19 +86,13 @@ You're already paired — no request_pairing or approval needed. Start using too
 
 function buildPromptNoKey(port) {
   const portStr = port ? String(port) : URL_PLACEHOLDER;
+  const json = buildMcpConfigJson({ port: portStr });
   return (
 `Connect to my WebPilot MCP server at http://localhost:${portStr}/sse.
 
 Set the url in your .mcp.json (no key yet):
 
-{
-  "mcpServers": {
-    "webpilot": {
-      "type": "sse",
-      "url": "http://localhost:${portStr}/sse"
-    }
-  }
-}
+${json}
 
 You don't have an API key yet. Steps:
 
