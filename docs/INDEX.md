@@ -24,7 +24,5 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Project planning (temporary)
 
-- `QOL_FOLLOWUPS.md` -- Living list of outstanding QOL-Features follow-ups (will be pruned / deleted as items land).
-- `TEMP_QOL_FEATURES_PLAN.md` -- Spec / planning doc for the QOL-Features wave. Marked for deletion or fold-in after v1 ships.
-- `REVIEW_SERVER.md`, `packages/server-web-ui/REVIEW_WEB_UI.md`, `packages/chrome-extension-unpacked/REVIEW_EXTENSION.md` -- Wave 3 code reviews from the QOL-Features audit pass. Kept for historical context; safe to delete once their findings are resolved.
+- [`../PRE_LAUNCH_TRACKING.md`](../PRE_LAUNCH_TRACKING.md) -- Single consolidated file holding the QOL-Features spec, the living follow-ups list, and the Wave-3 server / web UI / extension code reviews. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
 
