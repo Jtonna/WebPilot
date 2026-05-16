@@ -282,7 +282,6 @@ Settings and state are stored in `chrome.storage.local`:
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 | `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
 | `webpilot.profileId` | string | null | Bound Chrome profile directoryName (cleared on `RESET_PROFILE_ID`) |
-| `webpilot.profileDisplayName` | string | null | Human-readable profile name resolved during hello |
 | `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
 
 Authentication failures (invalid API key) automatically clear stored config and restart auto-connect. `webpilot.installId` is intentionally **not** cleared on config resets so the server's `installId → profileId` mapping survives storage wipes.
@@ -336,7 +335,7 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `hello` | `profileId?`, `profileDisplayName?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
+| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
 | `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
 | `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
 | `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |

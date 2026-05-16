@@ -602,13 +602,12 @@ async function sendHelloHandshake() {
 
   const stored = await new Promise((resolve) => {
     chrome.storage.local.get(
-      ['webpilot.profileId', 'webpilot.profileDisplayName', 'webpilot.installId'],
+      ['webpilot.profileId', 'webpilot.installId'],
       (data) => resolve(data)
     );
   });
 
   const profileId = stored['webpilot.profileId'] || null;
-  const profileDisplayName = stored['webpilot.profileDisplayName'] || null;
   const installId = stored['webpilot.installId'] || null;
 
   let gaiaEmail = null;
@@ -631,7 +630,6 @@ async function sendHelloHandshake() {
   const helloMsg = {
     type: 'hello',
     profileId,
-    profileDisplayName,
     gaiaEmail,
     installId,
   };

@@ -1105,8 +1105,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
           }
           extensionBridge.setConnection(resolvedProfileId, ws);
           console.log(
-            `[extension-bridge] hello accepted profileId="${resolvedProfileId}" ` +
-              `displayName="${message.profileDisplayName || ''}"`
+            `[extension-bridge] hello accepted profileId="${resolvedProfileId}"`
           );
           try {
             ws.send(JSON.stringify({ type: 'hello_ack', profileId: resolvedProfileId }));

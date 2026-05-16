@@ -46,6 +46,9 @@ Options:
   --uninstall    Remove the background service
   --stop         Stop the running server
   --status       Check service status
+  --network      Bind the server to all interfaces (0.0.0.0) instead of localhost.
+                 Same effect as setting NETWORK=1; overridden by
+                 <dataDir>/network.enabled if present.
   --help         Show this help message
   --version      Show version number
 
