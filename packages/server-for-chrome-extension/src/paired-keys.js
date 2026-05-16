@@ -94,19 +94,55 @@ function generateKey() {
  * @param {string|null} [profileId] Optional Chrome profile directory name to
  *   bind to this key. Used by v1.5+ for per-agent profile routing; stored as
  *   `null` for legacy entries.
+ * @param {string|null} [source] Optional provenance tag stored on the entry
+ *   (e.g. 'web-ui-direct' when the operator pre-provisions a key from the
+ *   pair-agent modal without going through request_pairing first). Stored as
+ *   `null` for entries minted via the classic approval path so existing rows
+ *   are unaffected.
  * @returns {string} The generated key
  */
-function addKey(agentName, profileId = null) {
+function addKey(agentName, profileId = null, source = null) {
   const keys = loadKeys();
   const key = generateKey();
-  keys.push({
+  const entry = {
     key,
     agentName,
     createdAt: new Date().toISOString(),
     profileId: profileId || null,
-  });
+  };
+  if (source) entry.source = source;
+  keys.push(entry);
   saveKeys(keys);
   return key;
+}
+
+/**
+ * Direct UI pre-provision: mint a paired-keys entry without going through the
+ * request_pairing → approval handshake. Used by `POST /api/ui/agents` when the
+ * operator wants to hand an AI agent a pre-approved key from the web UI. The
+ * caller is responsible for validating `agentName` and `profileId` against
+ * known profiles before invoking this — see server.js.
+ *
+ * Mirrors the side effects of approvePairing's `addKey()` call: same key
+ * generation routine (`generateKey` via `addKey`), same on-disk schema, plus
+ * a `source: 'web-ui-direct'` tag so the provenance is auditable.
+ *
+ * @param {{ agentName: string, profileId: string }} params
+ * @returns {{ apiKey: string, agentName: string, profileId: string, createdAt: string }}
+ */
+function createPairedAgent({ agentName, profileId }) {
+  const key = addKey(agentName, profileId || null, 'web-ui-direct');
+  const entry = loadKeys().find((e) => e.key === key) || null;
+  console.log(
+    `[pairing:createPairedAgent] minted direct key for agent "${agentName}" ` +
+      `(profileId="${profileId || ''}", key=${key.slice(0, 8)}...)`
+  );
+  return {
+    apiKey: key,
+    agentName,
+    profileId: profileId || null,
+    createdAt: entry ? entry.createdAt : new Date().toISOString(),
+  };
 }
 
 /**
@@ -486,6 +522,7 @@ module.exports = {
   saveKeys,
   generateKey,
   addKey,
+  createPairedAgent,
   validateKey,
   renameKey,
   updateProfileBinding,

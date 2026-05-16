@@ -288,6 +288,7 @@ function AgentsPageInner() {
         open={pairOpen}
         onClose={() => setPairOpen(false)}
         port={port}
+        profiles={profiles}
       />
     </>
   );

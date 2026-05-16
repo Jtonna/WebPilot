@@ -77,6 +77,17 @@ export function createProfile(name) {
   });
 }
 
+// Direct UI agent creation: mints a paired-keys entry server-side without
+// the request_pairing → approval round-trip. The server returns the freshly
+// generated apiKey in the response body so the modal can substitute it into
+// the copy-text. See POST /api/ui/agents in server.js.
+export function createAgent(agentName, profileId) {
+  return apiFetch('/api/ui/agents', {
+    method: 'POST',
+    body: { agentName, profileId },
+  });
+}
+
 export function renameAgent(key, newName) {
   return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}/rename`, {
     method: 'POST',

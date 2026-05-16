@@ -524,6 +524,92 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
+  // POST /api/ui/agents
+  //
+  // Direct UI pre-provision: mint a paired-keys entry without the
+  // request_pairing → approval round-trip. Used by the pair-agent modal's
+  // "Include API key" toggle so the operator can hand an AI agent both URL
+  // and key in a single copy.
+  //
+  // Body: { agentName: string, profileId: string }
+  //   - agentName: non-empty after trim, ≤ 60 chars (mirrors the
+  //     validateProfileName cap — there is no existing dedicated cap on agent
+  //     names; this keeps it predictable and prevents abuse).
+  //   - profileId: must match a known profile from Local State (same lookup
+  //     the approve and PATCH handlers use).
+  //
+  // Returns 201 with { apiKey, agentName, profileId, createdAt }. Broadcasts
+  // `agents_changed` so any open Agents/Pairings tabs refresh.
+  app.post('/api/ui/agents', auth, express.json(), (req, res) => {
+    try {
+      const body = req.body || {};
+      const rawName = body.agentName;
+      const profileIdRaw = body.profileId;
+      console.log(
+        `[ui-api] POST /agents agentName=${JSON.stringify(rawName)} ` +
+          `profileId=${JSON.stringify(profileIdRaw)}`
+      );
+
+      if (typeof rawName !== 'string') {
+        return res.status(400).json({
+          error: 'agentName required',
+          reason: 'agentName must be a string',
+        });
+      }
+      const agentName = rawName.trim();
+      if (agentName.length === 0) {
+        return res.status(400).json({
+          error: 'agentName required',
+          reason: 'agentName must be non-empty after trim',
+        });
+      }
+      if (agentName.length > 60) {
+        return res.status(400).json({
+          error: 'agentName too long',
+          reason: 'agentName must be 60 characters or fewer',
+        });
+      }
+
+      if (typeof profileIdRaw !== 'string' || profileIdRaw.length === 0) {
+        return res.status(400).json({
+          error: 'profileId required',
+          reason: 'profileId must be a non-empty string',
+        });
+      }
+
+      let known = [];
+      try {
+        known = readProfiles(chromeManager.userDataDir);
+      } catch (e) {
+        console.log(`[ui-api] POST /agents: readProfiles failed: ${e.message}`);
+      }
+      const match = known.find((p) => p.directoryName === profileIdRaw);
+      if (!match) {
+        return res.status(400).json({
+          error: 'unknown profileId',
+          reason: `profileId "${profileIdRaw}" did not match a known Chrome profile`,
+        });
+      }
+
+      const minted = pairedKeys.createPairedAgent({
+        agentName,
+        profileId: match.directoryName,
+      });
+
+      try {
+        broadcastUiEvent && broadcastUiEvent({
+          type: 'agents_changed',
+          agents: pairedKeys.listKeys(),
+        });
+      } catch (_e) { /* ignore */ }
+
+      res.status(201).json(minted);
+    } catch (e) {
+      console.error('[ui-api] POST /agents failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post('/api/ui/agents/:key/rename', auth, express.json(), (req, res) => {
     try {
       const key = req.params.key;
