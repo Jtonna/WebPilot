@@ -65,7 +65,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and two `WebSocketServer`s in `noServer` mode (manual upgrade routing): the extension WS at the root path, and the web-ui events WS at `/api/ui/events`. Extension upgrades authenticate via `?apiKey=`; UI upgrades are accepted only from loopback addresses with no API key.
-- Mounts the web UI static files at `/ui/` via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). The static dir is resolved both in dev (`packages/server-web-ui/out`) and in pkg snapshot.
+- Mounts the web UI at `/ui/`. In production (and inside the pkg snapshot), serves the Next.js static export via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). In dev (`WEBPILOT_DEV=1`, set by `npm run dev` at the repo root), instead proxies `/ui/*` to `http://localhost:3100` via `http-proxy-middleware` with `ws: true` so Next.js HMR works. The pkg/Electron path never sets `WEBPILOT_DEV` so installed users always go through the static branch.
 - Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings) — see [Web UI API](#web-ui-api).
 - On startup, calls `formatterManager.init()`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks. Also loads `notificationsSettings`, runs an initial `pairedKeys.cleanupExpiredPairings()` pass, and runs `pairedKeys.cleanupUnusedKeys()` to auto-revoke 48h-stale never-used keys. Both cleanup passes also run hourly thereafter.
 - Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `gaiaEmail` (the field name on the wire), persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in `<dataDir>/config/extension-installs.json`), and replies with `hello_ack` once the binding resolves. A 5-second server-side `helloDeadline` watchdog pushes `identify_required` pre-emptively if the extension never sends `hello` in time (see `server.js`).
@@ -156,11 +156,22 @@ Key APIs:
 
 Loads and runs accessibility tree formatters:
 
-- `init()` -- Creates the `custom-formatters/` directory if absent and seeds an empty `manifest.json` there. Reads and merges the auto-updated manifest (`formatters/`) with the custom manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key. If no auto-updated manifest exists yet (first run), defers to the updater while still loading any custom formatters.
+- `init()` -- Creates the `custom-formatters/` directory if absent and seeds an empty `manifest.json` there. Reads and merges the auto-updated manifest (`formatters/`) with the custom manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key. If no auto-updated manifest exists yet (first run), defers to the updater while still loading any custom formatters. Also loads each formatter's sibling `manifest.json` (per-formatter schema, see [`accessibility-tree-formatters/MANIFEST_SCHEMA.md`](../accessibility-tree-formatters/MANIFEST_SCHEMA.md)) and any sibling `workflows.js` file, cross-checking the implementations against the manifest's declared workflow names.
 - `getCustomFormatterDir()` -- Returns the absolute path to `{dataDir}/custom-formatters/`.
-- `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the merged manifest and runs the matched formatter. Resolves formatter file paths from `custom-formatters/` for custom platforms and `formatters/` for auto-updated ones. Falls back to the default formatter (always from `formatters/`) if no platform matches.
+- `formatTree(url, rawNodes)` -- Matches the URL's hostname against platform entries in the merged manifest and runs the matched formatter. Resolves formatter file paths from `custom-formatters/` for custom platforms and `formatters/` for auto-updated ones. Falls back to the default formatter (always from `formatters/`) if no platform matches. Records success/error to `formatter-logs.js`; honors per-formatter `errorHandling.fallbackToRawTree` (re-raises when `false`).
 - `reload()` -- Clears the require cache for all loaded formatter modules and re-merges both manifests. Called after an auto-update is applied and on each `webpilot_get_formatter_info` call.
-- `getFormatterInfo(platform?)` -- Returns formatter metadata including `customFormatterDir` path and a `source: "auto-updated" | "custom"` field per platform. Triggers `reload()` so callers always see the latest state.
+- `getFormatterInfo(platform?)` -- Returns formatter metadata including `customFormatterDir` path, per-platform `name`/`match`/`version`/`description`/`notes`/`source`/`errorHandling`, and a `workflows[]` array where each entry is annotated with `implemented: boolean`. Triggers `reload()` so callers always see the latest state.
+- `getPerFormatterManifests()` -- Snapshot of every loaded per-formatter manifest, keyed by formatter name. Used by `GET /api/ui/formatters` to render the Web UI Formatters tab without re-reading manifest.json from disk.
+- `getWorkflow(formatterName, workflowName)` -- Returns the single workflow implementation `{ description, parameters, run }` or `null`. Used by `webpilot_run_workflow` to look up and execute the workflow.
+- `listWorkflows()` -- Flat list of every loaded workflow across every formatter.
+
+### `src/formatter-logs.js`
+
+In-memory ring buffer + on-disk persistence for per-formatter health tracking. Records success and error invocations of `format()` plus workflow runtime errors. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Ring capacity 50 entries per formatter, flushed to `<dataDir>/formatter-logs.json` every 60s (and on `SIGINT`/`SIGTERM`/`exit`). Entries older than 7 days are dropped on hydrate. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `FLUSH_INTERVAL_MS`, `TTL_MS`, `STACK_MAX`.
+
+### `src/lib/tree-query.js`
+
+Text-based helpers for querying a formatted accessibility tree from inside workflow `run()` functions. The formatted result handed to a workflow is `{ tree, refs, ...extras }` — a flat refs map plus a human-readable `tree` string with lines like `[e42] Message textbox`. `findInTree(treeResult, selector)` returns `{ ref, line }` for the first matching line (or `null`); `findAllInTree` returns the full match list. Selectors support `role` (substring), `name` (exact), `name_starts_with`, and `name_contains`. Intentionally minimal — workflows that need richer queries can have the platform formatter emit them as `extras` and read them directly.
 
 ### `src/formatter-updater.js`
 
@@ -171,7 +182,9 @@ GitHub-based auto-updater for accessibility tree formatters:
 
 ## MCP Tools
 
-Fourteen tools are exposed to AI agents. All tools except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` require a valid paired API key and a connected extension for the agent's bound Chrome profile. Every tool except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) includes an optional `api_key` parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header. `agent_name` is required only on `request_pairing`; other tools route via `resolveTargetProfile(apiKey)` and do not look at the agent name.
+Fifteen tools are exposed to AI agents. All tools except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` require a valid paired API key and a connected extension for the agent's bound Chrome profile. Every tool except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) includes an optional `api_key` parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header. `agent_name` is required only on `request_pairing`; other tools route via `resolveTargetProfile(apiKey)` and do not look at the agent name.
+
+Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, `browser_scroll`, `browser_type`, `webpilot_run_workflow`) also accept an optional `intent` string — a short human-readable description of *why* the call is being made. The value is purely additive: it surfaces in server-side debug logs as `[mcp:intent] <tool>: <text>` and is ignored by tool execution. Not validated, not required — but strongly encouraged for non-trivial flows to make debug traces readable.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -189,6 +202,7 @@ Fourteen tools are exposed to AI agents. All tools except `request_pairing`, `ch
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
 | `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
 | `webpilot_reload_formatters` | Reload all formatters without server restart | (none) |
+| `webpilot_run_workflow` | Execute a platform-specific workflow (e.g. `discord/send_message`) that bundles multiple primitive actions into one named operation. Workflow names + parameters come from each formatter's manifest. | `platform`, `workflow`, `tab_id`, `params?` |
 
 ### `browser_request_chain`
 
@@ -247,6 +261,8 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 | POST | `/api/ui/agents/:key/rename` | Rename. |
 | PATCH | `/api/ui/agents/:key` | **Re-bind** the agent to a different profile. Body `{ profileId }`. Routing picks up the new binding on the next tool call. |
 | DELETE | `/api/ui/agents/:key` | Revoke a paired agent. |
+| GET | `/api/ui/formatters` | List all loaded formatters with per-formatter manifest metadata fused with runtime health (`health`, `successCount`, `errorCount`, `lastSuccessAt`, `lastErrorAt`, `lastError`). Powers the Formatters tab. |
+| GET | `/api/ui/formatters/:name/logs?limit=N` | Recent ring-buffer log entries + status for a single formatter. `limit` defaults to 50, max 500. |
 | POST | `/api/ui/chrome/restart` | Calls `chromeManager.ensureReady()` — no-op if Chrome is already running with the flag and the right profiles; otherwise kill+relaunch. |
 | POST | `/api/ui/server/restart` | Spawn-and-exit replacement daemon (identical pattern to the network-mode toggle). |
 | GET / POST | `/api/ui/settings/notifications` | Get/set notification preferences (`systemNotifications`, `sound`). |

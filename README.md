@@ -62,3 +62,15 @@ If the agent already presents a valid API key (e.g. a subagent inheriting its pa
 **Pre-provisioned key flow (web UI):** The web UI's pair-agent modal can mint a key directly via `POST /api/ui/agents` and embed it in the `.mcp.json` snippet the operator copies. The agent never calls `request_pairing` at all in this flow.
 
 **Per-agent profile routing:** Each paired agent is bound to one Chrome profile. Tool calls route to that profile via the agent's API key (see `mcp-handler.resolveTargetProfile`). The web UI's Agents page can re-bind an agent to a different profile in-place via `PATCH /api/ui/agents/:key` — no socket teardown, the next tool call picks up the new binding.
+
+## Platform formatters
+
+Site-specific accessibility-tree formatters live in [`accessibility-tree-formatters/`](accessibility-tree-formatters/) — each in its own subdirectory with a `manifest.json` (see [`MANIFEST_SCHEMA.md`](accessibility-tree-formatters/MANIFEST_SCHEMA.md)) plus its entry JS file. Bundled platforms today: `discord`, `threads`, `zillow`. The server pulls fresh copies from GitHub on startup and re-checks hourly; users can also drop custom formatters into `<dataDir>/custom-formatters/` where they survive auto-updates. Agents discover what's loaded via `webpilot_get_formatter_info`; the web UI's Formatters tab shows health and recent errors.
+
+## Workflows
+
+Formatters may declare named composite operations under their manifest's `workflows[]` and implement them in a sibling `workflows.js`. Workflows run server-side via the `webpilot_run_workflow` MCP tool — e.g. Discord's `send_message` fetches the a11y tree, locates the composer textbox, clicks, types, and presses Enter in one call (one round-trip instead of four). See `accessibility-tree-formatters/discord/workflows.js` for the canonical example.
+
+## Development mode
+
+`npm run dev` at the repo root runs the MCP server and `next dev` concurrently with hot reload — the server detects `WEBPILOT_DEV=1` and proxies `/ui/*` to `http://localhost:3100`. `npm run start` builds the Next.js static export and runs the server in production mode (serving `/ui/*` from `packages/server-web-ui/out/`). Details in [`docs/BUILD_ARCHITECTURE.md`](docs/BUILD_ARCHITECTURE.md#npm-run-dev-vs-npm-run-start).

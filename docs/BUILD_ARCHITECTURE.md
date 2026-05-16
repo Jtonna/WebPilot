@@ -34,17 +34,35 @@ The `../server-web-ui/out/**/*` glob bundles the Next.js static export into the 
 
 ### accessibility-tree-formatters/ Package
 
-`accessibility-tree-formatters/` lives at the repo root (a sibling of `packages/`). It contains:
+`accessibility-tree-formatters/` lives at the repo root (a sibling of `packages/`). Each formatter occupies its own subdirectory:
 
-- `manifest.json` -- lists available formatters with metadata (name, version, entry point)
-- Formatter JS files -- one per formatter, written as CommonJS modules
+```
+accessibility-tree-formatters/
+  manifest.json        Top-level "download index" — entry points + files[] for the auto-updater
+  default.js           Fallback formatter (always loaded)
+  discord/
+    manifest.json      Per-formatter manifest (name, version, match, description, workflows[])
+    discord.js         Formatter entry
+    workflows.js       Workflow implementations (optional)
+  threads/
+    manifest.json
+    router.js          Multi-page router → page-specific sub-formatters
+    ...
+  zillow/
+    manifest.json
+    router.js
+    ...
+```
+
+The **per-formatter `manifest.json`** is the source of truth for that formatter's metadata — see [`accessibility-tree-formatters/MANIFEST_SCHEMA.md`](../accessibility-tree-formatters/MANIFEST_SCHEMA.md). The top-level `manifest.json` remains as a slim routing index (`platforms[name] = { match, entry }`) plus the `files[]` array the auto-updater fetches.
 
 Formatters are **not bundled** into the server binary. Instead, the server downloads them from GitHub on first run and stores them in `<dataDir>/formatters/`. The auto-updater checks for new versions on startup and every hour.
 
-Two server modules handle formatter lifecycle:
+Three server modules handle formatter lifecycle:
 
-- **`formatter-manager.js`** -- loads formatters from `<dataDir>/formatters/` and runs the appropriate one for each accessibility tree request
+- **`formatter-manager.js`** -- loads formatters from `<dataDir>/formatters/`, parses each per-formatter manifest, cross-checks sibling `workflows.js` against the manifest's declared workflow names, and runs the appropriate formatter for each accessibility-tree request
 - **`formatter-updater.js`** -- auto-updates formatters from GitHub by comparing the local `manifest.json` version against the remote version on the `main` branch
+- **`formatter-logs.js`** -- in-memory ring buffer (50 entries per formatter, 7-day TTL on disk) + health tracking. Powers `/api/ui/formatters` and the Web UI Formatters tab
 
 Targets are specified as CLI flags in the per-platform npm scripts, not in the `pkg` config. The `build` script itself errors with "Use build:win, build:mac, or build:linux". Each per-platform script runs `build:web-ui` first to refresh the static export:
 

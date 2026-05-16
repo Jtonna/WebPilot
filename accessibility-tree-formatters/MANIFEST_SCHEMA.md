@@ -48,7 +48,15 @@ that points at each formatter's entry file and lists files to sync.
   "errorHandling": {
     "fallbackToRawTree": true
   },
-  "workflows": []
+  "workflows": [
+    {
+      "name": "send_message",
+      "description": "Compose a message in the active Discord channel and send it.",
+      "parameters": {
+        "text": { "type": "string", "description": "The message text to send." }
+      }
+    }
+  ]
 }
 ```
 
@@ -63,7 +71,7 @@ that points at each formatter's entry file and lists files to sync.
 | `description` | yes | short string | One-line description of the formatter's purpose. Surfaced to agents and the Web UI. |
 | `notes` | no | freeform string | Agent-facing hints — what elements look like, edge cases, useful semantics. Multi-sentence is fine. |
 | `errorHandling` | no | object | `{ fallbackToRawTree: boolean }` — when `true`, the manager returns the raw CDP tree if the formatter throws. Defaults to `true` if absent. |
-| `workflows` | no | array | Reserved for Wave B. See "Workflows (reserved)" below. Default `[]`. |
+| `workflows` | no | array | Workflow declarations consumed by `webpilot_run_workflow`. Each entry: `{ name, description, parameters }`. Implementations live in a sibling `workflows.js`. See "Workflows" below. Default `[]`. |
 
 ### `source` semantics
 
@@ -84,29 +92,98 @@ loaded from — a custom-formatters manifest that claims
 
 ---
 
-## Workflows (reserved — Wave B)
+## Workflows
 
-The `workflows` array reserves space for a future workflow execution
-system. Wave B will populate this with entries that look like:
+The `workflows` array declares named composite operations exposed by the
+formatter and callable via the `webpilot_run_workflow` MCP tool. Each
+entry pairs metadata (declared in `manifest.json`) with an implementation
+(exported from a sibling `workflows.js`). The manager loads both, cross-
+checks them, and only registers workflows whose implementation matches
+the manifest declaration.
 
-```json
-{
-  "name": "send_message",
-  "description": "Type and send a Discord message in one call.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "channel_ref": { "type": "string", "description": "Composer ref, e.g. e42" },
-      "text":        { "type": "string", "description": "Message body" }
-    },
-    "required": ["channel_ref", "text"]
-  }
-}
-```
+### Contract
 
-For now `workflows` MUST be present as an empty array (`[]`). The
-manager parses but does not execute these — Wave B introduces a
-`webpilot_run_workflow` MCP tool that consumes them.
+1. `manifest.json` declares the workflow shape under `workflows[]`:
+
+   ```json
+   {
+     "name": "send_message",
+     "description": "Compose a message in the active Discord channel and send it.",
+     "parameters": {
+       "text": { "type": "string", "description": "The message text to send." }
+     }
+   }
+   ```
+
+   `parameters` is an object map of `{ paramName: { type, description } }`.
+   Supported `type` values: `"string"`, `"number"`, `"boolean"`, `"object"`,
+   `"array"`. The schema is intentionally flatter than full JSON Schema —
+   the workflow's `run()` is responsible for asserting required fields.
+
+2. A sibling `workflows.js` exports an object map with one key per
+   declared workflow:
+
+   ```js
+   // accessibility-tree-formatters/discord/workflows.js
+   module.exports = {
+     send_message: {
+       description: 'Compose a message in the active Discord channel and send it.',
+       parameters: {
+         text: { type: 'string', description: 'The message text to send.' }
+       },
+       async run({ params, browser, tabId, findInTree }) {
+         const tree = await browser.getAccessibilityTree({ tab_id: tabId });
+         const composer = findInTree(tree, { name: 'Message textbox' });
+         if (!composer) throw new Error('Composer textbox not found.');
+         await browser.click({ ref: composer.ref, tab_id: tabId });
+         await browser.type({
+           ref: composer.ref,
+           text: params.text,
+           tab_id: tabId,
+           pressEnter: true
+         });
+         return { sent: true, composerRef: composer.ref };
+       }
+     }
+   };
+   ```
+
+   The `run()` function receives:
+
+   - `params` — the validated params object (type-checked against the
+     manifest declaration).
+   - `browser` — primitive object with `getAccessibilityTree`, `click`,
+     `type`, `scroll`, `getTabs`, `createTab`. These resolve the agent's
+     bound Chrome profile from the API key and execute server-side
+     against the extension WS (no MCP/SSE round-trip).
+   - `tabId` — the browser tab to run against.
+   - `findInTree` — a text-based query helper (see
+     `packages/server-for-chrome-extension/src/lib/tree-query.js`).
+
+3. The manager registers a workflow only if all of these hold:
+
+   - The manifest declares it under `workflows[]`.
+   - `workflows.js` exports an object of the same name.
+   - The export has `description: string`, `parameters: object`, and
+     `run: function`.
+
+   Mismatches log a warning and the workflow is skipped (the formatter
+   continues to load and serve `formatTree()` calls normally).
+
+4. Agents discover available workflows via `webpilot_get_formatter_info`
+   — each entry in `platforms[name].workflows[]` carries an
+   `implemented: boolean` flag.
+
+### Validation
+
+- The manager rejects workflows missing `run`, `description`, or
+  `parameters`.
+- It logs (but does not fail) when a manifest declares a workflow that
+  has no matching `workflows.js` implementation, and when `workflows.js`
+  exports a workflow that the manifest does not declare.
+- Runtime errors thrown by `run()` are recorded to
+  `formatter-logs.js` under the formatter's name with
+  `phase: 'workflow'` and surface in the Web UI Formatters tab.
 
 ---
 

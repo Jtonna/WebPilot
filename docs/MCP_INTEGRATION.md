@@ -79,6 +79,8 @@ Users can add domains to the whitelist via the WebPilot extension popup UI. Doma
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
+**Note on `intent` parameter (debug trace).** The navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, `browser_scroll`, `browser_type`, `webpilot_run_workflow`) accept an optional `intent` string — a one-line human-readable description of *why* the call is being made (e.g. `"opening Discord to find #general"`, `"clicking Send after typing message text"`). The value is logged server-side as `[mcp:intent] <tool>: <text>` and surfaced in the Formatters/MCP observability UI. It is purely additive — not validated, not required — and is omitted from the per-tool docs below for brevity. Use it for any non-trivial multi-step flow: traces become dramatically easier to read.
+
 ## Agent Instructions
 
 When an agent connects to the WebPilot MCP server, the `initialize` response includes an `instructions` field with a comprehensive guide on how to use WebPilot effectively. Agents receive this automatically on connection — no extra tool call is needed. The instructions cover authentication, tool usage patterns, platform formatter behavior, and best practices. (The server identifies itself in the initialize response as `serverInfo.name = 'WebPilot'` — see MCP_SERVER.md.)
@@ -273,6 +275,46 @@ This tool does not require authentication.
 - Use this after dropping new formatter files into `custom-formatters/` and updating `custom-formatters/manifest.json`, rather than restarting the server
 - The returned object merges `reloaded: true` with the full `getFormatterInfo()` response, so callers see the current state of all loaded formatters immediately
 - If the auto-updated manifest has not yet been downloaded, reload returns only custom platforms and the default formatter is unavailable until the first auto-update completes
+
+---
+
+### webpilot_run_workflow
+
+Execute a named, platform-specific workflow exposed by an accessibility-tree formatter. Workflows bundle multiple primitive actions (click, type, scroll, fetch the a11y tree, etc.) into a single server-side operation — much cheaper than firing the equivalent sequence of individual MCP tool calls.
+
+Each formatter declares its workflows in `manifest.json` under `workflows[]` and implements them in a sibling `workflows.js` (CommonJS). Use `webpilot_get_formatter_info` to discover what's available per platform; each entry in the returned `workflows[]` array is annotated with `implemented: boolean` — only call `webpilot_run_workflow` on `implemented: true` rows.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `platform` | string | Yes | Formatter name (e.g. `"discord"`). See `webpilot_get_formatter_info`. |
+| `workflow` | string | Yes | Workflow name (e.g. `"send_message"`). |
+| `tab_id` | number | Yes | The browser tab to run the workflow against. |
+| `params` | object | No | Workflow-specific parameters as declared in the workflow definition. |
+| `intent` | string | No | Optional debug trace. |
+
+**Returns:**
+On success, an object of shape `{ ok: true, ...result }` where `result` is whatever the workflow's `run()` function returned. On failure, `{ ok: false, error: "<message>" }` with `isError: true` set on the MCP response.
+
+**Example (Discord — `send_message`):**
+```
+webpilot_run_workflow(
+  platform="discord",
+  workflow="send_message",
+  tab_id=1234567890,
+  params={ "text": "Heads up team — deploy is queued." }
+)
+→ { "ok": true, "sent": true, "composerRef": "e42" }
+```
+
+Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name: 'Message textbox' })`, clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
+
+**Notes:**
+- Workflow runtime errors are recorded to per-formatter logs (`formatter-logs.js`) with `phase: 'workflow'` so the Web UI Formatters tab surfaces them under each formatter's recent-errors list.
+- Workflow parameters are type-checked against the manifest declaration (string/number/boolean/object/array). All parameters are treated as optional unless explicitly required by the workflow's `run()` implementation.
+- Workflows execute server-side using the same internal browser primitives as the MCP tool dispatch — so per-agent profile routing, visual cursor, auth, and refs all keep working transparently.
+
+---
 
 ### Custom Formatters
 
@@ -556,7 +598,7 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 
 ### browser_execute_js
 
-Executes JavaScript code in the page context and returns the result. Prefer `browser_get_accessibility_tree` for reading page data — it is pre-filtered for LLM consumption and handles platform-specific formatting automatically. Reserve this tool for actions that cannot be done via the accessibility tree (e.g., triggering custom events, reading JS variables, interacting with page APIs).
+Executes JavaScript code in the page context and returns the result. Use ONLY for reading values or computing derived data that the accessibility tree does not already expose. **Do NOT use for navigation, clicking, typing, scrolling, or any DOM manipulation** — those have dedicated tools (`browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_close_tab`) that integrate with WebPilot's visual cursor, scroll easing, focus management, and refs system. Using `browser_execute_js` to click/type/navigate bypasses all of those and produces brittle, hard-to-debug interactions. For page data extraction, prefer `browser_get_accessibility_tree` which already provides pre-filtered, structured content.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
