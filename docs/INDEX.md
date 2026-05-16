@@ -16,7 +16,7 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Reference
 
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all fourteen MCP tools (including the async `request_pairing` / `check_pairing_status` pair, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`): parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all fourteen MCP tools (nine `browser_*` tools plus async pairing, formatter inspection/reload, and request-chain orchestration): parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
 
 ## Design
 

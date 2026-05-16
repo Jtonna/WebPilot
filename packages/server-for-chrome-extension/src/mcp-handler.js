@@ -521,7 +521,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     res.status(202).send('');
   }
 
-  const AUTH_ERROR_MESSAGE = 'Authentication required. Include your API key as the X-API-Key header or apiKey query parameter in requests. If you do not have a key, call the request_pairing tool to initiate pairing. If you have previously paired, check your working directory for a webpilot.key file.';
+  const AUTH_ERROR_MESSAGE = 'Authentication required. Include your API key as the X-API-Key header or as the api_key argument on the tool call. If you don\'t have a key — or your previous one was revoked — call request_pairing with a memorable agent_name to start a new pairing flow.';
 
   async function processMessage(message, session) {
     const { method, id, params } = message;
@@ -566,7 +566,7 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     }
 
     if (method === 'tools/call') {
-      // Auth gate: exempt request_pairing and webpilot_get_formatter_info, require valid API key for all other tools
+      // Auth gate: exempt request_pairing, check_pairing_status, webpilot_get_formatter_info, and webpilot_reload_formatters; require valid API key for all other tools
       const noAuthRequired =
         params.name === 'request_pairing' ||
         params.name === 'check_pairing_status' ||

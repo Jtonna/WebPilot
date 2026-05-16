@@ -75,7 +75,7 @@ Note: `handleToolCall` wraps the extension's response in the MCP protocol format
 
 ### Step 2: Add Permissions (If Needed)
 
-Edit `packages/chrome-extension-unpacked/manifest.json`. The manifest already includes these base permissions: `storage`, `activeTab`, `tabs`, `tabGroups`, `debugger`, `scripting`, `webNavigation`, and `"host_permissions": ["<all_urls>"]`.
+Edit `packages/chrome-extension-unpacked/manifest.json`. The manifest already includes these base permissions: `storage`, `activeTab`, `tabs`, `tabGroups`, `debugger`, `scripting`, `webNavigation`, `windows`, `identity`, `identity.email`, and `"host_permissions": ["<all_urls>"]`.
 
 If your tool needs additional permissions (e.g., `downloads`, `history`, `bookmarks`), add them to the `permissions` array. See: https://developer.chrome.com/docs/extensions/reference/permissions-list
 

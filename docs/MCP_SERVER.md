@@ -53,7 +53,7 @@ Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Config file / Environment | `API_KEY` | `dev-123-test` | WebSocket authentication key |
 | Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
-| Data file | `network.enabled` | (absent) | Persisted network mode preference (`1` or `0`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. |
+| Data file | `network.enabled` | (absent) | Persisted network mode preference (`1` or `0`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. Any value other than `'1'` in the file explicitly disables network mode, even if `NETWORK=1` was set in env — the file's presence overrides both. |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -68,7 +68,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 - Mounts the web UI static files at `/ui/` via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). The static dir is resolved both in dev (`packages/server-web-ui/out`) and in pkg snapshot.
 - Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings) — see [Web UI API](#web-ui-api).
 - On startup, calls `formatterManager.init()`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks. Also loads `notificationsSettings` and runs an initial `pairedKeys.cleanupExpiredPairings()` pass.
-- Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `email`, persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in `<dataDir>/config/extension-installs.json`), and replies with `hello_ack` once the binding resolves.
+- Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `gaiaEmail` (the field name on the wire), persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in `<dataDir>/config/extension-installs.json`), and replies with `hello_ack` once the binding resolves. A 5-second server-side `helloDeadline` watchdog pushes `identify_required` pre-emptively if the extension never sends `hello` in time (see `server.js`).
 - Handles WebSocket messages from the extension: `{ type: 'ping' }` → `{ type: 'pong' }` (keep-alive); `{ type: 'hello' }` → `{ type: 'hello_ack' }` or `{ type: 'identify_required' }`; `{ type: 'revoke_key' }`, `{ type: 'rename_agent' }`, `{ type: 'list_paired_agents' }` for paired-agent management; `{ type: 'check_formatter_updates' }` → `{ type: 'formatter_update_result' }`. `{ type: 'set_network_mode' }` and `{ type: 'set_pairing_required' }` are **deprecated** — the server logs and ignores them; network mode is now owned by `POST /api/ui/settings/network-mode`, and the pairing-required toggle has been retired (pairing is always on).
 - Auto-opens the web UI in the default browser on `--foreground` start (via `service/open-browser.js`).
 - On startup, opens `chromeManager` for the user's default Chrome `user-data-dir`. The manager is queried per tool call via a cheap PID liveness check, with full re-detection only on cache miss.
@@ -83,7 +83,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. The auth-exempt set is `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. The auth-exempt set is `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp. Auth enforcement is gated by `isPairingRequired()` — the server retains a legacy code path where pairing-required can be disabled. In the current build it is always true.
 - **Per-agent profile routing** -- `resolveTargetProfile(apiKey)` looks up the entry's `profileId` (set during approval or via `PATCH /api/ui/agents/:key`) and returns it. Tool calls are then routed to the extension WS bound to that profile via `extensionBridge.sendCommand(..., { profileId })`. Legacy entries with `profileId: null` fall back to the server-wide `managedProfile` config. The auth gate's resolved key is threaded into `handleToolCall(params, effectiveKey)` so routing and auth share a single key resolution.
 - **request_pairing short-circuit** -- If the caller already presents a valid API key, `request_pairing` returns the existing identity (`agentName`, `profileId`) instead of minting a new pending entry. This handles subagents that inherit `.mcp.json` from a parent and reflexively re-pair.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
@@ -91,15 +91,15 @@ Implements the MCP protocol:
 - **Server-side formatting** -- For `browser_get_accessibility_tree`, the server receives raw nodes from the extension and formats them via `formatterManager.formatTree(url, nodes)`. Passing `usePlatformOptimizer: false` forces the default formatter instead of a platform-matched one. After formatting, ancestry context is built using `extractAncestryContext`, and a `store_refs` notification is pushed to the extension via `extensionBridge.notify()`.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
 - **Chain execution** -- `browser_request_chain` is handled entirely server-side. It calls `handleToolCall()` internally for each step and never sends a command directly to the extension bridge.
-- `createMcpHandler()` accepts 5 parameters: the Express app, extension bridge, paired keys store, formatter manager, and an `isPairingRequired` getter function (returns a boolean indicating whether API key authentication is currently enforced).
+- `createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired, options)` — 5 positional dependencies plus an options object (`options.port`, `options.chromeManager`). The Express app is NOT passed; routes are mounted by the caller using the returned `handleSSE` and `handleMessage` functions.
 
 ### `src/extension-bridge.js`
 
 WebSocket bridge supporting **multiple simultaneous extension connections**, keyed by Chrome profile directory name. One extension install per profile is expected; the most recent connection wins for a given profile.
 
 - `setConnection(ws, profileId)` / `clearConnection(ws)` / `getConnectedProfiles()` -- per-profile connection lifecycle. `clearConnection(ws)` only removes the matching profile, not all connections.
-- `sendCommand(type, params, { profileId })` -- Sends a command to the extension bound to `profileId` (resolved by per-agent routing in the MCP handler). Returns a Promise that resolves on matching response, or rejects on timeout (30 seconds) or disconnect.
-- `notify(message, { profileId })` / `notifyAll(message)` -- Push-only fire-and-forget. Used for `store_refs` after formatting, `paired_agents_list` broadcasts after approve/revoke/rename, and similar.
+- `sendCommand(profileId, type, params, options)` — `profileId` is the first positional arg. Sends a command to the extension bound to that profile (resolved by per-agent routing in the MCP handler). Returns a Promise that resolves on matching response, or rejects on timeout (30 seconds) or disconnect.
+- `notify(profileId, message)` / `notifyAll(message)` -- Push-only fire-and-forget. Used for `store_refs` after formatting, `paired_agents_list` broadcasts after approve/revoke/rename, and similar.
 - `handleResponse(message)` -- Routes incoming responses to their pending Promise by ID.
 
 ### `src/extension-installs.js`
@@ -170,7 +170,7 @@ GitHub-based auto-updater for accessibility tree formatters:
 
 ## MCP Tools
 
-Fourteen tools are exposed to AI agents. All tools except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` require a valid paired API key and a connected extension for the agent's bound Chrome profile. Every tool except `request_pairing` and `check_pairing_status` includes an optional `api_key` string parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header. `agent_name` is required only on `request_pairing`; other tools route via `resolveTargetProfile(apiKey)` and do not look at the agent name.
+Fourteen tools are exposed to AI agents. All tools except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters` require a valid paired API key and a connected extension for the agent's bound Chrome profile. Every tool except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) includes an optional `api_key` parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header. `agent_name` is required only on `request_pairing`; other tools route via `resolveTargetProfile(apiKey)` and do not look at the agent name.
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -227,7 +227,7 @@ The MCP/extension surfaces:
 |--------|------|------|-------------|
 | GET | `/sse` | API key (per-tool-call auth gate) | SSE stream for MCP communication |
 | POST | `/message?session_id=<id>` | API key (per-tool-call auth gate) | JSON-RPC message endpoint |
-| GET | `/health` | None | Server status (`extensionConnected`, `sessions` count) |
+| GET | `/health` | None | Server status (`extensionConnected`, `connectedProfiles`, `sessions` count) |
 | GET | `/connect` | None | Returns `{ apiKey, serverUrl, sseUrl, networkMode }` for extension auto-connect |
 | WS | `/` (upgrade) | `?apiKey=<key>` | Extension WebSocket connection (multi-extension support, keyed by `profileId`) |
 
@@ -359,7 +359,7 @@ npm run build:linux  # node18-linux-x64
 
 Output directory: `dist/`.
 
-The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The `cli.js` file is the `bin` entry point in `package.json`, so pkg uses it as the binary's main entry. Formatters are not bundled in the binary -- they are downloaded from GitHub on first run.
+The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The top-level `"bin": "cli.js"` field in `package.json` points pkg at the binary's main entry; it is not a pkg-specific config knob. Formatters are not bundled in the binary -- they are downloaded from GitHub on first run.
 
 ## Dependencies
 

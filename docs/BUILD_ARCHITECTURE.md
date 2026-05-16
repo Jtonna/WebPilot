@@ -2,7 +2,7 @@
 
 ## Overview
 
-WebPilot produces a single distributable artifact: an Electron application packaged with NSIS (on Windows). The Electron app bundles the compiled MCP server binary and the unpacked Chrome extension as extra resources. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory -- no file copying to app data occurs. The Electron app itself serves as the management UI (onboarding wizard, status dashboard).
+WebPilot produces a single distributable artifact: an Electron application packaged with NSIS (on Windows). The Electron app bundles the compiled MCP server binary and the unpacked Chrome extension as extra resources. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory -- no file copying to app data occurs. The Electron app itself is a minimal status pane that polls `/health`; the canonical management UI is the server-hosted web UI at `/ui/`.
 
 ## Build Pipeline
 
@@ -87,10 +87,10 @@ resources/
     utils/
 ```
 
-The Electron app (Next.js inside Electron) provides:
+The Electron app provides:
 
-1. **Onboarding wizard** -- guides users through extension sideloading, displays connection strings, verifies setup
-2. **Status dashboard** -- shows whether the server is running, extension is connected, provides configuration management
+1. A minimal status pane (server up/down, extension files present), polled via `/health` every 3 seconds.
+2. A placeholder for future onboarding — the canonical setup UI is the server-hosted web UI at `/ui/`, not the Electron window.
 
 ## What the App Does on Launch
 

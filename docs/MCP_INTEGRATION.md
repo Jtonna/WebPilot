@@ -20,13 +20,13 @@ Include the key with every request using any of these methods:
 - **Query parameter:** `?apiKey=<your-key>` on the `/sse` and `/message` endpoints
 - **Tool parameter:** `api_key: "<your-key>"` as a parameter in each `tools/call` request (useful for immediate use after pairing, before the client is reconfigured)
 
-The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except `request_pairing` and `check_pairing_status` include an optional `api_key` parameter in their schema for this purpose.
+The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` parameter in their schema for this purpose.
 
 ### First-Time Setup (async flow)
 
 The pairing flow is asynchronous and is mediated by the server-hosted web UI at `http://localhost:3456/ui/`, not by the Chrome extension popup.
 
-1. Call `request_pairing` with a human-readable `agent_name`. The tool returns **immediately** with a `pairing_id` and `status` (one of `'pending'`, `'approved'`, `'denied'`, `'expired'`). It is **idempotent**: a repeat call with the same `agent_name` returns the same `pairing_id` unless the pending entry has aged past its 24-hour TTL.
+1. Call `request_pairing` with a human-readable `agent_name`. The tool returns **immediately** with a `pairing_id` and `status` (one of `'pending'`, `'approved'`, `'denied'`, `'expired'`). It is **idempotent**: a repeat call with the same `agent_name` returns the same `pairing_id` unless the pending entry has aged past its 24-hour TTL. Approved entries are also reused — calling `request_pairing` again with an approved `agent_name` returns the same `pairing_id` and the existing `api_key`. Denied or expired entries cause a fresh `pairing_id` to be minted on next call.
 2. If `status` is `'pending'`, a native system notification fires on the host pointing the human at the web UI. Surface the approval URL to the human and stop calling browser tools.
 3. The human approves the pairing in the web UI and **selects which Chrome profile** the agent should be bound to. (The web UI can also pre-provision a key directly without an approval round-trip — see [Pre-provisioned keys](#pre-provisioned-keys-web-ui).)
 4. On a later turn, call `check_pairing_status` with the `pairing_id`. When `status` becomes `'approved'`, the response contains your `api_key`.
@@ -75,11 +75,11 @@ Blocked: [domain] is not whitelisted. The human must manually add this site to t
 **Managing the whitelist:**
 Users can add domains to the whitelist via the WebPilot extension popup UI. Domain matching is domain-level (e.g., whitelisting `example.com` allows both `example.com` and `subdomain.example.com`).
 
-**Note on `api_key` parameter:** All tools except `request_pairing` include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
+**Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
 ## Agent Instructions
 
-When an agent connects to the WebPilot MCP server, the `initialize` response includes an `instructions` field with a comprehensive guide on how to use WebPilot effectively. Agents receive this automatically on connection — no extra tool call is needed. The instructions cover authentication, tool usage patterns, platform formatter behavior, and best practices.
+When an agent connects to the WebPilot MCP server, the `initialize` response includes an `instructions` field with a comprehensive guide on how to use WebPilot effectively. Agents receive this automatically on connection — no extra tool call is needed. The instructions cover authentication, tool usage patterns, platform formatter behavior, and best practices. (The server identifies itself in the initialize response as `serverInfo.name = 'WebPilot'` — see MCP_SERVER.md.)
 
 ## Available Tools
 
@@ -121,13 +121,15 @@ Bound to profile: <profileId>
 status: approved
 
 Just call browser tools directly with your existing key. The server resolves your bound profile from the api_key automatically; agent_name is not needed on tool calls and only matters during initial pairing.
+
+If you intended to register as a *separate* agent identity (e.g. so the human can see this subagent distinctly in the UI), ask the human to revoke or rename the current key first, then retry.
 ```
 
 **Returns (denied):**
 A text response with `status: denied` and instructions not to retry automatically.
 
 **Notes:**
-- The async flow is server-side. The pairing entry is persisted to `<dataDir>/config/pending-pairings.json` and aged out after 24h of inactivity.
+- The async flow is server-side. The pairing entry is persisted to `<dataDir>/config/pending-pairings.json` and aged out after 24h of inactivity. Terminal-state entries (`approved`/`denied`/`expired`) are hard-dropped after 7 days by an hourly cleanup pass.
 - The human picks **which Chrome profile** the agent binds to during approval. That profile is persisted on the paired-keys entry and used for tool-call routing.
 - `agent_name` is required here only. Other tools authenticate via the API key alone.
 - This tool and `check_pairing_status` do not require an API key.
@@ -168,21 +170,40 @@ Get information about available platform-specific formatters and instructions fo
 ```json
 {
   "version": "1.0.0",
-  "platforms": [
-    {
+  "platforms": {
+    "threads": {
       "name": "threads",
       "match": "threads.com",
       "description": "Formats Threads pages (home, activity, search, profiles) into structured JSON",
       "source": "auto-updated"
+    },
+    "zillow": {
+      "name": "zillow",
+      "match": "zillow.com",
+      "description": "Formats Zillow pages (home, search, detail) into structured JSON",
+      "source": "auto-updated"
     }
-  ],
-  "default": "Raw accessibility tree text when no platform formatter matches",
+  },
+  "default": { "entry": "default.js" },
   "customFormatterDir": "C:\\Users\\...\\WebPilot\\custom-formatters",
   "formatterApiContract": {
     "input": "{ url: string, title: string, tree: object }",
     "output": "{ tree: string, ...extraFields }"
   },
   "howToCreateCustomFormatter": "Step-by-step guide for authoring a custom platform formatter..."
+}
+```
+
+**Returns (when `platform` filter does not match):**
+```json
+{
+  "version": "1.0.0",
+  "platforms": null,
+  "message": "Platform \"foo\" not found. Available platforms: threads, zillow",
+  "default": { "entry": "default.js" },
+  "customFormatterDir": "C:\\Users\\...\\WebPilot\\custom-formatters",
+  "formatterApiContract": { },
+  "howToCreateCustomFormatter": "..."
 }
 ```
 
@@ -247,6 +268,7 @@ This tool does not require authentication.
 - Triggers a full reload of both the auto-updated formatter manifest (`formatters/`) and the custom formatter manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key.
 - Use this after dropping new formatter files into `custom-formatters/` and updating `custom-formatters/manifest.json`, rather than restarting the server
 - The returned object merges `reloaded: true` with the full `getFormatterInfo()` response, so callers see the current state of all loaded formatters immediately
+- If the auto-updated manifest has not yet been downloaded, reload returns only custom platforms and the default formatter is unavailable until the first auto-update completes
 
 ### Custom Formatters
 
@@ -433,7 +455,7 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a pre-filtered,
 | `listingCount` | (Zillow search/detail) Number of property listings extracted |
 | `platform` | (When optimizer used) Detected platform name |
 
-> **Note:** The Threads formatters internally compute additional count fields (`ghostCount`, `activityCount`, `trendCount`, `suggestionCount`, `threadCount`, `termCount`, `profileCount`, `filter`) but the handler currently only passes through `tree`, `elementCount`, `postCount`, `listingCount`, and `platform`. The additional counts can be found inside the `tree` JSON string itself.
+> **Note:** The handler passes through every field the formatter returns via a `...extras` spread (see `mcp-handler.js` `browser_get_accessibility_tree` response builder). The exact set of count/metadata fields depends on which formatter matched (`postCount`, `ghostCount`, `listingCount`, `activityCount`, etc.).
 
 **Tree Format (default):**
 Each line represents an element with:
@@ -1066,7 +1088,7 @@ If a tool call is made without a valid API key (or with no key at all):
 ```json
 {
   "code": -32001,
-  "message": "Authentication required. Include your API key as the X-API-Key header or apiKey query parameter in requests. If you do not have a key, call the request_pairing tool to initiate pairing. If you have previously paired, check your working directory for a webpilot.key file."
+  "message": "Authentication required. Include your API key as the X-API-Key header or as the api_key argument on the tool call. If you don't have a key — or your previous one was revoked — call request_pairing with a memorable agent_name to start a new pairing flow."
 }
 ```
 
@@ -1089,7 +1111,13 @@ If you try to close a tab that doesn't exist:
 
 ### Extension Not Connected
 
-If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
+If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The exact error string is:
+
+```
+No browser instance connected for profile "<profileId>". Call browser_create_tab to launch Chrome.
+```
+
+The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
 
 **Solution:** Open the WebPilot web UI to inspect Chrome status, restart Chrome with the flag if needed, or re-load the unpacked extension in the target profile.
 

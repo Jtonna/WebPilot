@@ -48,17 +48,17 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Hello handshake
 
 Once the WebSocket is open the extension sends a `hello` message **before any other traffic** — the server gates all non-hello messages until the handshake completes. The handshake carries:
 
 - `profileId` -- previously-resolved Chrome profile directoryName (e.g. `"Default"`, `"Profile 1"`), if any.
-- `email` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available.
+- `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
 - `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (`extension-installs.json`) survives config wipes.
 
-The server resolves the binding using `installId` first, then email, then a profile-picker fallback. It replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). A 5-second watchdog (`HELLO_TIMEOUT_MS`) surfaces failures to the popup. Tool calls and management traffic resume only after `hello_ack`.
+The server resolves the binding using `installId` first, then `gaiaEmail`, then a profile-picker fallback. It replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
 
 ### Message handlers
 
@@ -66,8 +66,7 @@ The server resolves the binding using `installId` first, then email, then a prof
 
 | Message type | Action |
 |--------------|--------|
-| `pairing_request` | Stores the pending request and forwards it to the popup via `chrome.runtime.sendMessage` so the user can Approve or Deny. |
-| `store_refs` | Push | `tabId`, `refs`, `refContexts` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting |
+| `store_refs` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting (params: `tabId`, `refs`, `refContexts`). |
 
 #### From popup (chrome.runtime.onMessage)
 
@@ -79,11 +78,8 @@ The server resolves the binding using `installId` first, then email, then a prof
 | `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
 | `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
 | `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
-| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID. Removes the request from the pending list in storage. |
-| `REVOKE_KEY` | Sends a `revoke_key` message to the server over WebSocket with the specified `apiKey`. |
-| `RENAME_AGENT` | Sends a `rename_agent` message to the server over WebSocket with the specified `apiKey` and `newName`. |
-| `GET_PAIRED_AGENTS` | Reads `pairedAgents` from `chrome.storage.local` and returns the list to the popup. |
-| `GET_PENDING_PAIRING` | Reads `pendingPairingRequests` from `chrome.storage.local` and returns them to the popup. |
+| `GET_PROFILE_IDENTITY` | Reads `webpilot.profileId` and `webpilot.knownProfiles` from `chrome.storage.local` and returns `{ profileId, knownProfiles }` to the popup. |
+| `SET_PROFILE_ID` | Stores `webpilot.profileId` to the operator's pick (params: `profileId`) and re-runs `sendHelloHandshake()` so the server can ack the new binding. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 | `CHECK_FORMATTER_UPDATES` | Forwards `check_formatter_updates` to server via WebSocket. Relays `formatter_update_result` response back to popup (10s timeout). |
@@ -300,7 +296,7 @@ Standard command envelope:
 |------|----------|-----------------|-------------|
 | `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. |
 | `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; popup surfaces a profile picker. |
-| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
+| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
 | `formatter_update_result` | Push (no `id`) | _(result payload)_ | Server responds to a `check_formatter_updates` request with the outcome of the update check. |
 
@@ -330,7 +326,7 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `hello` | `profileId?`, `email?`, `installId?`, `timestamp` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
+| `hello` | `profileId?`, `profileDisplayName?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
 | `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
 | `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
 | `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |
