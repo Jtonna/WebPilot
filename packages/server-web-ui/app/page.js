@@ -1,57 +1,38 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { Browser, PlugsConnected, Pulse } from '@phosphor-icons/react';
 import PairingPromptCard from '../components/PairingPromptCard';
-import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../components/ProfileStatusBadge';
-import RevealSection from '../components/RevealSection';
+import StatusRow from '../components/StatusRow';
+import { useToast } from '../components/ToastRegion';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
+/**
+ * Dashboard — per UX §Dashboard.
+ *
+ * Two sections:
+ *   1. Action items   — inline pending pairings (PairingPromptCard).
+ *   2. System status  — single card, three rows (Chrome / Extension / Server).
+ *
+ * Truly-empty state (no Chrome, no agents, never paired) shows a Welcome card
+ * in place of the System status card.
+ */
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  // Tracks freshly-arrived pairing IDs so PairingPromptCard can play its
-  // slide-in / accent pulse animation once. Cleared after the animation
-  // duration so subsequent re-renders don't replay.
-  const [arrivingIds, setArrivingIds] = useState(() => new Set());
-  const seenIdsRef = useRef(new Set());
-  // Guards against stale REST refresh responses arriving AFTER a newer
-  // WS-event-triggered refresh has already updated state. See QOL Wave 6 H2.
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
   }
-
-  function markArrivals(newList) {
-    const nextSeen = new Set();
-    const arrivals = new Set();
-    for (const p of newList) {
-      if (!p || !p.pairingId) continue;
-      nextSeen.add(p.pairingId);
-      if (!seenIdsRef.current.has(p.pairingId)) {
-        arrivals.add(p.pairingId);
-      }
-    }
-    seenIdsRef.current = nextSeen;
-    if (arrivals.size > 0) {
-      setArrivingIds(arrivals);
-      setTimeout(() => {
-        setArrivingIds((curr) => {
-          const next = new Set(curr);
-          for (const id of arrivals) next.delete(id);
-          return next;
-        });
-      }, 1500);
-    }
-  }
+  const toast = useToast();
 
   async function refresh() {
     try {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
-      markArrivals(data.pendingPairings || []);
       setStatus(data);
       setError(null);
     } catch (err) {
@@ -64,9 +45,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-
     refresh();
-
     const client = createUiEventsClient();
     client.connect();
     const unsubs = [
@@ -77,7 +56,6 @@ export default function HomePage() {
       client.subscribe('extension_connected', () => !cancelled && refresh()),
       client.subscribe('extension_disconnected', () => !cancelled && refresh()),
     ];
-
     return () => {
       cancelled = true;
       unsubs.forEach((u) => u && u());
@@ -89,9 +67,10 @@ export default function HomePage() {
     setBusy(true);
     try {
       await approvePairing(pairing.pairingId, selectedProfile, newProfileName);
+      toast.success(`Paired. ${pairing.agentName || 'agent'} is bound to ${selectedProfile === '__new__' ? newProfileName : selectedProfile}.`);
       await refresh();
     } catch (e) {
-      setError(e);
+      toast.error(e.message || 'Failed to approve.');
     } finally {
       setBusy(false);
     }
@@ -101,26 +80,27 @@ export default function HomePage() {
     setBusy(true);
     try {
       await denyPairing(pairing.pairingId);
+      toast.info(`Denied ${pairing.agentName || 'agent'}.`);
       await refresh();
     } catch (e) {
-      setError(e);
+      toast.error(e.message || 'Failed to deny.');
     } finally {
       setBusy(false);
     }
   }
 
   const pendingPairings = status?.pendingPairings ?? [];
-  const chromeRunning = status?.chrome?.running;
-  const chromePid = status?.chrome?.browserPid;
-  const chromeHasFlag = status?.chrome?.hasFlag;
-  const chromeUserDataDir = status?.chrome?.userDataDir;
+  const chrome = status?.chrome ?? {};
+  const chromeRunning = !!chrome.running;
+  const chromeHasFlag = !!chrome.hasFlag;
   const profiles = status?.profiles ?? [];
-  const activeProfiles = profiles.filter((p) => p.webPilotStatus === 'active');
-  const pairedAgentCount = status?.pairedAgents?.length ?? 0;
+  const connectedProfiles = status?.connectedProfiles ?? [];
+  const activeProfiles = profiles.filter((p) => p.webPilotStatus === 'active' || p.webPilotStatus === 'ready');
+  const port = status?.port ?? null;
+  const networkMode = !!status?.networkMode;
+  const pairedAgents = status?.pairedAgents ?? [];
 
-  // Profile dropdown options for inline pairing approval — same shape as
-  // /pairings page. The "+ New sandbox profile" sentinel lets the user create
-  // a fresh profile during approval.
+  // Build profile picker options for inline pairing approval.
   const profileOptions = [
     ...profiles.map((p) => ({ value: p.directoryName, label: p.displayName || p.directoryName })),
     { value: '__new__', label: '+ New sandbox profile' },
@@ -129,13 +109,56 @@ export default function HomePage() {
     profileOptions.unshift({ value: 'Default', label: 'Default' });
   }
 
+  // Truly-empty: no Chrome, no agents, no pending. Replace System status with
+  // a single Welcome card.
+  const trulyEmpty =
+    !loading && pendingPairings.length === 0 && pairedAgents.length === 0 && !chromeRunning;
+
+  // ---- Chrome row state ----
+  let chromeState = 'unknown';
+  let chromeValue = 'Not detected';
+  let chromeAction = null;
+  if (chromeRunning && chromeHasFlag) {
+    chromeState = 'ok';
+    chromeValue = 'Running · debug flag enabled';
+  } else if (chromeRunning && !chromeHasFlag) {
+    chromeState = 'warn';
+    chromeValue = 'Running · debug flag missing';
+    chromeAction = { label: 'Restart Chrome', onClick: () => { /* Phase 3+ */ } };
+  } else {
+    chromeState = 'unknown';
+    chromeValue = 'Not detected';
+    chromeAction = { label: 'Launch Chrome', onClick: () => { /* Phase 3+ */ } };
+  }
+
+  // ---- Extension row state ----
+  let extState = 'unknown';
+  let extValue;
+  if (activeProfiles.length === 0) {
+    extState = 'unknown';
+    extValue = 'No profiles configured.';
+  } else {
+    const X = connectedProfiles.length;
+    const Y = activeProfiles.length;
+    extState = X === Y && Y > 0 ? 'ok' : 'warn';
+    extValue = `${X} of ${Y} ${Y === 1 ? 'profile' : 'profiles'} connected`;
+  }
+
+  // ---- Server row state ----
+  let serverState = 'ok';
+  let serverValue;
+  if (networkMode) {
+    serverValue = `LAN · 0.0.0.0:${port ?? '—'}`;
+  } else {
+    serverValue = `Localhost · port ${port ?? '—'}`;
+  }
+
   return (
     <>
       <header className="wp-page-head">
         <h1 className="wp-page-title">Dashboard</h1>
         <p className="wp-page-sub">
-          An overview of WebPilot, the Chrome process it watches, and the
-          agents currently authorized to drive your browser.
+          A glance at what WebPilot is doing and what, if anything, needs you.
         </p>
       </header>
 
@@ -148,13 +171,13 @@ export default function HomePage() {
       {!loading && error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Couldn’t reach the server
+            Couldn’t reach the server.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
       ) : null}
 
-      {!loading ? (
+      {!loading && !error ? (
         <section className="wp-section">
           <div className="wp-section-head">
             <h2 className="wp-section-title">Action items</h2>
@@ -166,7 +189,7 @@ export default function HomePage() {
           </div>
           <div className="wp-card">
             {pendingPairings.length === 0 ? (
-              <div className="wp-empty">No action items waiting.</div>
+              <div className="wp-empty">Nothing waiting.</div>
             ) : (
               pendingPairings.map((p) => (
                 <PairingPromptCard
@@ -176,7 +199,6 @@ export default function HomePage() {
                   onApprove={handleApprove}
                   onDeny={handleDeny}
                   disabled={busy}
-                  justArrived={arrivingIds.has(p.pairingId)}
                 />
               ))
             )}
@@ -184,94 +206,62 @@ export default function HomePage() {
         </section>
       ) : null}
 
-      {!loading ? (
+      {!loading && !error && trulyEmpty ? (
         <section className="wp-section">
-          <div className="wp-section-head">
-            <h2 className="wp-section-title">Chrome</h2>
-          </div>
-          <div className="wp-card">
-            <div className="wp-kv">
-              <div className="wp-kv-label">Process</div>
-              <div className="wp-kv-value">
-                {chromeRunning ? (
-                  <>
-                    Chrome{' '}
-                    <span className="wp-kv-value-mono wp-secondary">PID {chromePid ?? '—'}</span>
-                  </>
-                ) : (
-                  <span className="wp-secondary">Not detected</span>
-                )}
-              </div>
-              <div className="wp-kv-label">Debug flag</div>
-              <div className="wp-kv-value">
-                {chromeRunning
-                  ? (chromeHasFlag
-                      ? <span style={{ color: 'var(--wp-success)' }}>Enabled</span>
-                      : <span style={{ color: 'var(--wp-warning)' }}>Missing — the extension can’t connect</span>)
-                  : <span className="wp-secondary">—</span>}
-              </div>
-              <div className="wp-kv-label">User data</div>
-              <div className="wp-kv-value wp-kv-value-mono wp-secondary" style={{ fontWeight: 400 }}>
-                {chromeUserDataDir || '—'}
-              </div>
-              <div className="wp-kv-label">Paired agents</div>
-              <div className="wp-kv-value">{pairedAgentCount}</div>
-            </div>
+          <div className="wp-card wp-card-lg">
+            <h3 style={{
+              margin: 0,
+              marginBottom: 'var(--s-2)',
+              fontSize: 'var(--fs-section)',
+              fontWeight: 500,
+              letterSpacing: '-0.01em',
+              color: 'var(--wp-fg)',
+            }}>
+              Welcome to WebPilot.
+            </h3>
+            <p style={{
+              margin: 0,
+              marginBottom: 'var(--s-4)',
+              color: 'var(--wp-fg-secondary)',
+              maxWidth: '60ch',
+            }}>
+              Pair your first agent to get started.
+            </p>
+            <a href="/ui/agents/" className="wp-btn wp-btn-primary wp-btn-cta">
+              Pair an agent
+            </a>
           </div>
         </section>
       ) : null}
 
-      {!loading && activeProfiles.length > 0 ? (
+      {!loading && !error && !trulyEmpty ? (
         <section className="wp-section">
           <div className="wp-section-head">
-            <h2 className="wp-section-title">Active profiles</h2>
-            <span className="wp-section-aside">
-              {activeProfiles.length} {activeProfiles.length === 1 ? 'profile' : 'profiles'}
-            </span>
+            <h2 className="wp-section-title">System status</h2>
           </div>
           <div className="wp-card">
-            {activeProfiles.map((p) => (
-              <div className="wp-row" key={p.directoryName}>
-                <div className="wp-row-grow">
-                  <div className="wp-row-title">{p.displayName || p.directoryName}</div>
-                  <div className="wp-row-sub">
-                    {p.gaiaEmail || 'No Google account'}
-                    <span className="wp-row-sep">·</span>
-                    <span className="wp-mono">{p.directoryName}</span>
-                  </div>
-                </div>
-                <ProfileStatusBadge status={p.webPilotStatus} />
-              </div>
-            ))}
+            <StatusRow
+              label="Chrome"
+              icon={Browser}
+              state={chromeState}
+              value={chromeValue}
+              actionLabel={chromeAction?.label}
+              onAction={chromeAction?.onClick}
+            />
+            <StatusRow
+              label="Extension"
+              icon={PlugsConnected}
+              state={extState}
+              value={extValue}
+            />
+            <StatusRow
+              label="Server"
+              icon={Pulse}
+              state={serverState}
+              value={serverValue}
+            />
           </div>
         </section>
-      ) : null}
-
-      {!loading && profiles.length > 0 ? (
-        <RevealSection className="wp-section">
-          <div className="wp-section-head">
-            <h2 className="wp-section-title">All profiles</h2>
-            <span className="wp-section-aside">
-              {profiles.length} known
-            </span>
-          </div>
-          <div className="wp-card">
-            {profiles.map((p) => (
-              <div className="wp-row" key={p.directoryName}>
-                <div className="wp-row-grow">
-                  <div className="wp-row-title">{p.displayName || p.directoryName}</div>
-                  <div className="wp-row-sub">{p.gaiaEmail || 'No Google account'}</div>
-                  {p.webPilotStatus === 'needs_setup' ? (
-                    <div className="wp-secondary" style={{ marginTop: 8, fontSize: 13, maxWidth: '52ch' }}>
-                      {NEEDS_SETUP_HINT}
-                    </div>
-                  ) : null}
-                </div>
-                <ProfileStatusBadge status={p.webPilotStatus} />
-              </div>
-            ))}
-          </div>
-        </RevealSection>
       ) : null}
     </>
   );

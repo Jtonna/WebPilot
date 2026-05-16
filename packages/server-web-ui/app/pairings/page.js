@@ -2,59 +2,35 @@
 
 import { useEffect, useRef, useState } from 'react';
 import PairingPromptCard from '../../components/PairingPromptCard';
+import { useToast } from '../../components/ToastRegion';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
+/**
+ * Pairings — per UX §Pairings.
+ *
+ * Two sections:
+ *   1. Awaiting review — identical inline approve/deny card as Dashboard.
+ *   2. History         — session-scoped for Phase 2 (Phase 3 swaps to a
+ *                        server-backed paginated endpoint).
+ */
 export default function PairingsPage() {
   const [pairings, setPairings] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory]   = useState([]);
   const [profiles, setProfiles] = useState([]);
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-  // Tracks which pairing IDs have already been seen so we can flag freshly-
-  // arrived rows for the slide-in + accent pulse animation. Cleared after the
-  // animation duration so re-renders don't loop the effect.
-  const [arrivingIds, setArrivingIds] = useState(() => new Set());
-  const seenIdsRef = useRef(new Set());
-  // See QOL Wave 6 H2 — guards REST refresh against WS-event clobber.
+  const [error, setError]       = useState(null);
+  const [busy, setBusy]         = useState(false);
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
   }
-
-  function markArrivals(newList) {
-    const nextSeen = new Set();
-    const arrivals = new Set();
-    for (const p of newList) {
-      if (!p || !p.pairingId) continue;
-      nextSeen.add(p.pairingId);
-      if (!seenIdsRef.current.has(p.pairingId)) {
-        arrivals.add(p.pairingId);
-      }
-    }
-    seenIdsRef.current = nextSeen;
-    if (arrivals.size > 0) {
-      setArrivingIds(arrivals);
-      // Clear after the slide-in + pulse duration so subsequent updates don't
-      // replay the animation.
-      setTimeout(() => {
-        setArrivingIds((curr) => {
-          // Only clear the IDs we set this round.
-          const next = new Set(curr);
-          for (const id of arrivals) next.delete(id);
-          return next;
-        });
-      }, 1500);
-    }
-  }
+  const toast = useToast();
 
   async function refresh() {
     try {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
-      const list = data.pendingPairings || [];
-      markArrivals(list);
-      setPairings(list);
+      setPairings(data.pendingPairings || []);
       setProfiles(data.profiles || []);
       setError(null);
     } catch (err) {
@@ -71,12 +47,12 @@ export default function PairingsPage() {
       client.subscribe('pairing_requested', () => !cancelled && refresh()),
       client.subscribe('pairing_approved', (evt) => {
         if (cancelled) return;
-        setHistory((h) => [{ ...evt.pairing, decision: 'approved' }, ...h]);
+        setHistory((h) => [{ ...evt.pairing, decision: 'approved', decidedAt: new Date().toISOString() }, ...h]);
         refresh();
       }),
       client.subscribe('pairing_denied', (evt) => {
         if (cancelled) return;
-        setHistory((h) => [{ ...evt.pairing, decision: 'denied' }, ...h]);
+        setHistory((h) => [{ ...evt.pairing, decision: 'denied', decidedAt: new Date().toISOString() }, ...h]);
         refresh();
       }),
     ];
@@ -99,9 +75,10 @@ export default function PairingsPage() {
     setBusy(true);
     try {
       await approvePairing(pairing.pairingId, selectedProfile, newProfileName);
+      toast.success(`Paired. ${pairing.agentName || 'agent'} is bound to ${selectedProfile === '__new__' ? newProfileName : selectedProfile}.`);
       await refresh();
     } catch (e) {
-      setError(e);
+      toast.error(e.message || 'Failed to approve.');
     } finally {
       setBusy(false);
     }
@@ -111,12 +88,25 @@ export default function PairingsPage() {
     setBusy(true);
     try {
       await denyPairing(pairing.pairingId);
+      toast.info(`Denied ${pairing.agentName || 'agent'}.`);
       await refresh();
     } catch (e) {
-      setError(e);
+      toast.error(e.message || 'Failed to deny.');
     } finally {
       setBusy(false);
     }
+  }
+
+  function fmtTimestamp(iso) {
+    if (!iso) return 'Just now';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   return (
@@ -124,15 +114,14 @@ export default function PairingsPage() {
       <header className="wp-page-head">
         <h1 className="wp-page-title">Pairings</h1>
         <p className="wp-page-sub">
-          Approve or deny pairing requests from MCP agents. Each approval mints
-          an API key and binds the agent to a Chrome profile of your choosing.
+          Approve or deny pairing requests, and review what you’ve decided.
         </p>
       </header>
 
       {error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Something went wrong
+            Something went wrong.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
@@ -157,7 +146,6 @@ export default function PairingsPage() {
                 onApprove={handleApprove}
                 onDeny={handleDeny}
                 disabled={busy}
-                justArrived={arrivingIds.has(p.pairingId)}
               />
             ))
           )}
@@ -166,7 +154,7 @@ export default function PairingsPage() {
 
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">This session</h2>
+          <h2 className="wp-section-title">History</h2>
           <span className="wp-section-aside">
             {history.length > 0
               ? `${history.length} ${history.length === 1 ? 'decision' : 'decisions'}`
@@ -175,7 +163,7 @@ export default function PairingsPage() {
         </div>
         <div className="wp-card">
           {history.length === 0 ? (
-            <div className="wp-empty">No decisions yet in this session.</div>
+            <div className="wp-empty">No pairings yet. They’ll appear here after you approve or deny your first request.</div>
           ) : (
             history.map((h, i) => {
               const ok = h.decision === 'approved';
@@ -183,9 +171,9 @@ export default function PairingsPage() {
                 <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
                   <div className="wp-row-grow">
                     <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
-                    <div className="wp-row-sub">{h.decidedAt || 'Just now'}</div>
+                    <div className="wp-row-sub">{fmtTimestamp(h.decidedAt)}</div>
                   </div>
-                  <span className="wp-pill" data-state={ok ? 'active' : 'danger'}>
+                  <span className="wp-pill" data-state={ok ? 'ready' : 'danger'}>
                     <span className="wp-pill-dot" />
                     <span className="wp-pill-label">{ok ? 'Approved' : 'Denied'}</span>
                   </span>

@@ -1,5 +1,6 @@
 import './globals.css';
 import AppShell from '../components/AppShell';
+import { ToastProvider } from '../components/ToastRegion';
 
 export const metadata = {
   title: 'WebPilot',
@@ -35,7 +36,9 @@ export default function RootLayout({ children }) {
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body>
-        <AppShell>{children}</AppShell>
+        <ToastProvider>
+          <AppShell>{children}</AppShell>
+        </ToastProvider>
       </body>
     </html>
   );

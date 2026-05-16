@@ -929,15 +929,550 @@ hr {
   padding: var(--s-3) 0;
 }
 
-/* Legacy class kept for any leftover markup */
-.wp-status-dot {
-  display: inline-block;
+/* ---------------------------------------------------------------------------
+ * Status row — used inside the Dashboard "System status" card.
+ *
+ * Layout:
+ *   [icon] [label … action link]                    [value · dot]
+ *
+ * The dot inherits semantic color from data-state. Inline action link sits
+ * beneath the label and only appears when actionLabel is provided.
+ * ------------------------------------------------------------------------- */
+
+.wp-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-status-row:first-child { padding-top: 0; }
+.wp-status-row:last-child  { padding-bottom: 0; border-bottom: none; }
+
+.wp-status-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-status-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.wp-status-row-label {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-status-row-action {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--wp-accent);
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-status-row-action:hover { color: var(--wp-accent-hover); }
+
+.wp-status-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.wp-status-row-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: var(--s-1);
-  vertical-align: middle;
   background: var(--wp-fg-muted);
+  flex-shrink: 0;
+}
+
+.wp-status-row[data-state="ok"]      .wp-status-row-dot { background: var(--wp-success); }
+.wp-status-row[data-state="warn"]    .wp-status-row-dot { background: var(--wp-warning); }
+.wp-status-row[data-state="danger"]  .wp-status-row-dot { background: var(--wp-danger); }
+.wp-status-row[data-state="unknown"] .wp-status-row-dot { background: var(--wp-fg-muted); }
+
+/* ---------------------------------------------------------------------------
+ * Modal — used by ConfirmModal, ProfileSetupModal, PairAgentModal.
+ *
+ * Pattern:
+ *   - Backdrop: rgba(0,0,0,0.45) light, 0.65 dark, full-viewport.
+ *   - Card: 480px default; .wp-modal-lg → 640px; mobile → min(92vw, 720px).
+ *   - --radius-lg corners; --elev-3 shadow.
+ *   - Entrance: opacity 0→1 + translateY(8px → 0) over --dur-slow,
+ *     ease-spring-soft.  Exit: opacity fade only over --dur-normal.
+ * ------------------------------------------------------------------------- */
+
+.wp-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+  background: rgba(0, 0, 0, 0.45);
+  animation: wp-backdrop-in var(--dur-normal) var(--ease-quart-out) both;
+}
+
+:root[data-theme="dark"] .wp-modal-backdrop { background: rgba(0, 0, 0, 0.65); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .wp-modal-backdrop { background: rgba(0, 0, 0, 0.65); }
+}
+
+.wp-modal-backdrop.is-closing {
+  animation: wp-backdrop-out var(--dur-normal) var(--ease-quart-out) both;
+}
+
+@keyframes wp-backdrop-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wp-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+
+.wp-modal {
+  width: 480px;
+  max-width: min(92vw, 720px);
+  max-height: calc(100vh - var(--s-7));
+  overflow: auto;
+  background: var(--wp-bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+  padding: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  animation: wp-modal-in var(--dur-slow) var(--ease-spring-soft) both;
+}
+
+.wp-modal-lg { width: 640px; }
+
+.wp-modal-backdrop.is-closing .wp-modal {
+  animation: wp-modal-out var(--dur-normal) var(--ease-quart-out) both;
+}
+
+@keyframes wp-modal-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes wp-modal-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.wp-modal-title {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-section);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--wp-fg);
+  margin: 0;
+}
+
+.wp-modal-body {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg-secondary);
+  line-height: 1.55;
+}
+
+.wp-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Stepper — numbered step items inside setup modals.
+ * ------------------------------------------------------------------------- */
+
+.wp-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.wp-step {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: var(--s-3);
+  align-items: start;
+}
+
+.wp-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--wp-accent-tint);
+  color: var(--wp-accent);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+.wp-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  line-height: 1.55;
+  min-width: 0;
+}
+
+.wp-step-sub {
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Code blocks — copyable JSON/text snippets.
+ * ------------------------------------------------------------------------- */
+
+.wp-code-wrap {
+  position: relative;
+  display: block;
+}
+
+.wp-code {
+  display: block;
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  padding-right: 72px;
+  background: var(--wp-separator);
+  color: var(--wp-fg);
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.wp-code-copy {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+}
+
+.wp-mono-path {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  background: var(--wp-separator);
+  border-radius: var(--radius-xs);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg);
+}
+
+/* ---------------------------------------------------------------------------
+ * Segmented control — used in Settings → Appearance.
+ * ------------------------------------------------------------------------- */
+
+.wp-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--wp-separator);
+  border-radius: var(--radius-sm);
+}
+
+.wp-segmented-btn {
+  height: 28px;
+  padding: 0 var(--s-3);
+  background: transparent;
+  color: var(--wp-fg-secondary);
+  border: none;
+  border-radius: var(--radius-xs);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-segmented-btn:hover { color: var(--wp-fg); }
+
+.wp-segmented-btn.is-active {
+  background: var(--wp-accent-tint);
+  color: var(--wp-accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Switch — settings toggles.
+ * ------------------------------------------------------------------------- */
+
+.wp-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.wp-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.wp-switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--wp-bg-card);
+  border-radius: 50%;
+  box-shadow: var(--elev-1);
+  transition: transform var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-switch input:checked ~ .wp-switch-track { background: var(--wp-accent); }
+.wp-switch input:checked ~ .wp-switch-thumb { transform: translateX(14px); }
+.wp-switch input:disabled ~ .wp-switch-track { opacity: 0.5; }
+.wp-switch input:focus-visible ~ .wp-switch-track {
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Toast region — fixed bottom-right (bottom-center on mobile), stack max 3.
+ * Each toast: .wp-card-styled, ~320px, slide-in from right + fade.
+ * ------------------------------------------------------------------------- */
+
+.wp-toast-region {
+  position: fixed;
+  bottom: var(--s-5);
+  right: var(--s-5);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  pointer-events: none;
+  max-width: calc(100vw - var(--s-7));
+}
+
+@media (max-width: 599px) {
+  .wp-toast-region {
+    right: var(--s-4);
+    left: var(--s-4);
+    bottom: var(--s-4);
+    align-items: center;
+  }
+}
+
+.wp-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: start;
+  gap: var(--s-3);
+  width: 320px;
+  max-width: 100%;
+  padding: var(--s-3) var(--s-4);
+  background: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-2);
+  animation: wp-toast-in var(--dur-normal) var(--ease-quart-out) both;
+  transition: opacity var(--dur-quick) var(--ease-quart-out),
+              transform var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-toast.is-leaving {
+  opacity: 0;
+  transform: translateX(8px);
+}
+
+@keyframes wp-toast-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.wp-toast-icon {
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.wp-toast[data-flavor="success"] .wp-toast-icon { color: var(--wp-success); }
+.wp-toast[data-flavor="info"]    .wp-toast-icon { color: var(--wp-info); }
+.wp-toast[data-flavor="error"]   .wp-toast-icon { color: var(--wp-danger); }
+
+.wp-toast-body {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  line-height: 1.4;
+  min-width: 0;
+  word-wrap: break-word;
+}
+
+.wp-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  color: var(--wp-fg-muted);
+  border: none;
+  border-radius: var(--radius-xs);
+  transition: color var(--dur-instant) var(--ease-quart-out),
+              background-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-toast-close:hover {
+  color: var(--wp-fg);
+  background: var(--wp-separator);
+}
+
+/* ---------------------------------------------------------------------------
+ * Page entrance cascade — single staggered fade-up for main's children.
+ *
+ * Children of .wp-main fade from opacity 0 + translateY(8px) to their
+ * resting state over --dur-normal, staggered 40ms via nth-child.
+ * ------------------------------------------------------------------------- */
+
+@keyframes wp-page-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wp-main > * {
+  animation: wp-page-fade-up var(--dur-normal) var(--ease-quart-out) both;
+}
+
+.wp-main > *:nth-child(1) { animation-delay: 0ms; }
+.wp-main > *:nth-child(2) { animation-delay: 40ms; }
+.wp-main > *:nth-child(3) { animation-delay: 80ms; }
+.wp-main > *:nth-child(4) { animation-delay: 120ms; }
+.wp-main > *:nth-child(5) { animation-delay: 160ms; }
+.wp-main > *:nth-child(6) { animation-delay: 200ms; }
+.wp-main > *:nth-child(7) { animation-delay: 240ms; }
+.wp-main > *:nth-child(8) { animation-delay: 280ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-main > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Misc — link, helpers.
+ * ------------------------------------------------------------------------- */
+
+.wp-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--wp-font-sans);
+  font-size: inherit;
+  color: var(--wp-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wp-link:hover { color: var(--wp-accent-hover); }
+
+.wp-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
+
+.wp-card-pad-md { padding: var(--s-5); }
+
+.wp-row-inline-hint {
+  margin-top: var(--s-2);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  max-width: 52ch;
+  line-height: 1.55;
+}
+
+/* Section padding inside cards-with-multiple-sub-blocks (used by some
+   settings cards that hold multiple controls). */
+.wp-card-section {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--wp-separator);
+}
+.wp-card-section:first-child { padding-top: 0; }
+.wp-card-section:last-child  { padding-bottom: 0; border-bottom: none; }
+
+/* ---------------------------------------------------------------------------
+ * Reveal-on-scroll — gentle fade-up triggered by IntersectionObserver
+ * (components/RevealSection.js). Sections below the fold use this; sections
+ * above the fold are covered by the page entrance cascade.
+ * ------------------------------------------------------------------------- */
+
+.wp-reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity var(--dur-normal) var(--ease-quart-out),
+    transform var(--dur-normal) var(--ease-quart-out);
+}
+
+.wp-reveal-on-scroll.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-reveal-on-scroll {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------

@@ -1,21 +1,34 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../../components/ProfileStatusBadge';
+import ProfileStatusBadge from '../../components/ProfileStatusBadge';
+import ProfileSetupModal from '../../components/ProfileSetupModal';
+import { useToast } from '../../components/ToastRegion';
 import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
+/**
+ * Profiles — per UX §Profiles.
+ *
+ * Two sections:
+ *   1. Known profiles    — sorted active → ready → needs_setup, then by dir
+ *                          name. needs_setup rows expose a primary Set up
+ *                          button that opens ProfileSetupModal.
+ *   2. + New sandbox     — friendly intro + input + primary "Create profile".
+ */
+const STATUS_ORDER = { active: 0, ready: 1, needs_setup: 2, unknown: 3 };
+
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
-  const [error, setError] = useState(null);
+  const [error, setError]       = useState(null);
   const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [createMsg, setCreateMsg] = useState(null);
-  // See QOL Wave 6 H2 — guards REST refresh against WS-event clobber.
+  const [newName, setNewName]   = useState('');
+  const [setupTarget, setSetupTarget] = useState(null);
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
   }
+  const toast = useToast();
 
   async function refresh() {
     try {
@@ -44,37 +57,43 @@ export default function ProfilesPage() {
   async function handleCreate() {
     const name = newName.trim();
     if (!name) {
-      setCreateMsg({ kind: 'err', text: 'Enter a profile directory name (e.g., "WebPilot Sandbox")' });
+      toast.error('Enter a name first.');
       return;
     }
     setCreating(true);
-    setCreateMsg(null);
     try {
-      const result = await createProfile(name);
-      setCreateMsg({ kind: 'ok', text: result.instructions || ('Profile "' + name + '" launched. Load the extension via chrome://extensions.') });
+      await createProfile(name);
+      toast.success(`Profile ${name} created. Load the extension to finish setup.`);
       setNewName('');
       setTimeout(refresh, 1000);
     } catch (e) {
-      setCreateMsg({ kind: 'err', text: 'Failed: ' + e.message });
+      toast.error(`Failed to create profile: ${e.message}`);
     } finally {
       setCreating(false);
     }
   }
+
+  const sorted = [...profiles].sort((a, b) => {
+    const ra = STATUS_ORDER[a.webPilotStatus] ?? STATUS_ORDER.unknown;
+    const rb = STATUS_ORDER[b.webPilotStatus] ?? STATUS_ORDER.unknown;
+    if (ra !== rb) return ra - rb;
+    return (a.directoryName || '').localeCompare(b.directoryName || '');
+  });
 
   return (
     <>
       <header className="wp-page-head">
         <h1 className="wp-page-title">Profiles</h1>
         <p className="wp-page-sub">
-          Chrome profiles WebPilot knows about, plus a launcher for fresh
-          sandbox profiles you can hand to a new agent.
+          Chrome profiles WebPilot knows about. Sandbox a new one for an agent
+          to live in.
         </p>
       </header>
 
       {error ? (
         <div className="wp-card">
           <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
-            Something went wrong
+            Something went wrong.
           </div>
           <div className="wp-secondary" style={{ fontSize: 14 }}>{error.message}</div>
         </div>
@@ -84,33 +103,50 @@ export default function ProfilesPage() {
         <div className="wp-section-head">
           <h2 className="wp-section-title">Known profiles</h2>
           <span className="wp-section-aside">
-            {profiles.length > 0
-              ? `${profiles.length} ${profiles.length === 1 ? 'profile' : 'profiles'}`
+            {sorted.length > 0
+              ? `${sorted.length} ${sorted.length === 1 ? 'profile' : 'profiles'}`
               : 'None found'}
           </span>
         </div>
         <div className="wp-card">
-          {profiles.length === 0 ? (
-            <div className="wp-empty">No profiles found.</div>
+          {sorted.length === 0 ? (
+            <div className="wp-empty">
+              No profiles found. WebPilot reads profiles from Chrome’s Local State file — launch Chrome once and refresh.
+            </div>
           ) : (
-            profiles.map((p) => (
-              <div className="wp-row" key={p.directoryName}>
-                <div className="wp-row-grow">
-                  <div className="wp-row-title">{p.displayName || p.directoryName}</div>
-                  <div className="wp-row-sub">
-                    {p.gaiaEmail || 'No Google account'}
-                    <span className="wp-row-sep">·</span>
-                    <span className="wp-mono">{p.directoryName}</span>
-                  </div>
-                  {p.webPilotStatus === 'needs_setup' ? (
-                    <div className="wp-secondary" style={{ marginTop: 8, fontSize: 13, maxWidth: '52ch' }}>
-                      {NEEDS_SETUP_HINT}
+            sorted.map((p) => {
+              const needsSetup = p.webPilotStatus === 'needs_setup';
+              return (
+                <div className="wp-row" key={p.directoryName} style={{ alignItems: 'flex-start' }}>
+                  <div className="wp-row-grow">
+                    <div className="wp-row-title">{p.displayName || p.directoryName}</div>
+                    <div className="wp-row-sub">
+                      {p.gaiaEmail || 'No Google account'}
+                      <span className="wp-row-sep">·</span>
+                      <span className="wp-mono">{p.directoryName}</span>
                     </div>
-                  ) : null}
+                    {needsSetup ? (
+                      <div className="wp-row-inline-hint">
+                        Open Chrome’s extensions page in this profile and load
+                        the WebPilot extension.
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="wp-row-actions">
+                    <ProfileStatusBadge status={p.webPilotStatus} />
+                    {needsSetup ? (
+                      <button
+                        type="button"
+                        className="wp-btn wp-btn-primary wp-btn-compact"
+                        onClick={() => setSetupTarget(p)}
+                      >
+                        Set up
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <ProfileStatusBadge status={p.webPilotStatus} />
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </section>
@@ -120,18 +156,18 @@ export default function ProfilesPage() {
           <h2 className="wp-section-title">New sandbox profile</h2>
         </div>
         <div className="wp-card">
-          <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 20, maxWidth: '60ch' }}>
-            Launches Chrome with a fresh <code>--profile-directory</code>. After
-            Chrome opens, load the WebPilot unpacked extension via
-            chrome://extensions (Developer mode → Load unpacked).
+          <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-4)', maxWidth: '60ch' }}>
+            Launches Chrome with a fresh profile directory. Hand it to an agent
+            so it never touches your real browser data.
           </p>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 'var(--s-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               className="wp-input"
-              style={{ flex: 1, minWidth: 0 }}
+              style={{ flex: 1, minWidth: 240 }}
               value={newName}
-              placeholder='e.g. "WebPilot Sandbox"'
+              placeholder="e.g. WebPilot Sandbox"
               onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
               disabled={creating}
             />
             <button
@@ -140,22 +176,17 @@ export default function ProfilesPage() {
               onClick={handleCreate}
               disabled={creating}
             >
-              {creating ? 'Launching…' : 'Create sandbox'}
+              {creating ? 'Launching…' : 'Create profile'}
             </button>
           </div>
-          {createMsg ? (
-            <div
-              style={{
-                marginTop: 14,
-                fontSize: 13,
-                color: createMsg.kind === 'err' ? 'var(--wp-danger)' : 'var(--wp-success)',
-              }}
-            >
-              {createMsg.text}
-            </div>
-          ) : null}
         </div>
       </section>
+
+      <ProfileSetupModal
+        open={!!setupTarget}
+        profileName={setupTarget ? (setupTarget.displayName || setupTarget.directoryName) : null}
+        onClose={() => setSetupTarget(null)}
+      />
     </>
   );
 }
