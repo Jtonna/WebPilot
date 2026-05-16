@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GlobeAltIcon, SignalIcon, ServerIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from '../components/PairingPromptCard';
+import ProfileStatusBadge from '../components/ProfileStatusBadge';
 import StatusRow from '../components/StatusRow';
 import Skeleton from '../components/Skeleton';
 import { useToast } from '../components/ToastRegion';
@@ -12,13 +13,17 @@ import { createUiEventsClient } from '../lib/ws';
 /**
  * Dashboard — per UX §Dashboard.
  *
- * Two sections:
- *   1. Action items   — inline pending pairings (PairingPromptCard).
- *   2. System status  — single card, three rows (Chrome / Extension / Server).
+ * Sections:
+ *   1. Action items     — inline pending pairings (PairingPromptCard).
+ *   2. Chrome profiles  — every known profile with status + paired-agent count;
+ *                         each row links to /agents?profile=<dir>.
+ *   3. System status    — single card, three rows (Chrome / Extension / Server).
  *
  * Truly-empty state (no Chrome, no agents, never paired) shows a Welcome card
- * in place of the System status card.
+ * in place of the System status + Chrome profiles sections.
  */
+
+const PROFILE_STATUS_ORDER = { needs_setup: 0, ready: 1, active: 2, unknown: 3 };
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
@@ -129,6 +134,23 @@ export default function HomePage() {
   const networkMode = !!status?.networkMode;
   const pairedAgents = status?.pairedAgents ?? [];
 
+  // Per-profile agent count, keyed by directoryName. pairedAgents carries a
+  // `profileId` field (see paired-keys.listKeys) — when the field is
+  // populated, it matches the profile's directoryName.
+  const agentCountByProfile = pairedAgents.reduce((acc, a) => {
+    const k = a && a.profileId;
+    if (!k) return acc;
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+
+  const sortedProfiles = [...profiles].sort((a, b) => {
+    const ra = PROFILE_STATUS_ORDER[a.webPilotStatus] ?? PROFILE_STATUS_ORDER.unknown;
+    const rb = PROFILE_STATUS_ORDER[b.webPilotStatus] ?? PROFILE_STATUS_ORDER.unknown;
+    if (ra !== rb) return ra - rb;
+    return (a.directoryName || '').localeCompare(b.directoryName || '');
+  });
+
   // Build profile picker options for inline pairing approval.
   const profileOptions = [
     ...profiles.map((p) => ({ value: p.directoryName, label: p.displayName || p.directoryName })),
@@ -236,6 +258,65 @@ export default function HomePage() {
               ))
             )}
           </div>
+        </section>
+      ) : null}
+
+      {!loading && !error && !trulyEmpty ? (
+        <section className="wp-section">
+          <div className="wp-section-head">
+            <h2 className="wp-section-title">Chrome profiles</h2>
+            <span className="wp-section-aside">
+              {sortedProfiles.length > 0
+                ? `${sortedProfiles.length} ${sortedProfiles.length === 1 ? 'profile' : 'profiles'}`
+                : ''}
+            </span>
+          </div>
+          {sortedProfiles.length === 0 ? (
+            <div className="wp-card">
+              <div className="wp-empty" style={{ padding: 0 }}>
+                No Chrome profiles found yet. Launch Chrome once on this machine.
+              </div>
+            </div>
+          ) : (
+            <div className="wp-row-list">
+              {sortedProfiles.map((p) => {
+                const count = agentCountByProfile[p.directoryName] || 0;
+                const countText = `${count} ${count === 1 ? 'agent' : 'agents'}`;
+                const dim = count === 0 && p.webPilotStatus === 'needs_setup';
+                return (
+                  <a
+                    key={p.directoryName}
+                    href={`/ui/agents/?profile=${encodeURIComponent(p.directoryName)}`}
+                    className="wp-row wp-row-link"
+                  >
+                    <div className="wp-row-grow">
+                      <div className="wp-row-title">{p.displayName || p.directoryName}</div>
+                      <div className="wp-row-sub">
+                        <span className="wp-mono">{p.directoryName}</span>
+                      </div>
+                    </div>
+                    <div
+                      className="wp-row-actions"
+                      style={{ gap: 'var(--s-3)' }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: 'var(--wp-font-sans)',
+                          fontSize: 'var(--fs-small)',
+                          color: dim ? 'var(--wp-fg-muted)' : 'var(--wp-fg-secondary)',
+                          fontVariantNumeric: 'tabular-nums',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {countText}
+                      </span>
+                      <ProfileStatusBadge status={p.webPilotStatus} />
+                    </div>
+                  </a>
+                );
+              })}
+            </div>
+          )}
         </section>
       ) : null}
 

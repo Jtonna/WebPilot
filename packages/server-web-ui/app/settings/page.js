@@ -11,13 +11,13 @@ import {
   setNotificationSettings,
   restartServer,
 } from '../../lib/api';
-import { getTheme, setTheme, getPalette, setPalette } from '../../lib/theme';
+import { getTheme, setTheme } from '../../lib/theme';
 
 /**
  * Settings — Apple-style grouped inset cards.
  *
  * Four groups:
- *   1. General        — Theme, Palette, About (version + links).
+ *   1. General        — Theme, About (version + links).
  *   2. Notifications  — System notifications, sound.
  *   3. Network        — LAN toggle.
  *   4. Advanced       — Server paths + Restart server.
@@ -36,7 +36,6 @@ export default function SettingsPage() {
   const [pendingRestart, setPendingRestart] = useState(false);
   const [whatsThisOpen, setWhatsThisOpen] = useState(false);
   const [theme, setThemeState] = useState('system');
-  const [palette, setPaletteState] = useState('apple');
   const [notifOn, setNotifOn] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
   const toast = useToast();
@@ -65,17 +64,11 @@ export default function SettingsPage() {
     refresh();
     const storedTheme = getTheme();
     setThemeState(storedTheme || 'system');
-    setPaletteState(getPalette());
   }, []);
 
   function handleThemeChange(value) {
     setThemeState(value);
     setTheme(value);
-  }
-
-  function handlePaletteChange(value) {
-    setPaletteState(value);
-    setPalette(value);
   }
 
   async function handleNotifChange(on) {
@@ -170,31 +163,6 @@ export default function SettingsPage() {
                   aria-checked={theme === opt.v}
                   className={`wp-segmented-btn${theme === opt.v ? ' is-active' : ''}`}
                   onClick={() => handleThemeChange(opt.v)}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="wp-inset-row">
-            <div className="wp-inset-row-grow">
-              <div className="wp-inset-row-title">Palette</div>
-              <div className="wp-inset-row-sub">The color signature of the UI.</div>
-            </div>
-            <div className="wp-segmented" role="radiogroup" aria-label="Palette">
-              {[
-                { v: 'apple',  label: 'Apple'  },
-                { v: 'pastel', label: 'Pastel' },
-                { v: 'mono',   label: 'Mono'   },
-              ].map((opt) => (
-                <button
-                  key={opt.v}
-                  type="button"
-                  role="radio"
-                  aria-checked={palette === opt.v}
-                  className={`wp-segmented-btn${palette === opt.v ? ' is-active' : ''}`}
-                  onClick={() => handlePaletteChange(opt.v)}
                 >
                   {opt.label}
                 </button>

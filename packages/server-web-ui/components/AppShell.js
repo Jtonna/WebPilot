@@ -8,9 +8,6 @@ import {
   UserCircleIcon as UserCircleOutline,
   CpuChipIcon as CpuChipOutline,
   Cog6ToothIcon as Cog6ToothOutline,
-  ClockIcon as ClockOutline,
-  BoltIcon as BoltOutline,
-  InformationCircleIcon as InformationCircleOutline,
   Bars3Icon,
 } from '@heroicons/react/24/outline';
 import {
@@ -19,16 +16,13 @@ import {
   UserCircleIcon as UserCircleSolid,
   CpuChipIcon as CpuChipSolid,
   Cog6ToothIcon as Cog6ToothSolid,
-  ClockIcon as ClockSolid,
-  BoltIcon as BoltSolid,
-  InformationCircleIcon as InformationCircleSolid,
 } from '@heroicons/react/24/solid';
 import { getStatus } from '../lib/api';
 
 /**
  * AppShell — structural redesign chrome.
  *
- * Sidebar is a three-section source list (Apple Mail / Reminders pattern):
+ * Sidebar is a two-section source list (Apple Mail / Reminders pattern):
  *
  *   WebPilot
  *   ─── (accent hairline)
@@ -39,13 +33,8 @@ import { getStatus } from '../lib/api';
  *     Profiles
  *     Agents
  *
- *   ACTIVITY
- *     Recent pairings
- *     Recent sessions
- *
  *   SYSTEM
  *     Settings
- *     About
  *
  *   ● Connected                     <- footer (existing dot + label)
  *
@@ -85,24 +74,6 @@ const NAV_WORKSPACE = [
   },
 ];
 
-const NAV_ACTIVITY = [
-  {
-    href: '/ui/pairings/?filter=recent',
-    label: 'Recent pairings',
-    // Only highlights when the explicit ?filter=recent route is hit.
-    match: (_p, q) => q === 'recent',
-    IconOutline: ClockOutline,
-    IconSolid: ClockSolid,
-  },
-  {
-    href: '/ui/agents/?filter=recent',
-    label: 'Recent sessions',
-    match: (_p, q) => q === 'recent-sessions',
-    IconOutline: BoltOutline,
-    IconSolid: BoltSolid,
-  },
-];
-
 const NAV_SYSTEM = [
   {
     href: '/ui/settings/',
@@ -110,13 +81,6 @@ const NAV_SYSTEM = [
     match: (p) => p.startsWith('/ui/settings'),
     IconOutline: Cog6ToothOutline,
     IconSolid: Cog6ToothSolid,
-  },
-  {
-    href: '/ui/settings/?section=about',
-    label: 'About',
-    match: (_p, q) => q === 'about',
-    IconOutline: InformationCircleOutline,
-    IconSolid: InformationCircleSolid,
   },
 ];
 
@@ -222,14 +186,6 @@ function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClic
         <SidebarGroup
           items={NAV_WORKSPACE}
           title="Workspace"
-          pathname={pathname}
-          query={query}
-          counts={counts}
-          onItemClick={onNavClick}
-        />
-        <SidebarGroup
-          items={NAV_ACTIVITY}
-          title="Activity"
           pathname={pathname}
           query={query}
           counts={counts}

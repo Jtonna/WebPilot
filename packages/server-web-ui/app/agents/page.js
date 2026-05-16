@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
 import ConfirmModal from '../../components/ConfirmModal';
-import PairAgentModal from '../../components/PairAgentModal';
 import RevealSection from '../../components/RevealSection';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
@@ -11,22 +11,74 @@ import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../
 import { createUiEventsClient } from '../../lib/ws';
 
 /**
- * Agents — per UX §Agents.
+ * Agents — pairing-first layout.
  *
- * Sections (order depends on whether any agents are paired):
- *   - Pair a new agent     — primary CTA → PairAgentModal.
- *                            Promoted to top when list empty; demoted below
- *                            when list has items.
- *   - Paired agents        — AgentRow list.
- *   - Manual setup (advanced) — RevealSection, collapsed by default. Holds
- *                            the URL-only .mcp.json + agent prompt + steps.
+ * Sections (top → bottom):
+ *   1. Pair a new agent  — always-visible hero. Big copy-card containing the
+ *                          AI-pairing prompt. One-click copy → paste into AI.
+ *   2. Paired agents     — list. Filtered by ?profile=<directoryName> when
+ *                          set (with a small "Clear" banner above).
+ *   3. Manual setup      — collapsed RevealSection with the .mcp.json snippet
+ *                          for the 1% who want to paste it themselves.
+ *
+ * The previous PairAgentModal walkthrough has been retired — the copy-text
+ * is now primary, always-visible content.
  */
+
+// The AI-pairing prompt the user copies and pastes into their AI agent.
+// Mirrors the previous PairAgentModal step-2 text verbatim so behavior on
+// the agent side is unchanged.
+function buildAgentPrompt() {
+  return (
+    'You have access to a WebPilot MCP server but no API key yet. ' +
+    'Call request_pairing with a memorable agent_name (e.g. the project ' +
+    'or your client name). The tool returns a pairing_id and instructions; ' +
+    'follow them — surface the approval URL to me, wait for me to approve, ' +
+    'then call check_pairing_status with the pairing_id to retrieve your ' +
+    'api_key. Once you have the key, include it as the api_key parameter on ' +
+    'each tool call, or tell me to paste it into .mcp.json under ' +
+    'headers."X-API-Key" and restart this client.'
+  );
+}
+
 export default function AgentsPage() {
+  // useSearchParams() requires a Suspense boundary for static export. The
+  // page body lives inside <AgentsPageInner>.
+  return (
+    <Suspense fallback={<AgentsSkeleton />}>
+      <AgentsPageInner />
+    </Suspense>
+  );
+}
+
+function AgentsSkeleton() {
+  return (
+    <>
+      <header className="wp-page-head">
+        <h1 className="wp-page-title">Agents</h1>
+      </header>
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <h2 className="wp-section-title">Paired agents</h2>
+        </div>
+        <div className="wp-inset-group">
+          <SkeletonRow titleWidth="40%" subWidth="50%" showTrailing />
+          <SkeletonRow titleWidth="48%" subWidth="45%" showTrailing />
+        </div>
+      </section>
+    </>
+  );
+}
+
+function AgentsPageInner() {
+  const searchParams = useSearchParams();
+  const profileFilter = searchParams.get('profile') || '';
+
   const [agents, setAgents]   = useState([]);
+  const [profiles, setProfiles] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [port, setPort]       = useState(null);
   const [error, setError]     = useState(null);
-  const [pairOpen, setPairOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
@@ -43,8 +95,10 @@ export default function AgentsPage() {
         name: a.agentName,
         createdAt: a.createdAt,
         lastActive: a.lastAccessed,
+        profileId: a.profileId || null,
       }));
       setAgents(normalized);
+      setProfiles(data.profiles || []);
       setPort(data.port || null);
       setError(null);
     } catch (err) {
@@ -92,7 +146,19 @@ export default function AgentsPage() {
     }
   }
 
-  const empty = !agentsLoading && agents.length === 0;
+  // Resolve the filter's display name from the loaded profile list. Fall back
+  // to the raw directoryName when the profile isn't (yet) known.
+  const filterDisplayName = useMemo(() => {
+    if (!profileFilter) return '';
+    const match = profiles.find((p) => p.directoryName === profileFilter);
+    return (match && (match.displayName || match.directoryName)) || profileFilter;
+  }, [profileFilter, profiles]);
+
+  const filteredAgents = profileFilter
+    ? agents.filter((a) => a.profileId === profileFilter)
+    : agents;
+
+  const agentPrompt = buildAgentPrompt();
 
   return (
     <>
@@ -113,6 +179,15 @@ export default function AgentsPage() {
         </div>
       ) : null}
 
+      {/* Hero — always visible, primary CTA. */}
+      <section className="wp-section">
+        <div className="wp-section-head">
+          <h2 className="wp-section-title">Pair a new agent</h2>
+        </div>
+        <PairingPromptHero prompt={agentPrompt} />
+      </section>
+
+      {/* Paired agents */}
       {agentsLoading ? (
         <section className="wp-section">
           <div className="wp-section-head">
@@ -123,69 +198,51 @@ export default function AgentsPage() {
             <SkeletonRow titleWidth="48%" subWidth="45%" showTrailing />
           </div>
         </section>
-      ) : null}
-
-      {empty ? (
-        <section className="wp-section">
-          <div className="wp-section-head">
-            <h2 className="wp-section-title">Pair a new agent</h2>
-          </div>
-          <div className="wp-card wp-card-lg">
-            <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-4)', maxWidth: '60ch' }}>
-              No agents paired yet. Pair your first agent to get started.
-            </p>
-            <button
-              type="button"
-              className="wp-btn wp-btn-primary wp-btn-cta"
-              onClick={() => setPairOpen(true)}
-            >
-              Pair a new agent
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {!empty && !agentsLoading ? (
+      ) : (
         <section className="wp-section">
           <div className="wp-section-head">
             <h2 className="wp-section-title">Paired agents</h2>
             <span className="wp-section-aside">
-              {agents.length} {agents.length === 1 ? 'agent' : 'agents'}
+              {filteredAgents.length} {filteredAgents.length === 1 ? 'agent' : 'agents'}
             </span>
           </div>
-          <div className="wp-row-list">
-            {agents.map((a) => (
-              <AgentRow
-                key={a.key}
-                agent={a}
-                onRename={handleRename}
-                onRevoke={handleRevoke}
-                port={port}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {!empty && !agentsLoading ? (
-        <section className="wp-section">
-          <div className="wp-section-head">
-            <h2 className="wp-section-title">Pair a new agent</h2>
-          </div>
-          <div className="wp-card">
-            <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-3)', maxWidth: '60ch' }}>
-              Add another client. Same three-step walkthrough.
-            </p>
-            <button
-              type="button"
-              className="wp-btn wp-btn-primary"
-              onClick={() => setPairOpen(true)}
+          {profileFilter ? (
+            <div
+              className="wp-secondary"
+              style={{
+                padding: '0 var(--s-4)',
+                fontSize: 'var(--fs-small)',
+                lineHeight: 1.6,
+              }}
             >
-              Pair a new agent
-            </button>
-          </div>
+              Showing agents on profile <strong style={{ color: 'var(--wp-fg)' }}>{filterDisplayName}</strong>
+              {' · '}
+              <a href="/ui/agents/" className="wp-link">Clear</a>
+            </div>
+          ) : null}
+          {filteredAgents.length === 0 ? (
+            <div className="wp-card">
+              <div className="wp-empty" style={{ padding: 0 }}>
+                {profileFilter
+                  ? `No agents paired to ${filterDisplayName} yet.`
+                  : 'No agents paired yet. Copy the prompt above into your AI agent to get started.'}
+              </div>
+            </div>
+          ) : (
+            <div className="wp-row-list">
+              {filteredAgents.map((a) => (
+                <AgentRow
+                  key={a.key}
+                  agent={a}
+                  onRename={handleRename}
+                  onRevoke={handleRevoke}
+                  port={port}
+                />
+              ))}
+            </div>
+          )}
         </section>
-      ) : null}
+      )}
 
       <RevealSection className="wp-section">
         <div className="wp-section-head">
@@ -193,13 +250,6 @@ export default function AgentsPage() {
         </div>
         <ManualSetupCard port={port} />
       </RevealSection>
-
-      <PairAgentModal
-        open={pairOpen}
-        port={port}
-        onClose={() => setPairOpen(false)}
-        onPaired={() => { refresh(); }}
-      />
 
       <ConfirmModal
         open={!!revokeTarget}
@@ -215,6 +265,46 @@ export default function AgentsPage() {
         onCancel={() => setRevokeTarget(null)}
       />
     </>
+  );
+}
+
+/**
+ * The "primary CTA" card. Big heading, one-line explanation, then the copy
+ * block with an overlay Copy button — the same pattern ManualSetupCard uses.
+ */
+function PairingPromptHero({ prompt }) {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (_e) { /* ignore */ }
+  }
+  return (
+    <div className="wp-card wp-card-lg">
+      <p
+        style={{
+          margin: 0,
+          marginBottom: 'var(--s-4)',
+          color: 'var(--wp-fg-secondary)',
+          maxWidth: '62ch',
+        }}
+      >
+        Copy this prompt and paste it into your AI agent. It’ll pair itself
+        with WebPilot — you just approve the request when it appears.
+      </p>
+      <div className="wp-code-wrap">
+        <pre className="wp-code" style={{ whiteSpace: 'pre-wrap' }}>{prompt}</pre>
+        <button
+          type="button"
+          className="wp-btn wp-btn-primary wp-btn-compact wp-code-copy"
+          onClick={handleCopy}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
   );
 }
 

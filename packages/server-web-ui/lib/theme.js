@@ -1,30 +1,21 @@
 /**
- * Theme + palette utilities for the WebPilot web UI.
+ * Theme utilities for the WebPilot web UI.
  *
- * Two independent axes:
+ *   Theme : 'light' | 'dark' | 'system'
+ *           Mirrored to localStorage.webpilotTheme and <html data-theme="…">.
+ *           "System" means: no localStorage key, no data-theme attribute —
+ *           prefers-color-scheme decides via the CSS media block.
  *
- *   Theme    : 'light' | 'dark' | 'system'
- *              Mirrored to localStorage.webpilotTheme and <html data-theme="…">.
- *              "System" means: no localStorage key, no data-theme attribute —
- *              prefers-color-scheme decides via the CSS media block.
+ * The single warm-monochrome palette is applied unconditionally on :root, so
+ * no palette toggle is exposed.
  *
- *   Palette  : 'apple' | 'pastel' | 'mono'
- *              Mirrored to localStorage.webpilotPalette and
- *              <html data-palette="…">. Default is "apple".
- *              Unlike theme, there is no "system" — the user always picks one,
- *              with "apple" implied when storage is empty.
- *
- * An inline script in app/layout.js applies both before the body paints so we
- * never flash the wrong palette/theme on reload.
+ * An inline script in app/layout.js applies the theme before the body paints
+ * so we never flash the wrong theme on reload.
  *
  * All entry points are SSR-safe.
  */
 
 const THEME_STORAGE_KEY = 'webpilotTheme';
-const PALETTE_STORAGE_KEY = 'webpilotPalette';
-
-const VALID_PALETTES = ['apple', 'pastel', 'mono'];
-const DEFAULT_PALETTE = 'apple';
 
 function hasWindow() {
   return typeof window !== 'undefined';
@@ -101,41 +92,4 @@ export function getEffectiveTheme() {
   } catch (_e) {
     return 'light';
   }
-}
-
-/* ----------------------------------------------------------------------- */
-/* Palette                                                                 */
-/* ----------------------------------------------------------------------- */
-
-/**
- * Read the persisted palette choice.
- * @returns {'apple' | 'pastel' | 'mono'} — defaults to 'apple' when unset.
- */
-export function getPalette() {
-  if (!hasStorage()) return DEFAULT_PALETTE;
-  try {
-    const v = window.localStorage.getItem(PALETTE_STORAGE_KEY);
-    if (VALID_PALETTES.indexOf(v) !== -1) return v;
-    return DEFAULT_PALETTE;
-  } catch (_e) {
-    return DEFAULT_PALETTE;
-  }
-}
-
-/**
- * Persist the palette choice and apply it to the document root.
- * @param {'apple' | 'pastel' | 'mono'} value
- */
-export function setPalette(value) {
-  if (!hasWindow()) return;
-  if (VALID_PALETTES.indexOf(value) === -1) return;
-  if (hasStorage()) {
-    try {
-      window.localStorage.setItem(PALETTE_STORAGE_KEY, value);
-    } catch (_e) {
-      /* ignore */
-    }
-  }
-  const root = document.documentElement;
-  if (root && root.dataset) root.dataset.palette = value;
 }
