@@ -19,6 +19,7 @@
     "default.js",
     "discord/manifest.json",
     "discord/discord.js",
+    "discord/workflows.js",
     "threads/manifest.json",
     "threads/router.js",
     "threads/home.js",

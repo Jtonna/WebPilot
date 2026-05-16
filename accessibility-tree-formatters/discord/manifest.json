@@ -8,5 +8,16 @@
   "errorHandling": {
     "fallbackToRawTree": true
   },
-  "workflows": []
+  "workflows": [
+    {
+      "name": "send_message",
+      "description": "Compose a message in the active Discord channel and send it.",
+      "parameters": {
+        "text": {
+          "type": "string",
+          "description": "The message text to send."
+        }
+      }
+    }
+  ]
 }
