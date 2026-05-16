@@ -1,16 +1,22 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import StatusCard from '../components/StatusCard';
+import PairingPromptCard from '../components/PairingPromptCard';
 import ProfileStatusBadge, { NEEDS_SETUP_HINT } from '../components/ProfileStatusBadge';
 import RevealSection from '../components/RevealSection';
-import { createSequencedFetcher, getStatus } from '../lib/api';
+import { createSequencedFetcher, getStatus, approvePairing, denyPairing } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  // Tracks freshly-arrived pairing IDs so PairingPromptCard can play its
+  // slide-in / accent pulse animation once. Cleared after the animation
+  // duration so subsequent re-renders don't replay.
+  const [arrivingIds, setArrivingIds] = useState(() => new Set());
+  const seenIdsRef = useRef(new Set());
   // Guards against stale REST refresh responses arriving AFTER a newer
   // WS-event-triggered refresh has already updated state. See QOL Wave 6 H2.
   const fetcherRef = useRef(null);
@@ -18,10 +24,34 @@ export default function HomePage() {
     fetcherRef.current = createSequencedFetcher();
   }
 
+  function markArrivals(newList) {
+    const nextSeen = new Set();
+    const arrivals = new Set();
+    for (const p of newList) {
+      if (!p || !p.pairingId) continue;
+      nextSeen.add(p.pairingId);
+      if (!seenIdsRef.current.has(p.pairingId)) {
+        arrivals.add(p.pairingId);
+      }
+    }
+    seenIdsRef.current = nextSeen;
+    if (arrivals.size > 0) {
+      setArrivingIds(arrivals);
+      setTimeout(() => {
+        setArrivingIds((curr) => {
+          const next = new Set(curr);
+          for (const id of arrivals) next.delete(id);
+          return next;
+        });
+      }, 1500);
+    }
+  }
+
   async function refresh() {
     try {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
+      markArrivals(data.pendingPairings || []);
       setStatus(data);
       setError(null);
     } catch (err) {
@@ -55,15 +85,49 @@ export default function HomePage() {
     };
   }, []);
 
-  const pendingPairings = status?.pendingPairings?.length ?? 0;
+  async function handleApprove(pairing, selectedProfile, newProfileName) {
+    setBusy(true);
+    try {
+      await approvePairing(pairing.pairingId, selectedProfile, newProfileName);
+      await refresh();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeny(pairing) {
+    setBusy(true);
+    try {
+      await denyPairing(pairing.pairingId);
+      await refresh();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const pendingPairings = status?.pendingPairings ?? [];
   const chromeRunning = status?.chrome?.running;
   const chromePid = status?.chrome?.browserPid;
   const chromeHasFlag = status?.chrome?.hasFlag;
   const chromeUserDataDir = status?.chrome?.userDataDir;
   const profiles = status?.profiles ?? [];
   const activeProfiles = profiles.filter((p) => p.webPilotStatus === 'active');
-  const extensionsConnected = activeProfiles.length;
   const pairedAgentCount = status?.pairedAgents?.length ?? 0;
+
+  // Profile dropdown options for inline pairing approval — same shape as
+  // /pairings page. The "+ New sandbox profile" sentinel lets the user create
+  // a fresh profile during approval.
+  const profileOptions = [
+    ...profiles.map((p) => ({ value: p.directoryName, label: p.displayName || p.directoryName })),
+    { value: '__new__', label: '+ New sandbox profile' },
+  ];
+  if (profileOptions.length === 1) {
+    profileOptions.unshift({ value: 'Default', label: 'Default' });
+  }
 
   return (
     <>
@@ -92,35 +156,30 @@ export default function HomePage() {
 
       {!loading ? (
         <section className="wp-section">
-          <div className="wp-instruments">
-            <StatusCard
-              title="Server"
-              value="Online"
-              state="ok"
-              detail={status?.networkMode ? 'Bound to 0.0.0.0 · LAN' : 'Bound to 127.0.0.1'}
-            />
-            <StatusCard
-              title="Chrome"
-              value={chromeRunning === undefined ? 'Unknown' : chromeRunning ? 'Running' : 'Idle'}
-              state={chromeRunning === undefined ? 'unknown' : chromeRunning ? 'ok' : 'warn'}
-              detail={chromeRunning
-                ? (chromeHasFlag ? 'Debug flag enabled' : 'Debug flag missing')
-                : 'Not detected'}
-            />
-            <StatusCard
-              title="Extensions"
-              value={extensionsConnected}
-              state={extensionsConnected > 0 ? 'ok' : 'warn'}
-              detail={extensionsConnected > 0
-                ? `${extensionsConnected} profile${extensionsConnected === 1 ? '' : 's'} connected`
-                : 'No profiles connected'}
-            />
-            <StatusCard
-              title="Pairings"
-              value={pendingPairings}
-              state={pendingPairings > 0 ? 'accent' : 'ok'}
-              detail={pendingPairings > 0 ? 'Awaiting approval' : 'Nothing pending'}
-            />
+          <div className="wp-section-head">
+            <h2 className="wp-section-title">Action items</h2>
+            <span className="wp-section-aside">
+              {pendingPairings.length > 0
+                ? `${pendingPairings.length} pending`
+                : 'All clear'}
+            </span>
+          </div>
+          <div className="wp-card">
+            {pendingPairings.length === 0 ? (
+              <div className="wp-empty">No action items waiting.</div>
+            ) : (
+              pendingPairings.map((p) => (
+                <PairingPromptCard
+                  key={p.pairingId}
+                  pairing={p}
+                  profileOptions={profileOptions}
+                  onApprove={handleApprove}
+                  onDeny={handleDeny}
+                  disabled={busy}
+                  justArrived={arrivingIds.has(p.pairingId)}
+                />
+              ))
+            )}
           </div>
         </section>
       ) : null}
@@ -211,31 +270,6 @@ export default function HomePage() {
                 <ProfileStatusBadge status={p.webPilotStatus} />
               </div>
             ))}
-          </div>
-        </RevealSection>
-      ) : null}
-
-      {!loading ? (
-        <RevealSection className="wp-section">
-          <div className="wp-section-head">
-            <h2 className="wp-section-title">Pairings</h2>
-            <span className="wp-section-aside">
-              {pendingPairings > 0 ? `${pendingPairings} pending` : 'None pending'}
-            </span>
-          </div>
-          <div className="wp-card">
-            {pendingPairings === 0 ? (
-              <div className="wp-empty">Nothing waiting for approval.</div>
-            ) : (
-              <>
-                <div className="wp-secondary" style={{ marginBottom: 16 }}>
-                  {pendingPairings} agent{pendingPairings === 1 ? ' is' : 's are'} awaiting approval.
-                </div>
-                <a href="/ui/pairings/" className="wp-btn wp-btn-primary" style={{ textDecoration: 'none' }}>
-                  Review pairings
-                </a>
-              </>
-            )}
           </div>
         </RevealSection>
       ) : null}
