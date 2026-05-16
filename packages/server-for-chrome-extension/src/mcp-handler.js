@@ -367,16 +367,15 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'request_pairing',
-      description: 'Initiate pairing. **Asynchronous flow**: returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', \'denied\', or \'expired\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back, **unless** the existing pending entry has expired (pending pairings expire after 24 hours of inactivity), in which case a fresh `pairing_id` is minted. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm.',
+      description: 'Initiate pairing. **Skip this tool if you already have a valid API key** (sent via the X-API-Key header or the api_key argument) — calling it in that case will short-circuit and tell you so. Just call browser tools directly; the server resolves your bound profile from the key. **Asynchronous flow** (only used by un-paired callers): returns immediately with a `pairing_id` and current `status` (\'pending\', \'approved\', \'denied\', or \'expired\'). If \'pending\', the user has not yet approved — tell the human to approve in the WebPilot UI (a system notification will fire pointing at the UI), then on a later turn call `check_pairing_status` with the `pairing_id` to get your `api_key`. Idempotent: if you call this twice with the same `agent_name`, you get the same `pairing_id` back, **unless** the existing pending entry has expired (pending pairings expire after 24 hours of inactivity), in which case a fresh `pairing_id` is minted. Do NOT keep calling browser tools while waiting — surface the approval URL to the human, stop, and resume after they confirm. `agent_name` is optional; if omitted, the server uses "Unknown Agent" as a placeholder the human can rename after approval.',
       inputSchema: {
         type: 'object',
         properties: {
           agent_name: {
             type: 'string',
-            description: 'A human-readable name to identify this agent (e.g. "Claude Code", "Cursor", "My Script")'
+            description: 'Optional human-readable name to identify this agent in the approval UI (e.g. "Claude Code", "Cursor", "My Script"). Not required — omit if you do not have one.'
           }
-        },
-        required: ['agent_name']
+        }
       }
     },
     {
@@ -660,6 +659,45 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     if (name === 'request_pairing') {
       const agentName = params.arguments?.agent_name || 'Unknown Agent';
       console.log(`[pairing] request_pairing tool called for agent: "${agentName}"`);
+
+      // Short-circuit: if the caller already presents a valid API key, they
+      // are already paired — no need to mint a new pending entry. Return the
+      // existing identity and tell them to just call tools directly. This
+      // matters most for Claude Code subagents (and similar) that inherit
+      // their parent's .mcp.json (so they carry the parent's X-API-Key) but
+      // are prompted to "set up WebPilot first" and reflexively call this
+      // tool with a *new* agent_name, triggering an unnecessary approval
+      // round-trip for the human. Regular tool calls don't look at
+      // agent_name at all — auth + profile routing are keyed by the api_key
+      // alone (see auth gate in tools/call above and resolveTargetProfile).
+      if (apiKey) {
+        const existing = pairedKeys.validateKey(apiKey);
+        if (existing) {
+          console.log(
+            `[pairing] request_pairing short-circuit: caller already paired ` +
+            `as "${existing.agentName}" (profileId=${existing.profileId}). ` +
+            `Returning existing identity without creating a new pairing.`
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  `You already have a valid API key — no need to pair again.\n\n` +
+                  `Paired as: "${existing.agentName}"\n` +
+                  `Bound to profile: ${existing.profileId}\n` +
+                  `status: approved\n\n` +
+                  `Just call browser tools directly with your existing key. ` +
+                  `The server resolves your bound profile from the api_key automatically; ` +
+                  `agent_name is not needed on tool calls and only matters during initial pairing.\n\n` +
+                  `If you intended to register as a *separate* agent identity ` +
+                  `(e.g. so the human can see this subagent distinctly in the UI), ` +
+                  `ask the human to revoke or rename the current key first, then retry.`,
+              },
+            ],
+          };
+        }
+      }
 
       const result = pairedKeys.requestPairing(agentName);
       console.log(
