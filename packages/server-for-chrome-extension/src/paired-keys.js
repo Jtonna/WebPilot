@@ -139,6 +139,26 @@ function renameKey(apiKey, newName) {
 }
 
 /**
+ * Updates the profileId binding for the given apiKey. Used by the Web UI to
+ * re-bind an existing agent's tool-call routing to a different Chrome
+ * profile. Tool-call routing is a per-call lookup (see
+ * `mcp-handler.resolveTargetProfile`) so a field flip is sufficient — no
+ * sockets need to be torn down, no extension reload is required.
+ *
+ * @param {string} apiKey
+ * @param {string} profileId Chrome profile directoryName to bind to.
+ * @returns {boolean} true if the entry was found and updated, false otherwise.
+ */
+function updateProfileBinding(apiKey, profileId) {
+  const keys = loadKeys();
+  const entry = keys.find((e) => e.key === apiKey);
+  if (!entry) return false;
+  entry.profileId = profileId || null;
+  saveKeys(keys);
+  return true;
+}
+
+/**
  * Updates the lastAccessed timestamp for the given apiKey.
  *
  * @param {string} apiKey
@@ -468,6 +488,7 @@ module.exports = {
   addKey,
   validateKey,
   renameKey,
+  updateProfileBinding,
   touchKey,
   revokeKey,
   listKeys,

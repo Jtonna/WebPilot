@@ -3,10 +3,17 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
+import BackLink from '../../components/BackLink';
 import ConfirmModal from '../../components/ConfirmModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
-import { createSequencedFetcher, getStatus, renameAgent, revokeAgent } from '../../lib/api';
+import {
+  createSequencedFetcher,
+  getStatus,
+  renameAgent,
+  revokeAgent,
+  updateAgentProfile,
+} from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
 /**
@@ -129,6 +136,27 @@ function AgentsPageInner() {
     }
   }
 
+  async function handleRebind(agent, nextProfileId) {
+    // Optimistic UI: flip the row's profileId immediately so the user sees
+    // the change without waiting for the round-trip. The server broadcast
+    // (agents_changed) will trigger a refresh that confirms or corrects it.
+    const prev = agents;
+    setAgents((list) => list.map((a) => (
+      a.key === agent.key ? { ...a, profileId: nextProfileId } : a
+    )));
+    try {
+      await updateAgentProfile(agent.key, nextProfileId);
+      const match = profiles.find((p) => p.directoryName === nextProfileId);
+      const label = (match && (match.displayName || match.directoryName)) || nextProfileId;
+      toast.success(`Bound ${agent.name || 'agent'} to ${label}.`);
+      await refresh();
+    } catch (e) {
+      // Roll back the optimistic update on failure.
+      setAgents(prev);
+      toast.error(e.message || 'Couldn’t change profile.');
+    }
+  }
+
   function handleRevoke(agent) { setRevokeTarget(agent); }
 
   async function confirmRevoke() {
@@ -160,6 +188,7 @@ function AgentsPageInner() {
 
   return (
     <>
+      {profileFilter ? <BackLink href="/ui/profiles/" label="Profiles" /> : null}
       <header className="wp-page-head">
         <h1 className="wp-page-title">Agents</h1>
         <p className="wp-page-sub">
@@ -232,8 +261,10 @@ function AgentsPageInner() {
                 <AgentRow
                   key={a.key}
                   agent={a}
+                  profiles={profiles}
                   onRename={handleRename}
                   onRevoke={handleRevoke}
+                  onRebind={handleRebind}
                   port={port}
                 />
               ))}

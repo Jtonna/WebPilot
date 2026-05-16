@@ -26,10 +26,21 @@ function buildMcpConfigSnippet({ port, apiKey }) {
   return JSON.stringify(config, null, 2);
 }
 
-export default function AgentRow({ agent, onRename, onRevoke, port }) {
+export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onRebind, port }) {
   const [editing, setEditing] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
   const [name, setName] = useState(agent.name || '');
   const [copyState, setCopyState] = useState('idle');
+
+  // Resolve the bound profile's display name from the profiles list. Falls
+  // back to the raw directoryName so a stale or unknown binding is still
+  // surfaced rather than silently rendered as blank.
+  const boundProfile = agent.profileId
+    ? profiles.find((p) => p.directoryName === agent.profileId)
+    : null;
+  const boundLabel = boundProfile
+    ? (boundProfile.displayName || boundProfile.directoryName)
+    : (agent.profileId || null);
 
   const commitRename = () => {
     setEditing(false);
@@ -84,6 +95,62 @@ export default function AgentRow({ agent, onRename, onRevoke, port }) {
               <span className="wp-mono" title={agent.key}>{shortKey(agent.key)}</span>
               <span className="wp-row-sep">·</span>
               <span>Last active {formatRelativeTime(agent.lastActive)}</span>
+            </div>
+            <div className="wp-row-sub" style={{ marginTop: 2 }}>
+              {editingProfile ? (
+                <select
+                  className="wp-input wp-input-compact"
+                  defaultValue={agent.profileId || ''}
+                  autoFocus
+                  disabled={!onRebind}
+                  onBlur={() => setEditingProfile(false)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setEditingProfile(false);
+                    if (!next || next === agent.profileId) return;
+                    if (onRebind) onRebind(agent, next);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setEditingProfile(false);
+                  }}
+                >
+                  {(!agent.profileId || !profiles.some((p) => p.directoryName === agent.profileId)) && agent.profileId ? (
+                    <option value={agent.profileId}>{agent.profileId} (current)</option>
+                  ) : null}
+                  {profiles.map((p) => (
+                    <option key={p.directoryName} value={p.directoryName}>
+                      {p.displayName || p.directoryName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  className="wp-row-rebind"
+                  onClick={() => onRebind && setEditingProfile(true)}
+                  disabled={!onRebind || profiles.length === 0}
+                  title={onRebind ? 'Change profile' : 'Binding shown for reference'}
+                  aria-label="Change profile"
+                >
+                  <span>
+                    Bound to{' '}
+                    <strong style={{ color: 'var(--wp-fg)', fontWeight: 500 }}>
+                      {boundLabel || 'no profile'}
+                    </strong>
+                  </span>
+                  {onRebind && profiles.length > 0 ? (
+                    <PencilSquareIcon
+                      style={{
+                        width: 14,
+                        height: 14,
+                        marginLeft: 6,
+                        verticalAlign: 'text-bottom',
+                        opacity: 0.6,
+                      }}
+                    />
+                  ) : null}
+                </button>
+              )}
             </div>
           </>
         )}

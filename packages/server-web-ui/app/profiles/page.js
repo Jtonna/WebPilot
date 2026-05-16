@@ -21,6 +21,7 @@ const STATUS_ORDER = { active: 0, ready: 1, needs_setup: 2, unknown: 3 };
 
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
+  const [agents, setAgents]     = useState([]);
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [extensionPath, setExtensionPath] = useState(null);
   const [error, setError]       = useState(null);
@@ -38,6 +39,7 @@ export default function ProfilesPage() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
       setProfiles(data.profiles || []);
+      setAgents(data.pairedAgents || []);
       setExtensionPath((data.paths && data.paths.extensionPath) || null);
       setError(null);
     } catch (err) {
@@ -53,9 +55,13 @@ export default function ProfilesPage() {
     client.connect();
     const u1 = client.subscribe('extension_connected', () => refresh());
     const u2 = client.subscribe('extension_disconnected', () => refresh());
+    const u3 = client.subscribe('agents_changed', () => refresh());
+    const u4 = client.subscribe('pairing_approved', () => refresh());
     return () => {
       u1 && u1();
       u2 && u2();
+      u3 && u3();
+      u4 && u4();
       client.disconnect();
     };
   }, []);
@@ -132,6 +138,7 @@ export default function ProfilesPage() {
           <div className="wp-row-list">
             {sorted.map((p) => {
               const needsSetup = p.webPilotStatus === 'needs_setup';
+              const agentCount = agents.filter((a) => a.profileId === p.directoryName).length;
               return (
                 <div className="wp-row" key={p.directoryName} style={{ alignItems: 'flex-start' }}>
                   <div className="wp-row-grow">
@@ -149,6 +156,21 @@ export default function ProfilesPage() {
                     ) : null}
                   </div>
                   <div className="wp-row-actions">
+                    {/* Agent count is the source of truth for which agents
+                        this profile is hosting — clicking it deep-links to
+                        the filtered Agents view. Zero counts de-emphasize. */}
+                    <a
+                      href={`/ui/agents/?profile=${encodeURIComponent(p.directoryName)}`}
+                      className="wp-link"
+                      style={{
+                        fontSize: 'var(--fs-small)',
+                        color: agentCount > 0 ? 'var(--wp-fg)' : 'var(--wp-fg-secondary)',
+                        fontWeight: agentCount > 0 ? 500 : 400,
+                      }}
+                      title={`View ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} bound to this profile`}
+                    >
+                      {agentCount} {agentCount === 1 ? 'agent' : 'agents'}
+                    </a>
                     <ProfileStatusBadge status={p.webPilotStatus} />
                     {needsSetup ? (
                       <button

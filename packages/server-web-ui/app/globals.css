@@ -462,13 +462,16 @@ hr {
   color: var(--wp-fg);
 }
 
-/* Active: neutral elevated fill, primary-fg text, 2px accent left edge.
-   The left edge is a pseudo-element so it sits flush at the row's left side
-   regardless of padding. */
+/* Active: neutral elevated fill, primary-fg text, 3px neutral-fg left edge,
+   600-weight label. Three value-only strengtheners stacked — no hue change
+   per docs/design/research/SIMPLE.md ("warm-monochrome restraint, dot-only
+   color, hairline-everything"). Solid Heroicons variant comes from JS.
+   The left edge is a pseudo-element so it sits flush at the row's left
+   side regardless of padding. */
 .wp-nav-item.is-active {
   background-color: var(--wp-bg-elevated);
   color: var(--wp-fg);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .wp-nav-item.is-active::before {
@@ -477,8 +480,8 @@ hr {
   left: 0;
   top: 4px;
   bottom: 4px;
-  width: 2px;
-  background: var(--wp-accent);
+  width: 3px;
+  background: var(--wp-fg);
   border-radius: 2px;
 }
 
@@ -1519,6 +1522,51 @@ hr {
 }
 
 .wp-link:hover { color: var(--wp-accent-hover); }
+
+/* Contextual back-link rendered above the page head on filtered/deep-linked
+   pages (e.g. /agents?profile=). Secondary-fg at rest, primary-fg on hover. */
+.wp-back-link {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: var(--s-3);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  text-decoration: none;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-back-link:hover { color: var(--wp-fg); }
+
+/* Quiet rebind affordance on agent rows. Reads as static text at rest; the
+   small pencil icon next to it hints at edit-ability. Clicking flips into a
+   <select> inline. */
+.wp-row-rebind {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-row-rebind:hover:not(:disabled) {
+  color: var(--wp-fg);
+}
+
+.wp-row-rebind:disabled {
+  cursor: default;
+}
+
+.wp-input-compact {
+  height: 28px;
+  padding: 0 var(--s-2);
+  font-size: var(--fs-small);
+}
 
 .wp-row-actions {
   display: inline-flex;

@@ -90,6 +90,16 @@ export function revokeAgent(key) {
   });
 }
 
+// Re-bind an existing agent to a different Chrome profile. The server flips
+// the entry's profileId field; tool-call routing picks up the change on the
+// next call (no socket teardown — see PATCH /api/ui/agents/:key in server.js).
+export function updateAgentProfile(key, profileId) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: { profileId },
+  });
+}
+
 export function setNetworkMode(enabled) {
   return apiFetch('/api/ui/settings/network-mode', {
     method: 'POST',

@@ -320,7 +320,7 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
 }
 
 function mountWebUiRoutes(app, deps) {
-  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port } = deps;
+  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port, broadcastUiEvent } = deps;
   // Web UI is localhost-only — no API key involved. See makeUiAuth().
   const auth = makeUiAuth();
 
@@ -534,6 +534,62 @@ function mountWebUiRoutes(app, deps) {
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
       console.error('[ui-api] rename failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PATCH /api/ui/agents/:key
+  //
+  // Re-bind an existing agent (API key) to a different Chrome profile. Tool
+  // calls from this agent will route to the new profile on the next call —
+  // no socket teardown needed because routing is a per-call lookup of the
+  // agent's profileId in mcp-handler.resolveTargetProfile.
+  //
+  // Body: { profileId: "<directoryName>" } — must match a known profile.
+  app.patch('/api/ui/agents/:key', auth, express.json(), (req, res) => {
+    try {
+      const key = req.params.key;
+      const body = req.body || {};
+      const profileIdRaw = body.profileId;
+      console.log(`[ui-api] PATCH agent ${key.slice(0, 8)}... profileId=${JSON.stringify(profileIdRaw)}`);
+
+      if (typeof profileIdRaw !== 'string' || profileIdRaw.length === 0) {
+        return res.status(400).json({
+          error: 'profileId required',
+          reason: 'profileId must be a non-empty string',
+        });
+      }
+
+      // Validate against known profiles from Local State — same source the
+      // approve handler uses for verification.
+      let known = [];
+      try {
+        known = readProfiles(chromeManager.userDataDir);
+      } catch (e) {
+        console.log(`[ui-api] PATCH agent: readProfiles failed: ${e.message}`);
+      }
+      const match = known.find((p) => p.directoryName === profileIdRaw);
+      if (!match) {
+        return res.status(400).json({
+          error: 'unknown profileId',
+          reason: `profileId "${profileIdRaw}" did not match a known Chrome profile`,
+        });
+      }
+
+      const ok = pairedKeys.updateProfileBinding(key, match.directoryName);
+      if (!ok) return res.status(404).json({ error: 'agent not found' });
+
+      const updated = pairedKeys.listKeys().find((a) => a.key === key) || null;
+      // Broadcast so the Agents and Pairings tabs both refresh.
+      try {
+        broadcastUiEvent && broadcastUiEvent({
+          type: 'agents_changed',
+          agents: pairedKeys.listKeys(),
+        });
+      } catch (_e) { /* ignore */ }
+      res.json({ ok: true, agent: updated, agents: pairedKeys.listKeys() });
+    } catch (e) {
+      console.error('[ui-api] PATCH agent failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1155,6 +1211,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     pairedKeys,
     server,
     port,
+    broadcastUiEvent,
     setNetworkMode: ({ enabled }) => {
       // Persist + restart-spawn approach (Section 4.6)
       try {

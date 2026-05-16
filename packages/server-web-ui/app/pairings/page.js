@@ -255,11 +255,33 @@ export default function PairingsPage() {
                 let state = 'ready';
                 if (denied) { label = 'Denied'; state = 'danger'; }
                 else if (expired) { label = 'Expired'; state = 'warn'; }
+                // Only approved entries are ever bound to a profile. Denied
+                // and expired pairings were never minted into an API key, so
+                // there's no profile association to surface.
+                const profileMatch = h.status === 'approved' && h.profileId
+                  ? profiles.find((p) => p.directoryName === h.profileId)
+                  : null;
+                const profileLabel = profileMatch
+                  ? (profileMatch.displayName || profileMatch.directoryName)
+                  : (h.status === 'approved' ? h.profileId : null);
                 return (
                   <div className="wp-row" key={(h.pairingId || '') + ':' + i}>
                     <div className="wp-row-grow">
                       <div className="wp-row-title">{h.agentName || 'Unnamed agent'}</div>
-                      <div className="wp-row-sub">{formatRelativeTime(h.decidedAt || h.createdAt)}</div>
+                      <div className="wp-row-sub">
+                        <span>{formatRelativeTime(h.decidedAt || h.createdAt)}</span>
+                        {profileLabel ? (
+                          <>
+                            <span className="wp-row-sep">·</span>
+                            <span>
+                              paired to{' '}
+                              <strong style={{ color: 'var(--wp-fg)', fontWeight: 500 }}>
+                                {profileLabel}
+                              </strong>
+                            </span>
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                     <span className="wp-pill" data-state={state}>
                       <span className="wp-pill-dot" />
