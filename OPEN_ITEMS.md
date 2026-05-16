@@ -6,7 +6,6 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 
 ## P0 — required before pushing / opening PR
 
-- **Live extension end-to-end smoke test on Windows.** Load the unpacked extension into Default + Profile 2; exercise full pairing flow, `browser_create_tab` flow, and restart-on-flag-missing flow. Only validatable live.
 - **Misattributed commit `87dd359`.** Has A3's "scaffold web UI" message but contains A2's pairing code. Cosmetic only. Decision: leave + note in PR description, or rewrite via filter-branch.
 
 ## P1 — should-fix before launch
