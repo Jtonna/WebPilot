@@ -431,10 +431,41 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
     },
     {
       name: 'webpilot_reload_formatters',
-      description: 'Reload all formatters (both auto-updated and custom) without restarting the server. Use this after adding or modifying custom formatter files in the custom-formatters directory. Returns the updated formatter state.',
+      description: 'DEVELOPER TOOL. Reload all formatters (both auto-updated and custom) without restarting the server. Use this after adding or modifying custom formatter files in the custom-formatters directory (path is in the response of webpilot_get_formatter_info under customFormatterDir). Returns the updated formatter state including version numbers — verify the version bumped to confirm your edits took effect. This is the formatter dev iteration cycle: edit file → call this → call webpilot_run_workflow or browser_get_accessibility_tree to test → if it broke, call webpilot_dev_get_formatter_logs to see the error.',
       inputSchema: {
         type: 'object',
         properties: {}
+      }
+    },
+    {
+      name: 'webpilot_dev_get_formatter_logs',
+      description: 'DEVELOPER TOOL. Get health summary + recent error log entries for one platform formatter. Use this when iterating on a formatter or workflow to see why it failed — each entry includes the error message, truncated stack trace, phase (`format` for formatter errors during accessibility-tree rendering, `workflow` for errors raised inside `webpilot_run_workflow`), the workflow name + params + tabId for workflow errors, and an ISO timestamp. The `health` field summarizes overall activity ({ health: "healthy"|"unhealthy"|"unknown", lastError, successCount, errorCount, lastSuccessAt, lastErrorAt }). Note: only error entries are stored in the ring buffer; successful invocations bump counters and update `lastSuccessAt` but produce no log row. Pair with webpilot_reload_formatters to iterate quickly: edit → reload → run → call this if anything broke. Returns { platform, health, entries: [...], totalReturned, requestedLimit }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          platform: {
+            type: 'string',
+            description: "Formatter name (e.g. 'discord', 'threads'). See webpilot_get_formatter_info for the list."
+          },
+          limit: {
+            type: 'number',
+            description: 'Max number of entries to return (default 20, max 50 — the ring buffer caps at 50 per formatter, newest first).'
+          }
+        },
+        required: ['platform']
+      }
+    },
+    {
+      name: 'webpilot_dev_reload_extension',
+      description: 'DEVELOPER TOOL. Fully restart the WebPilot Chrome extension service worker via chrome.runtime.reload(). Use this after editing files under packages/chrome-extension-unpacked/ (click.js, keyboard.js, background.js, etc.) — without it, Chrome continues running the previously-loaded service-worker code and your edits are invisible to live tools. Note: the extension WebSocket disconnects on reload and reconnects in ~1-3 seconds; the paired API key persists across the reload (no re-pairing needed). The reload command itself is acknowledged BEFORE the worker restarts, so this tool returns success even though the WS will momentarily drop. Wait 2-3 seconds before issuing other browser_* tools.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          api_key: {
+            type: 'string',
+            description: 'Your API key for authentication. Required if not provided via X-API-Key header.'
+          }
+        }
       }
     },
     {
@@ -605,7 +636,18 @@ Refs: Element identifiers (e1, e2, etc.) are returned in the accessibility tree.
 
 browser_request_chain: Batches sequential tool calls (e.g., click then get tree) into a single round-trip when you do not need intermediate LLM reasoning between steps. Steps can reference prior results using $N.path.to.value syntax.
 
-browser_execute_js: Reserve for actions that genuinely require JavaScript execution, such as form manipulation or custom interactions. Do not use it to extract or filter page data — the accessibility tree already handles that.`
+browser_execute_js: Reserve for actions that genuinely require JavaScript execution, such as form manipulation or custom interactions. Do not use it to extract or filter page data — the accessibility tree already handles that.
+
+**Developer mode — formatter & workflow iteration.** WebPilot ships dev tools for the inner loop of building/fixing accessibility-tree formatters and workflows. They are always exposed (no flag) so any agent can use them when the user asks you to fix or extend a formatter. The cycle:
+
+1. \`webpilot_get_formatter_info\` — see which platforms have formatters, their versions, and where to drop new ones (\`customFormatterDir\`).
+2. Edit files under that directory (or under \`accessibility-tree-formatters/<platform>/\` in the source repo, then ship via the auto-updater).
+3. \`webpilot_reload_formatters\` — re-loads from disk into memory. Verify the version in the response bumped.
+4. Test by calling \`browser_get_accessibility_tree\` or \`webpilot_run_workflow\` against a real page.
+5. If it broke, \`webpilot_dev_get_formatter_logs\` with \`platform: '<name>'\` returns the most recent errors with stack traces, plus a health summary. Pass \`errors_only: true\` to filter out success entries.
+6. After editing the Chrome extension itself (handlers/click.js, keyboard.js, background.js, etc.), call \`webpilot_dev_reload_extension\` — chrome.runtime.reload() inside the extension. WS drops + reconnects in 1-3s; the API key persists. Wait ~2-3s before issuing more browser_* tools.
+
+Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\` (without dev) = production formatter/workflow inspection/dispatch. \`browser_*\` = direct CDP-backed primitives.`
         }
       };
     }
@@ -623,12 +665,16 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
     }
 
     if (method === 'tools/call') {
-      // Auth gate: exempt request_pairing, check_pairing_status, webpilot_get_formatter_info, and webpilot_reload_formatters; require valid API key for all other tools
+      // Auth gate: exempt pairing handshake + read-only formatter inspection
+      // (info, reload, log readout) — these don't touch the browser. Mutation
+      // tools (browser_*, webpilot_dev_reload_extension, webpilot_run_workflow)
+      // require a valid API key.
       const noAuthRequired =
         params.name === 'request_pairing' ||
         params.name === 'check_pairing_status' ||
         params.name === 'webpilot_get_formatter_info' ||
-        params.name === 'webpilot_reload_formatters';
+        params.name === 'webpilot_reload_formatters' ||
+        params.name === 'webpilot_dev_get_formatter_logs';
       // Resolved API key for the call. Used for both auth and per-agent
       // profile routing (Wave 7 J2). For auth-exempt tools that don't carry a
       // key, this stays null and resolveTargetProfile() falls back gracefully.
@@ -1257,6 +1303,55 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
       formatterManager.reload();
       const info = formatterManager.getFormatterInfo();
       return { content: [{ type: 'text', text: JSON.stringify({ reloaded: true, ...info }, null, 2) }] };
+    }
+
+    if (name === 'webpilot_dev_get_formatter_logs') {
+      const platform = args && args.platform;
+      if (!platform || typeof platform !== 'string') {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: 'Missing required argument: platform (string).' }) }],
+          isError: true
+        };
+      }
+      const requestedLimit = Math.max(1, Math.min(50, args.limit || 20));
+      const health = formatterLogs.getStatus(platform);
+      // getLogs returns the error ring buffer newest-first. Entry shape:
+      // { timestamp, phase: 'format'|'workflow', workflow?, message, stack,
+      // params?, tabId? }. Success invocations only update counters; they
+      // are NOT stored in the ring, so this is implicitly an error log.
+      const entries = formatterLogs.getLogs(platform, requestedLimit);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          platform,
+          health,
+          entries,
+          totalReturned: entries.length,
+          requestedLimit
+        }, null, 2) }]
+      };
+    }
+
+    if (name === 'webpilot_dev_reload_extension') {
+      // Mutates extension state — requires auth (gate above already enforced).
+      const targetProfile = _requireExtensionConnected(apiKey);
+      // The extension handler ACKs immediately (sendResult) then schedules
+      // chrome.runtime.reload() ~100ms later, so this sendCommand resolves
+      // before the WS drops. Use a generous-but-bounded timeout in case the
+      // worker is slow to ack.
+      const result = await extensionBridge.sendCommand(
+        targetProfile,
+        'reload_extension',
+        {},
+        { timeout: 5000 }
+      );
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          reloaded: true,
+          profileId: targetProfile,
+          note: 'Extension service worker will restart in ~100ms. WS reconnects in 1-3s. The paired API key persists; no re-pair needed.',
+          ...result
+        }, null, 2) }]
+      };
     }
 
     if (name === 'webpilot_run_workflow') {

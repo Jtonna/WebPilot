@@ -747,6 +747,23 @@ async function handleServerCommand(message) {
         result = await typeText(params);
         organizeTab(params.tab_id);
         break;
+      case 'reload_extension':
+        // Developer hot-reload: ack first, then schedule chrome.runtime.reload
+        // ~100ms later so the response makes it back over the WS before the
+        // worker restarts. After reload, the worker re-runs background.js which
+        // re-opens the WS to the server; the paired API key persists in
+        // chrome.storage so no re-pairing is required.
+        result = { reloading: true, scheduledInMs: 100 };
+        sendResult(id, true, result);
+        setTimeout(() => {
+          try {
+            chrome.runtime.reload();
+          } catch (e) {
+            // Nothing to do — the worker is about to die anyway.
+            console.warn('[handlers] chrome.runtime.reload failed:', e);
+          }
+        }, 100);
+        return; // Skip the trailing sendResult below — we already sent.
       default:
         throw new Error(`Unknown command type: ${type}`);
     }
