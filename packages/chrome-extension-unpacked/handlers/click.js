@@ -65,6 +65,16 @@ export async function click(params) {
   // return success with `navigated: true` so the caller knows the click
   // landed AND triggered a context teardown.
   // ---------------------------------------------------------------------------
+  // Per-call CDP stall budget. Discord-style SPAs (pushState + heavy React
+  // re-render) can starve Chrome's main thread for seconds at a time without
+  // ever firing `chrome.debugger.onDetach` (the target stays attached). When
+  // that happens, individual `sendCommand` calls hang waiting for the
+  // renderer. If any single CDP call exceeds this budget, treat it the same
+  // as a detach: short-circuit, return success-with-stall, and let the
+  // caller move on. 4 s is well above normal CDP latency (~5-50 ms) and
+  // long enough to ride out short rendering spikes without false-positiving.
+  const CDP_STALL_MS = 4000;
+
   let detached = false;
   let detachReason = null;
   const onDetach = (source, reason) => {
@@ -75,7 +85,24 @@ export async function click(params) {
   };
   chrome.debugger.onDetach.addListener(onDetach);
 
+  // Wraps a single CDP promise with both detach-watch AND a stall timeout.
+  // Returns the resolved value, or `{__detached: true}` / `{__stalled: true}`
+  // sentinels. Callers check those and short-circuit the surrounding flow.
+  const safeCdp = (promise, label) =>
+    raceDetachOrStall(promise, () => detached, CDP_STALL_MS, label, (reason) => {
+      detached = true;
+      detachReason = reason;
+    });
+
+  const t0 = Date.now();
+  const phaseLog = (phase, extra) => {
+    const dt = Date.now() - t0;
+    if (extra !== undefined) console.log(`[click] +${dt}ms ${phase}`, extra);
+    else console.log(`[click] +${dt}ms ${phase}`);
+  };
+
   try {
+  phaseLog('start', { tab_id, ref, selector, showCursor });
   const target = await getSession(tab_id);
 
   // Get viewport dimensions for start position calculation
@@ -334,20 +361,34 @@ export async function click(params) {
     });
 
     // Follow the path - dispatch mouseMoved and update visual cursor for each point
+    phaseLog('path_iter_start', { points: path.length });
+    let pathStallCount = 0;
     for (const point of path) {
-      // Dispatch CDP mouseMoved event
-      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: point.x,
-        y: point.y
-      });
+      if (detached) break;
 
-      // Update visual cursor position
-      if (showCursor) {
-        await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-          expression: generateCursorMoveCode(point.x, point.y),
-          returnByValue: true
-        });
+      // Dispatch CDP mouseMoved event with per-call stall watchdog.
+      const moveResult = await safeCdp(
+        chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: point.x,
+          y: point.y
+        }),
+        'mouseMoved'
+      );
+      if (moveResult && moveResult.__stalled) { pathStallCount++; break; }
+      if (moveResult && moveResult.__detached) break;
+
+      // Update visual cursor position (only when not detached/stalled).
+      if (showCursor && !detached) {
+        const curResult = await safeCdp(
+          chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+            expression: generateCursorMoveCode(point.x, point.y),
+            returnByValue: true
+          }),
+          'cursorMove'
+        );
+        if (curResult && curResult.__stalled) { pathStallCount++; break; }
+        if (curResult && curResult.__detached) break;
       }
 
       // Wait for the calculated interval (variable Hz based on velocity)
@@ -355,22 +396,24 @@ export async function click(params) {
         await sleep(point.dt);
       }
     }
+    phaseLog('path_iter_done', { stalled: pathStallCount > 0, detached });
 
     // Play ripple animation (skip if already detached)
     if (showCursor && !detached) {
-      await raceWithDetach(
+      await safeCdp(
         chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
           expression: generateRippleCode(),
           returnByValue: true
         }),
-        () => detached
+        'ripple'
       );
     }
 
-    // Mouse press — race against detach because Discord-style SPAs can swap
-    // the document on mousedown.
+    // Mouse press — race against detach + stall, because Discord-style SPAs
+    // can swap the document on mousedown AND backlog the renderer.
+    phaseLog('press');
     if (!detached) {
-      await raceWithDetach(
+      await safeCdp(
         chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mousePressed',
           x,
@@ -378,7 +421,7 @@ export async function click(params) {
           button,
           clickCount
         }),
-        () => detached
+        'mousePressed'
       );
     }
 
@@ -387,12 +430,13 @@ export async function click(params) {
       await sleep(clickDelay);
     }
 
-    // Mouse release — same detach-watch reasoning. By the time we reach this
+    // Mouse release — same detach/stall reasoning. By the time we reach this
     // line on a navigating page, the press has already triggered the SPA
     // transition, the target may be tearing down, and `sendCommand` could
     // hang indefinitely.
+    phaseLog('release');
     if (!detached) {
-      await raceWithDetach(
+      await safeCdp(
         chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased',
           x,
@@ -400,9 +444,10 @@ export async function click(params) {
           button,
           clickCount
         }),
-        () => detached
+        'mouseReleased'
       );
     }
+    phaseLog('release_done', { detached, detachReason });
 
     // Update last position for this tab (local-only, always safe)
     setLastPosition(tab_id, x, y);
@@ -429,13 +474,17 @@ export async function click(params) {
       lingerDelay,
       scrolled,
       // navigated=true means the click triggered a context teardown
-      // (SPA navigation, full-page load, tab close, etc.). The mouse events
-      // were dispatched before the detach. Callers can treat this as a
-      // success signal — the page has moved on. detachReason is whichever
-      // string Chrome's onDetach API supplied ('target_closed',
-      // 'replaced_with_devtools', etc.).
+      // (SPA navigation, full-page load, tab close, etc.) OR a CDP stall
+      // (Chrome's renderer froze long enough that the per-call watchdog
+      // fired — common on Discord-style SPAs that pushState + heavy React
+      // re-render without detaching the CDP target). Either way, the mouse
+      // events that needed to fire have been dispatched and the page has
+      // moved on. `detachReason` carries the source: an onDetach string
+      // ('target_closed', 'replaced_with_devtools', ...) or
+      // `cdp_stall:<phase>` (e.g. `cdp_stall:mouseMoved`).
       navigated: detached,
       detachReason: detached ? detachReason : null,
+      durationMs: Date.now() - t0,
       path: {
         points: stats.points,
         duration: stats.duration,
@@ -451,35 +500,60 @@ export async function click(params) {
 }
 
 /**
- * Race a CDP promise against a "detached" flag. If the promise resolves or
- * rejects normally, that result wins. If `getDetached()` flips true while the
- * promise is still pending, we resolve with a sentinel so the caller's
- * `await` returns and control can fall through to the function's detach
- * check — instead of hanging on a promise that will never settle.
+ * Race a CDP promise against TWO short-circuit signals:
+ *  1. a "detached" flag (CDP target tear-down — `chrome.debugger.onDetach`)
+ *  2. a per-call stall budget (Chrome renderer is unresponsive but the
+ *     target is still attached — Discord pushState + heavy React renders)
  *
- * 25 ms poll interval keeps the overhead negligible (most clicks complete in
- * < 1 ms once they reach this layer; the polling fires at most a couple of
- * times before the underlying promise settles).
+ * If the promise resolves/rejects normally, that result wins. If detach
+ * flips, resolves with `{__detached: true}`. If the stall timer fires,
+ * resolves with `{__stalled: true, label}` AND invokes `onStall(reason)` so
+ * the caller can set its own detach flag — that way subsequent CDP calls in
+ * the same function short-circuit immediately instead of each waiting out
+ * their own stall budget.
+ *
+ * 25 ms detach-poll keeps overhead negligible (most CDP calls complete in
+ * 5-50 ms; the detach poll fires at most a couple of times before the
+ * underlying promise settles or the stall timer takes over).
  *
  * @param {Promise} promise — CDP promise we'd normally await
  * @param {() => boolean} getDetached — closure over the detach flag
- * @returns {Promise<*>} the promise's value, or { __detached: true } sentinel
+ * @param {number} stallMs — max time before we treat the call as stalled
+ * @param {string} label — human-readable label for the stall log line
+ * @param {(reason: string) => void} [onStall] — invoked when the stall timer
+ *   fires; receives `cdp_stall:<label>` as its argument so the caller can
+ *   record the stall reason on its own detach flag
+ * @returns {Promise<*>} value, or one of the sentinels above
  */
-function raceWithDetach(promise, getDetached) {
+function raceDetachOrStall(promise, getDetached, stallMs, label, onStall) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const tick = setInterval(() => {
-      if (settled) return;
-      if (getDetached()) {
+    const finish = (val) => {
+      if (!settled) {
         settled = true;
-        clearInterval(tick);
-        resolve({ __detached: true });
+        clearInterval(detachTick);
+        clearTimeout(stallTimer);
+        resolve(val);
       }
+    };
+    const fail = (err) => {
+      if (!settled) {
+        settled = true;
+        clearInterval(detachTick);
+        clearTimeout(stallTimer);
+        reject(err);
+      }
+    };
+    const detachTick = setInterval(() => {
+      if (getDetached()) finish({ __detached: true });
     }, 25);
-    promise.then(
-      (v) => { if (!settled) { settled = true; clearInterval(tick); resolve(v); } },
-      (e) => { if (!settled) { settled = true; clearInterval(tick); reject(e); } }
-    );
+    const stallTimer = setTimeout(() => {
+      const reason = `cdp_stall:${label}`;
+      console.warn(`[click] CDP stall on "${label}" — exceeded ${stallMs}ms; short-circuiting`);
+      try { if (onStall) onStall(reason); } catch (_) {}
+      finish({ __stalled: true, label });
+    }, stallMs);
+    promise.then(finish, fail);
   });
 }
 
