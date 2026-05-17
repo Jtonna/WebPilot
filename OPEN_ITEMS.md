@@ -6,7 +6,7 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 
 ## P0 — required before pushing / opening PR
 
-- **Misattributed commit `87dd359`.** Has A3's "scaffold web UI" message but contains A2's pairing code. Cosmetic only. Decision: leave + note in PR description, or rewrite via filter-branch.
+- ~~**Misattributed commit `87dd359`.** Has A3's "scaffold web UI" message but contains A2's pairing code.~~ ✅ Fixed 2026-05-17 via `git rebase -i 87dd359~1` with scripted editors (rewrote 112 commits) and `git push --force-with-lease`. New commit hash is `10c36d3`. Message now accurately describes the A2 pairing-handshake work (paired-keys.js + request_pairing/check_pairing_status MCP tools + server.js wiring). All downstream hashes shifted; old `87dd359` no longer exists on origin/QOL-Features.
 
 ## P1 — should-fix before launch
 
