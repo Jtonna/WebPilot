@@ -19,9 +19,11 @@
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
+      "src/**/*.sql",
       "index.js",
       "../server-web-ui/out/**/*"
-    ]
+    ],
+    "_comment_native_modules": "TODO (P2 phase 7): better-sqlite3 has a native binding (build/Release/better_sqlite3.node). @yao-pkg/pkg cannot bundle native .node files into the snapshot — they must be shipped as loose files next to the pkg-built .exe. At pkg time we will need to (a) copy node_modules/better-sqlite3/build/Release/better_sqlite3.node into the dist/ output and (b) either set the BETTER_SQLITE3_BINARY env var or add a `bin` entry to pkg.targets so the binary is loaded from disk at runtime. Confirm on a fresh Windows VM before Phase 7 closes."
   },
   "keywords": [
     "mcp",
@@ -31,6 +33,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "http-proxy-middleware": "^3.0.0",

@@ -1063,6 +1063,21 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   let host = initialHost;
   let publicHost = initialPublicHost;
   let pairingRequired = true; // default: pairing required
+
+  // SQLite foundation (P2 — phase 1). Stand up the DB BEFORE any stateful
+  // module loads, so later phases can swap their JSON reads/writes for DB
+  // queries without re-ordering boot. The migration call is a Phase-1 stub
+  // that only logs what it would import — see src/db/migration.js.
+  try {
+    console.log('[server] initializing SQLite (P2 phase 1)…');
+    require('./db/connection').init();
+    require('./db/migration').runImportFromJsonStores();
+  } catch (e) {
+    console.error('[server] SQLite init failed:', e && e.message);
+    // Non-fatal for phase 1 — no module uses the DB yet. Once Phase 2 lands
+    // and paired-keys depends on the DB, this should rethrow.
+  }
+
   const app = express();
   app.use(cors());
   app.use(express.json());

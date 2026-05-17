@@ -311,6 +311,8 @@ Each phase is one or two commits, independently testable.
 - Create `packages/server-for-chrome-extension/src/db/` with `schema.sql`, `connection.js` (opens the file, runs PRAGMAs for WAL mode), and the migration-on-first-boot logic.
 - Server boots, runs schema, doesn't touch JSON yet. Verify the DB file gets created and the import path runs cleanly on a copy of real `<dataDir>`.
 
+> **Phase 1 status (2026-05-17):** Shipped. `better-sqlite3 ^12.10.0` added. `src/db/{schema.sql,connection.js,migration.js}` in place. Schema applies all 8 tables + indexes idempotently. WAL/foreign_keys/synchronous=NORMAL PRAGMAs verified. `runImportFromJsonStores()` is a Phase-1 stub: it detects each legacy store and logs "would import N rows" but performs no writes — Phases 2/3/4 plug into the marked TODO branches. The pkg native-binary bundling is deferred to Phase 7 (a `_comment_native_modules` TODO is parked in `packages/server-for-chrome-extension/package.json` describing what's needed: copy `node_modules/better-sqlite3/build/Release/better_sqlite3.node` next to the pkg-built `.exe`, plus the loader/env-var step).
+
 **Phase 2 — Migrate `paired-keys` to DB.**
 - Replace `paired-keys.json` + `pending-pairings.json` reads/writes with DB queries.
 - First-boot import: parse existing JSON, populate `agents` + `pairings` tables, rename JSON to `.imported`. Hash API keys at rest during import.
