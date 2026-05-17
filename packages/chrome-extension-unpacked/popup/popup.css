@@ -4,39 +4,101 @@
  * current tab's policy pill, toggle the global rule for that domain, and
  * link to the dashboard. Everything else moved to the webapp.
  *
- * Theme tokens mirror packages/server-web-ui/app/globals.css (warm-mono
- * palette under [data-theme="dark"]) so the popup reads as part of the same
- * product surface — but kept self-contained: a Chrome extension popup
- * cannot @import or reach into the webapp's built CSS.
+ * Theme tokens mirror packages/server-web-ui/app/globals.css (warm-monochrome
+ * palette, dark variant under [data-theme="dark"]) so the popup reads as
+ * part of the same product surface. A Chrome extension popup cannot
+ * @import or reach into the webapp's built CSS, so we copy the relevant
+ * token block verbatim.
+ *
+ * Conventions reused from globals.css:
+ *   --wp-bg / --wp-bg-card / --wp-bg-elevated
+ *   --wp-fg / --wp-fg-secondary / --wp-fg-muted
+ *   --wp-separator / --wp-separator-strong
+ *   --wp-accent / --wp-accent-hover / --wp-accent-active / --wp-on-accent
+ *   --wp-success / --wp-warning / --wp-danger / --wp-info
+ *   --fs-* type scale, --s-* spacing, --radius-* radii
+ *   .wp-pill (transparent bg, hairline border, mono caps, colored dot)
+ *   .wp-btn-primary (accent fill, on-accent text)
  */
 
 :root {
-  --wp-bg: #161412;
-  --wp-bg-card: #1F1D1A;
-  --wp-bg-elevated: #2A2724;
+  /* Palette (light — warm ivory) */
+  --wp-bg: #FBFAF7;
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #F4F2EE;
 
-  --wp-fg: #F0EDE8;
-  --wp-fg-secondary: rgba(240, 237, 232, 0.62);
-  --wp-fg-muted: rgba(240, 237, 232, 0.36);
+  --wp-fg: #1A1815;
+  --wp-fg-secondary: rgba(26, 24, 21, 0.62);
+  --wp-fg-muted: rgba(26, 24, 21, 0.36);
 
-  --wp-separator: rgba(240, 237, 232, 0.10);
-  --wp-separator-strong: rgba(240, 237, 232, 0.16);
+  --wp-separator: rgba(26, 24, 21, 0.08);
+  --wp-separator-strong: rgba(26, 24, 21, 0.14);
 
-  --wp-accent: #BFB7A8;
-  --wp-accent-hover: #D5CDBE;
-  --wp-on-accent: #161412;
+  --wp-accent: #3F4147;
+  --wp-accent-hover: #2A2C30;
+  --wp-accent-active: #1A1815;
+  --wp-accent-tint: rgba(63, 65, 71, 0.08);
+  --wp-on-accent: #FBFAF7;
 
-  --wp-success: #8FAA7F;
-  --wp-warning: #D4A663;
-  --wp-danger: #C97373;
-  --wp-info: #BFB7A8;
+  --wp-success: #5A7A4A;
+  --wp-warning: #B47A33;
+  --wp-danger: #9A3D3D;
+  --wp-info: #3F4147;
 
-  --wp-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --wp-font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* Type */
+  --wp-font-sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", system-ui, sans-serif;
+  --wp-font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
+  --fs-body: 13px;
+  --fs-small: 12px;
+  --fs-nano: 11px;
+
+  /* Spacing */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+
+  /* Radii */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-pill: 999px;
+
+  /* Motion */
+  --dur-instant: 80ms;
+  --dur-quick: 180ms;
+  --ease: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Dark theme — system preference. The webapp's dashboard also dark-flips on
+   prefers-color-scheme when no explicit data-theme is set, so the popup
+   tracks alongside it. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wp-bg: #161412;
+    --wp-bg-card: #1F1D1A;
+    --wp-bg-elevated: #2A2724;
+
+    --wp-fg: #F0EDE8;
+    --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+    --wp-fg-muted: rgba(240, 237, 232, 0.36);
+
+    --wp-separator: rgba(240, 237, 232, 0.10);
+    --wp-separator-strong: rgba(240, 237, 232, 0.16);
+
+    --wp-accent: #BFB7A8;
+    --wp-accent-hover: #D5CDBE;
+    --wp-accent-active: #A89E8F;
+    --wp-accent-tint: rgba(191, 183, 168, 0.12);
+    --wp-on-accent: #161412;
+
+    --wp-success: #8FAA7F;
+    --wp-warning: #D4A663;
+    --wp-danger: #C97373;
+    --wp-info: #BFB7A8;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -47,9 +109,11 @@ html, body {
   background: var(--wp-bg);
   color: var(--wp-fg);
   font-family: var(--wp-font-sans);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01', 'cv11', 'tnum';
 }
 
 .wp-popup {
@@ -63,15 +127,15 @@ html, body {
 .wp-popup-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 14px 16px 10px;
+  gap: 2px;
+  padding: var(--s-3) var(--s-4) var(--s-3);
   border-bottom: 1px solid var(--wp-separator);
 }
 
 .wp-popup-conn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .wp-dot {
@@ -81,7 +145,7 @@ html, body {
   border-radius: 50%;
   background: var(--wp-fg-muted);
   flex-shrink: 0;
-  transition: background-color 180ms ease;
+  transition: background-color var(--dur-quick) var(--ease);
 }
 
 .wp-dot[data-state="connected"]    { background: var(--wp-success); }
@@ -89,16 +153,21 @@ html, body {
 .wp-dot[data-state="disconnected"] { background: var(--wp-danger); }
 
 .wp-conn-label {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 500;
   color: var(--wp-fg);
+  letter-spacing: -0.005em;
 }
 
 .wp-conn-meta {
   font-family: var(--wp-font-mono);
-  font-size: 11px;
+  font-size: var(--fs-nano);
   color: var(--wp-fg-muted);
-  padding-left: 16px;
+  padding-left: 16px; /* aligns under the label, past the 8px dot + 8px gap */
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ────────── 2 & 3. Current tab section ────────── */
@@ -106,15 +175,15 @@ html, body {
 .wp-popup-tab {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4) var(--s-3);
   border-bottom: 1px solid var(--wp-separator);
 }
 
 .wp-tab-line {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-2);
   min-width: 0;
 }
 
@@ -122,7 +191,7 @@ html, body {
   flex: 1;
   min-width: 0;
   font-family: var(--wp-font-mono);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--wp-fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -130,18 +199,20 @@ html, body {
 }
 
 .wp-tab-agent {
-  font-size: 11px;
+  font-size: var(--fs-nano);
   color: var(--wp-fg-secondary);
 }
 
 .wp-tab-actions { display: flex; }
 
 .wp-tab-error {
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--wp-danger);
+  line-height: 1.4;
 }
 
-/* Pill — small rounded badge. Color comes from data-state. */
+/* Pill — Linear-style. Transparent bg, hairline border, mono caps label,
+   colored dot. Mirrors .wp-pill in globals.css. */
 .wp-pill {
   display: inline-flex;
   align-items: center;
@@ -150,13 +221,15 @@ html, body {
   border: 1px solid var(--wp-separator-strong);
   border-radius: var(--radius-pill);
   background: transparent;
-  font-size: 10.5px;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-nano);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--wp-fg-secondary);
   white-space: nowrap;
   flex-shrink: 0;
+  line-height: 1.4;
 }
 
 .wp-pill-dot {
@@ -165,6 +238,7 @@ html, body {
   height: 6px;
   border-radius: 50%;
   background: var(--wp-fg-muted);
+  flex-shrink: 0;
 }
 
 .wp-pill[data-state="allowed"]           .wp-pill-dot { background: var(--wp-success); }
@@ -173,61 +247,71 @@ html, body {
 .wp-pill[data-state="allowed_override"]  .wp-pill-dot { background: var(--wp-info); }
 .wp-pill[data-state="blocked_override"]  .wp-pill-dot { background: var(--wp-info); }
 
-/* ────────── 4. Footer + buttons ────────── */
+/* ────────── Skip surface + footer ────────── */
 
 .wp-popup-skip {
-  padding: 12px 16px;
+  padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--wp-separator);
 }
 
 .wp-skip-text {
   margin: 0;
-  font-size: 12px;
-  color: var(--wp-fg-muted);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  line-height: 1.5;
 }
 
 .wp-popup-footer {
   display: flex;
   justify-content: center;
-  padding: 12px 16px 14px;
+  padding: var(--s-2) var(--s-4) var(--s-3);
 }
+
+/* ────────── Buttons — mirror .wp-btn-primary / .wp-btn from globals.css ─── */
 
 .wp-btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 var(--s-3);
   background: var(--wp-accent);
   color: var(--wp-on-accent);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-family: var(--wp-font-sans);
-  font-size: 12.5px;
+  font-size: var(--fs-small);
   font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.005em;
   cursor: pointer;
-  transition: background-color 120ms ease, opacity 120ms ease;
+  transition:
+    background-color var(--dur-instant) var(--ease),
+    color var(--dur-instant) var(--ease),
+    opacity var(--dur-instant) var(--ease);
 }
 
-.wp-btn-primary:hover:not(:disabled) { background: var(--wp-accent-hover); }
-.wp-btn-primary:active:not(:disabled) { opacity: 0.85; }
-.wp-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.wp-btn-primary:hover:not(:disabled)  { background: var(--wp-accent-hover); }
+.wp-btn-primary:active:not(:disabled) { background: var(--wp-accent-active); }
+.wp-btn-primary:disabled              { opacity: 0.4; cursor: not-allowed; }
 
 .wp-btn-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 28px;
-  padding: 0 4px;
+  padding: 0 var(--s-2);
   background: transparent;
   color: var(--wp-accent);
   border: none;
-  font-size: 12.5px;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
   font-weight: 500;
+  letter-spacing: -0.005em;
   text-decoration: none;
   cursor: pointer;
-  transition: color 120ms ease;
+  transition: color var(--dur-instant) var(--ease);
 }
 
 .wp-btn-secondary:hover { color: var(--wp-accent-hover); }
@@ -235,5 +319,5 @@ html, body {
 :focus-visible {
   outline: 2px solid var(--wp-accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
 }

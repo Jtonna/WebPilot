@@ -9,36 +9,42 @@
 <body>
   <div class="wp-popup">
 
-    <!-- 1. Connection header: dot + label + (profile/server underneath). -->
+    <!-- 1. Connection header: dot + label on the primary line; optional
+         profile name on a smaller secondary line. Server URL is never shown
+         here (it lives behind "Open dashboard"). -->
     <header class="wp-popup-header">
       <div class="wp-popup-conn">
         <span id="conn-dot" class="wp-dot" data-state="unknown" aria-hidden="true"></span>
-        <span id="conn-label" class="wp-conn-label">Connecting…</span>
+        <span id="conn-label" class="wp-conn-label">Connecting</span>
       </div>
       <div id="conn-meta" class="wp-conn-meta" hidden></div>
     </header>
 
-    <!-- 2 & 3. Current tab section: domain + state pill + toggle button. -->
+    <!-- 2 & 3. Current tab section: domain + state pill + toggle button.
+         Hidden until we have a fully-resolved currentTab payload — we never
+         flash partial dashes. -->
     <section id="tab-section" class="wp-popup-tab" hidden>
       <div class="wp-tab-line">
         <span id="tab-domain" class="wp-tab-domain"></span>
         <span id="tab-state-pill" class="wp-pill" data-state="unknown">
           <span class="wp-pill-dot" aria-hidden="true"></span>
-          <span id="tab-state-label" class="wp-pill-label">—</span>
+          <span id="tab-state-label" class="wp-pill-label"></span>
         </span>
       </div>
       <div id="tab-agent-line" class="wp-tab-agent" hidden></div>
       <div class="wp-tab-actions">
-        <button id="toggle-btn" type="button" class="wp-btn-primary" disabled>
-          <span id="toggle-btn-label">…</span>
+        <button id="toggle-btn" type="button" class="wp-btn-primary" hidden>
+          <span id="toggle-btn-label"></span>
         </button>
       </div>
       <div id="tab-error" class="wp-tab-error" hidden></div>
     </section>
 
-    <!-- Hint when the active tab isn't policy-managed (chrome://, file://, etc.). -->
+    <!-- Hint surface when the active tab isn't policy-managed (chrome://,
+         file://, etc.) or we have no agent context. Same slot is used for
+         "not paired" / "server unreachable" messaging. -->
     <section id="tab-skip" class="wp-popup-skip" hidden>
-      <p class="wp-skip-text">No policy on this page.</p>
+      <p id="tab-skip-text" class="wp-skip-text"></p>
     </section>
 
     <!-- 4. Open dashboard escape hatch. -->

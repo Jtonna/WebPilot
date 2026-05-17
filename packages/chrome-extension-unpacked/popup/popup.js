@@ -12,6 +12,12 @@
  *
  *   GET  /api/popup/state?tabUrl=<url>      — connection + current tab pill
  *   POST /api/popup/site-toggle             — flip the global rule
+ *
+ * Defensive rendering rule: we NEVER show a partially-bound row. Either we
+ * have everything we need to draw the pill + toggle button (`currentTab`
+ * with a known `state` and a `decision`), or the entire tab section stays
+ * hidden and the skip surface carries a human-readable reason. No dashes,
+ * no ellipses, no half-bound buttons.
  */
 
 'use strict';
@@ -20,17 +26,19 @@
 
 function $(id) { return document.getElementById(id); }
 
+// Server-side _statePillFromPolicy emits exactly these five keys. Anything
+// else triggers the fallback path (skip section, no pill).
 const STATE_LABEL = {
   allowed: 'Allowed',
   blocked_baseline: 'Blocked (baseline)',
   blocked_user: 'Blocked (user)',
-  allowed_override: 'Override: Allowed',
-  blocked_override: 'Override: Blocked',
+  allowed_override: 'Override · Allowed',
+  blocked_override: 'Override · Blocked',
 };
 
 const CONN_LABEL = {
   connected: 'Connected',
-  reconnecting: 'Reconnecting…',
+  reconnecting: 'Reconnecting',
   disconnected: 'Disconnected',
 };
 
@@ -59,10 +67,21 @@ function getActiveTab() {
 }
 
 // True if a URL is a normal http/https page we can have policy on. We skip
-// chrome://, file://, about:, etc.
+// chrome://, file://, about:, etc. Loopback hosts (localhost, 127.0.0.1) are
+// also skipped — the agent can never be asked to drive the dashboard itself,
+// so showing a policy pill there is misleading.
 function isPolicyManagedUrl(url) {
   if (typeof url !== 'string' || url.length === 0) return false;
-  return /^https?:\/\//i.test(url);
+  if (!/^https?:\/\//i.test(url)) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+      return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // Derive an HTTP base URL from whatever the extension has stored as serverUrl
@@ -77,6 +96,21 @@ function deriveHttpBase(serverUrl) {
     .replace(/\/+$/, '');
 }
 
+// True if currentTab from the server is fully-formed: it has a known state
+// label and a decision we can invert into the toggle action. Anything less
+// than that, we treat as missing and hide the row entirely.
+function isRenderableTab(currentTab) {
+  if (!currentTab || typeof currentTab !== 'object') return false;
+  if (typeof currentTab.domain !== 'string' || !currentTab.domain) return false;
+  if (typeof currentTab.state !== 'string' || !(currentTab.state in STATE_LABEL)) {
+    return false;
+  }
+  if (currentTab.decision !== 'allow' && currentTab.decision !== 'block') {
+    return false;
+  }
+  return true;
+}
+
 // ────────────────────────── State + render ──────────────────────────
 
 const state = {
@@ -88,18 +122,18 @@ const state = {
   lastState: null,
 };
 
-function setConnection(connection, profileId, serverUrl) {
+function setConnection(connection, profileId) {
   const dot = $('conn-dot');
   const label = $('conn-label');
   const meta = $('conn-meta');
-  const c = connection || 'disconnected';
+  const c = (connection in CONN_LABEL) ? connection : 'disconnected';
   dot.setAttribute('data-state', c);
-  label.textContent = CONN_LABEL[c] || 'Unknown';
-  const parts = [];
-  if (profileId) parts.push(profileId);
-  if (serverUrl) parts.push(serverUrl);
-  if (parts.length > 0) {
-    meta.textContent = parts.join(' • ');
+  label.textContent = CONN_LABEL[c];
+  // Secondary line: profile name only. Server URL is intentionally NOT shown
+  // here — it would crowd the 320px popup and adds no actionable info; the
+  // dashboard link in the footer is the canonical "where is this server?".
+  if (typeof profileId === 'string' && profileId.length > 0) {
+    meta.textContent = profileId;
     meta.hidden = false;
   } else {
     meta.hidden = true;
@@ -107,22 +141,28 @@ function setConnection(connection, profileId, serverUrl) {
   }
 }
 
-function renderNoPolicyTab() {
+function showSkip(text) {
   $('tab-section').hidden = true;
   $('tab-skip').hidden = false;
+  $('tab-skip-text').textContent = text;
+}
+
+function hideSkip() {
+  $('tab-skip').hidden = true;
+  $('tab-skip-text').textContent = '';
 }
 
 function renderTab(currentTab, agent) {
-  $('tab-skip').hidden = true;
+  hideSkip();
   $('tab-section').hidden = false;
 
   $('tab-domain').textContent = currentTab.domain;
-  $('tab-domain').title = currentTab.url;
+  $('tab-domain').title = currentTab.url || currentTab.domain;
 
   const pill = $('tab-state-pill');
   const pillLabel = $('tab-state-label');
   pill.setAttribute('data-state', currentTab.state);
-  pillLabel.textContent = STATE_LABEL[currentTab.state] || currentTab.state;
+  pillLabel.textContent = STATE_LABEL[currentTab.state];
 
   const agentLine = $('tab-agent-line');
   if (agent && agent.name) {
@@ -130,6 +170,7 @@ function renderTab(currentTab, agent) {
     agentLine.hidden = false;
   } else {
     agentLine.hidden = true;
+    agentLine.textContent = '';
   }
 
   // Button label: inverse of the current decision. Per the design doc, the
@@ -143,6 +184,7 @@ function renderTab(currentTab, agent) {
     : 'Allow on this site (all agents)';
   btn.dataset.nextAction = isAllowed ? 'block' : 'allow';
   btn.dataset.domain = currentTab.domain;
+  btn.hidden = false;
   btn.disabled = false;
   setTabError(null);
 }
@@ -199,8 +241,8 @@ async function postSiteToggle(domain, action) {
 
 async function loadAndRender() {
   // Pull paired identity + server URL from chrome.storage. These keys are
-  // written by background.js' pairing/auto-connect flow — see CLAUDE.md
-  // "Backwards compat" — and we are explicitly READ-ONLY here.
+  // written by background.js' pairing/auto-connect flow — and we are
+  // explicitly READ-ONLY here.
   const stored = await readStorage(['apiKey', 'serverUrl']);
   state.apiKey = stored.apiKey || null;
   state.serverUrl = stored.serverUrl || null;
@@ -209,18 +251,16 @@ async function loadAndRender() {
   // Wire the dashboard link as soon as we know the base URL.
   $('dashboard-link').href = state.httpBase + '/ui/';
 
-  // If we don't have an API key at all, the popup can't do its job — show a
-  // disconnected dot, hide the tab section, point the user at the dashboard.
+  // No API key → the popup can't talk to the server. Show a disconnected
+  // dot and point the user at the dashboard.
   if (!state.apiKey) {
-    setConnection('disconnected', null, state.serverUrl);
-    $('tab-section').hidden = true;
-    $('tab-skip').hidden = false;
-    $('tab-skip').querySelector('.wp-skip-text').textContent =
-      'Not paired. Open dashboard to pair an agent.';
+    setConnection('disconnected', null);
+    showSkip('Not paired. Open the dashboard to pair an agent.');
     return;
   }
 
-  // Resolve the current tab URL. If it's not http(s), skip the per-tab UI.
+  // Resolve the current tab URL. If it's not http(s) or it's a loopback
+  // host, we won't ask the server for a per-tab policy.
   const tab = await getActiveTab();
   if (tab && tab.url && isPolicyManagedUrl(tab.url)) {
     state.activeTabUrl = tab.url;
@@ -232,24 +272,33 @@ async function loadAndRender() {
   try {
     data = await fetchPopupState();
   } catch (e) {
-    setConnection('disconnected', null, state.serverUrl);
-    $('tab-section').hidden = true;
-    $('tab-skip').hidden = false;
-    $('tab-skip').querySelector('.wp-skip-text').textContent = e.message;
+    setConnection('disconnected', null);
+    showSkip(e.message || 'Could not reach the WebPilot server.');
     return;
   }
 
   state.lastState = data;
-  setConnection(data.connection, data.profileId, state.serverUrl);
+  setConnection(data.connection, data.profileId);
 
   if (!state.activeTabUrl) {
-    renderNoPolicyTab();
+    // Tab is unsupported (chrome://, file://, localhost, etc.). Explain
+    // briefly so the user knows it's expected, not broken.
+    showSkip(
+      tab && typeof tab.url === 'string' && tab.url.length > 0
+        ? 'Site policy doesn’t apply to this page.'
+        : 'No active tab.'
+    );
     return;
   }
-  if (!data.currentTab) {
-    renderNoPolicyTab();
+
+  if (!isRenderableTab(data.currentTab)) {
+    // Server didn't return a usable currentTab (no agent paired, unknown
+    // state value, malformed payload). Fall back to a clean skip surface
+    // rather than rendering a half-bound button.
+    showSkip('No policy data for this page yet.');
     return;
   }
+
   renderTab(data.currentTab, data.agent);
 }
 
@@ -260,7 +309,7 @@ async function onToggleClick() {
   if (!domain || !action) return;
   btn.disabled = true;
   const prevLabel = $('toggle-btn-label').textContent;
-  $('toggle-btn-label').textContent = 'Saving…';
+  $('toggle-btn-label').textContent = 'Saving';
   setTabError(null);
   try {
     await postSiteToggle(domain, action);
@@ -276,7 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('toggle-btn').addEventListener('click', onToggleClick);
   // Initial render. Errors inside loadAndRender are surfaced inline.
   loadAndRender().catch((e) => {
-    setConnection('disconnected', null, null);
+    setConnection('disconnected', null);
     setTabError(e && e.message ? e.message : String(e));
   });
 });
