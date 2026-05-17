@@ -1,6 +1,6 @@
 {
   "name": "discord",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "match": "discord.com",
   "source": "remote",
   "description": "Discord chat — exposes channels, members, message stream, and the composer for DMs and server channels.",

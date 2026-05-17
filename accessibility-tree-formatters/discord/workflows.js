@@ -16,13 +16,17 @@
  *
  * Composer detection note:
  *   The Discord formatter (`discord.js`) emits the composer textbox as a
- *   line of the form `[eN] Message textbox` in the formatted tree string.
- *   We locate it by exact-match against `name === 'Message textbox'`. If
- *   the formatter shape ever changes (e.g. to surface the channel name in
- *   the composer label), update the selector here in lockstep. The
- *   underlying raw a11y node is a textbox whose accessible name starts
- *   with "Message #" (server channel) or "Message @" (DM), but the
- *   formatter normalizes that down to "Message textbox".
+ *   line of the form `[eN] Message @<recipient> textbox` (DM) or
+ *   `[eN] Message #<channel> textbox` (server channel) in the formatted
+ *   tree string. Older formatter versions (pre-1.1.0) emitted just
+ *   `[eN] Message textbox` without the discriminating prefix.
+ *
+ *   We match on `name_starts_with: 'Message ' + role: 'textbox'` which
+ *   catches both shapes — `Message textbox` (legacy) and
+ *   `Message @<x> textbox` / `Message #<x> textbox` (current) — without
+ *   false-positiving on other Discord textboxes (search, profile note,
+ *   etc.) because none of those have an accessible name beginning with
+ *   the literal word "Message ".
  */
 
 module.exports = {
@@ -43,20 +47,22 @@ module.exports = {
       }
 
       // Fetch the formatted tree. The Discord formatter emits the composer
-      // as the line "[eN] Message textbox" — see discord.js extractTextbox.
+      // as `[eN] Message @<recipient> textbox` (DM) or
+      // `[eN] Message #<channel> textbox` (server channel). See
+      // discord.js formatComposerLine. Pre-1.1.0 formatters emitted just
+      // `[eN] Message textbox`; the selector below matches both shapes.
       const tree = await browser.getAccessibilityTree({ tab_id: tabId });
 
-      const composer =
-        findInTree(tree, { name: 'Message textbox' }) ||
-        // Defensive fallback: some Discord page types (e.g. DM with empty
-        // state) may render the composer with a slightly different label.
-        // Match any line that contains "Message textbox" as a substring.
-        findInTree(tree, { name_contains: 'Message textbox' });
+      const composer = findInTree(tree, {
+        name_starts_with: 'Message ',
+        role: 'textbox'
+      });
 
       if (!composer) {
         throw new Error(
           'Composer textbox not found — is a Discord channel or DM selected? ' +
-          'Expected a "[eN] Message textbox" line in the formatted tree.'
+          'Expected a line starting with "Message " and containing "textbox" ' +
+          'in the formatted tree (e.g. "[eN] Message @user textbox" for DMs).'
         );
       }
 
