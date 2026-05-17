@@ -16,12 +16,6 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 - **`send_message` workflow flattens multiline text.** Two-line input `"line 1\nline 2"` landed as a single line with the two phrases concatenated. Discord interprets `\n` in the composer as the send trigger (or `browser.type` with `pressEnter: true` is eating the embedded newline). For in-message line breaks Discord requires Shift+Enter. Workflow should either pre-process embedded `\n` into Shift+Enter key events or document the limitation. (Found during live retest 2026-05-16.)
 - ~~**`webpilot_run_workflow` returns `Command timeout` while the workflow's `browser.type` step also hits the same timeout class as the click handler.**~~ ✅ Fixed in `60839ee`. Root cause was confirmed: Discord pushState doesn't fire `chrome.debugger.onDetach` (target stays attached), so bb42e6e's onDetach race never tripped; Chrome's renderer was simply starved by heavy React re-render and individual `sendCommand` calls hung. Fix: added a per-CDP-call stall budget (4s) wrapped around every `sendCommand` in `click.js` path iteration + ripple + press + release, AND mirrored the same protection (plus a fresh onDetach listener) into `keyboard.js` which had zero protection prior. Stuck CDP calls now short-circuit in ~4s and surface as `detachReason: 'cdp_stall:<phase>'`. Live-verified 2026-05-16 in DM (@Jtonna), server channel #💬・public, and after in-server channel switch to #verify — workflow lands clean. Also added `phaseLog` timing markers so future hangs are diagnosable from extension devtools.
 
-## Shipped this branch (developer-iteration MCP surface)
-
-- ~~**No MCP tool for inspecting formatter errors during iteration.**~~ ✅ `webpilot_dev_get_formatter_logs({ platform, limit? })` ships in this branch. Returns the health summary + recent error ring-buffer entries (incl. stack traces, workflow name, params, tabId for workflow errors; successful invocations only bump counters, no row). No auth required — read-only, consistent with `webpilot_get_formatter_info`. Documented in the MCP server's `instructions` block and in `accessibility-tree-formatters/DEV_GUIDE.md`.
-- ~~**No MCP tool for hot-reloading the Chrome extension after source edits.**~~ ✅ `webpilot_dev_reload_extension` ships in this branch. Sends `reload_extension` to the paired extension; the handler ACKs first, then schedules `chrome.runtime.reload()` ~100ms later. WS drops + reconnects in 1-3s; the paired API key persists across reload. Requires auth (mutates extension state).
-- **MCP server-level docs updated**: top-of-conversation `instructions` block now includes a "Developer mode" section that walks every paired agent through the edit → reload → test → check-logs loop, naming all dev tools and the convention (`webpilot_dev_*` for iteration tools, `webpilot_*` for production formatter inspection, `browser_*` for primitives).
-- **Project docs**: `accessibility-tree-formatters/DEV_GUIDE.md` created with the full inner-loop walkthrough, file-layout reference, and common pitfalls (incl. the source-vs-deployed extension load-path gotcha that bit us 2026-05-16).
 - **macOS detector / launcher / closer / notifications.** Scaffolded honestly per spec, never tested on real macOS hardware. Will surface real issues on first non-Windows user.
 - **Linux detector / launcher / closer / notifications.** Same as above for Linux.
 - **`pending-pairings.json` history pruning.** 24 h expiry exists for pending entries; denied/approved/expired entries accumulate forever. `cleanupOldPairings(maxAgeDays)` is in the spec but not yet implemented (`paired-keys.js`). (Server review I6.)
@@ -29,6 +23,13 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 - **`webpilot_reload_formatters` MCP tool is exempt from auth.** A network-mode-enabled non-paired client can hit `/sse` and reload arbitrary formatter files. Require auth or restrict to localhost. (Server review I16.)
 - **Auth comparison uses `===`, not `crypto.timingSafeEqual`.** `server.js` UI middleware + WS handshake + extension WS auth all use short-circuit string equality on the shared `apiKey`. Localhost today; LAN-exposed once network mode is on. (Server review C4.)
 - **Single shared `apiKey` reused for extension transport + UI admin.** Compromise of one = compromise of both. At minimum restrict mutating UI endpoints (`/api/ui/agents/*`, `/api/ui/settings/network-mode`, `/api/ui/profiles`) to localhost regardless of header. (Server review C3.)
+
+## Shipped this branch
+
+- ~~**No MCP tool for inspecting formatter errors during iteration.**~~ ✅ `webpilot_dev_get_formatter_logs({ platform, limit? })`. Returns health summary + recent error ring-buffer entries (incl. stack traces, workflow name, params, tabId for workflow errors). No auth required — read-only.
+- ~~**No MCP tool for hot-reloading the Chrome extension after source edits.**~~ ✅ `webpilot_dev_reload_extension`. Sends `reload_extension` to the paired extension; ACKs first, then `chrome.runtime.reload()` ~100ms later. WS reconnects in 1-3s; paired API key persists. Per-profile scope (documented).
+- ~~**MCP server-level docs**: top-of-conversation `instructions` block gained a "Developer mode" section.~~ ✅
+- ~~**Project docs**: `accessibility-tree-formatters/DEV_GUIDE.md` created.~~ ✅
 
 ## P2 — nice to have
 
