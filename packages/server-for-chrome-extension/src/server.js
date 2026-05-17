@@ -10,6 +10,7 @@ const pairedKeys = require('./paired-keys');
 const extensionInstalls = require('./extension-installs');
 const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
+const blocklistUpdater = require('./blocklist-updater');
 const formatterLogs = require('./formatter-logs');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
@@ -498,6 +499,16 @@ function mountWebUiRoutes(app, deps) {
         // Settings page; the daemon also consults this when firing pairing
         // notifications. See Phase 3 B.
         notifications: notificationsSettings.getSettings(),
+        // Baseline blocklist summary (P2 phase 4). The webapp Sites page
+        // (Phase 5) reads from this. Shape: { enabled, version, lastFetchedAt,
+        // domainCount }.
+        baselineBlocklist: (() => {
+          try { return blocklistUpdater.getStatus(); }
+          catch (e) {
+            console.log(`[ui-api:status] baselineBlocklist getStatus failed: ${e.message}`);
+            return { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
+          }
+        })(),
       });
     } catch (e) {
       console.error('[ui-api] /status failed:', e.message);
@@ -1483,6 +1494,24 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     () => formatterUpdater.checkForUpdates().catch(err => console.error('[server] Periodic formatter update check failed:', err)),
     3600000
   );
+
+  // Baseline-blocklist auto-updater (P2 phase 4). Fetches the curated
+  // financial-institutions list from the WebPilot repo, replaces every
+  // `source='baseline'` row in `global_site_rules` if the manifest version
+  // bumped. User-set rules are never touched. Boot fetch is delayed a few
+  // seconds so a slow/unreachable GitHub doesn't drag out cold-start; daily
+  // interval runs the same check.
+  blocklistUpdater.init({});
+  setTimeout(
+    () => blocklistUpdater.checkForUpdates()
+      .catch(err => console.error('[server] Boot baseline blocklist check failed:', err)),
+    5000
+  ).unref();
+  setInterval(
+    () => blocklistUpdater.checkForUpdates()
+      .catch(err => console.error('[server] Periodic baseline blocklist check failed:', err)),
+    24 * 60 * 60 * 1000
+  ).unref();
 
   // Pending-pairings housekeeping: lazy-expire entries past 24h, hard-drop
   // anything older than 7d. Runs once at startup and then hourly.

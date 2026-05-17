@@ -2,6 +2,24 @@ const { v4: uuidv4 } = require('uuid');
 const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 const { findInTree } = require('./lib/tree-query');
 const formatterLogs = require('./formatter-logs');
+const sitePolicy = require('./site-policy');
+
+// Tools that operate on an existing tab_id and therefore need a per-call
+// current-URL policy check (checkpoint B in the design doc).
+const TAB_ID_TOOLS = new Set([
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_get_accessibility_tree',
+  'browser_inject_script',
+  'browser_execute_js',
+  'webpilot_run_workflow',
+]);
+
+// Auto-close countdown for tabs that hit a blocked-by-policy check on a
+// tab_id-bearing tool. The error response carries the deadline so the agent
+// knows the tab is going away on its own.
+const AUTO_CLOSE_DELAY_MS = 5000;
 
 async function fetchScriptFromUrl(url) {
   const parsedUrl = new URL(url);
@@ -703,6 +721,20 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         console.log(`[mcp:intent] ${params.name}: ${params.arguments.intent}`);
       }
 
+      // Site-policy gate (P2 phase 4). Runs AFTER auth so we have the agent
+      // identity available for per-agent overrides, and BEFORE the tool
+      // dispatches so a blocked site never reaches the extension. A null
+      // return means "allowed — proceed". A non-null return is the full MCP
+      // result envelope and short-circuits the dispatch.
+      try {
+        const blocked = await _enforceSitePolicy(params.name, params.arguments || {}, effectiveKey);
+        if (blocked) {
+          return { jsonrpc: '2.0', id, result: blocked };
+        }
+      } catch (err) {
+        console.log(`[policy] enforcement threw: ${err.message} — failing open`);
+      }
+
       try {
         const result = await handleToolCall(params, effectiveKey);
         return {
@@ -1039,6 +1071,171 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         return `Parameter "${pname}" expected type ${expectedType}, got ${actualType}.`;
       }
     }
+    return null;
+  }
+
+  // ----------------------------------------------------------------------
+  // Site-policy gate (P2 phase 4).
+  //
+  // Two checkpoints:
+  //   A. `browser_create_tab` — gate on args.url before the create_tab
+  //      command is dispatched.
+  //   B. Every other tool taking a `tab_id` (see TAB_ID_TOOLS) — resolve
+  //      the tab's current URL via the extension, then gate. If blocked,
+  //      schedule a delayed `close_tab` so the agent isn't stuck on a
+  //      forbidden page.
+  //
+  // Always-allowed tools: browser_get_tabs, browser_close_tab,
+  // request_pairing, check_pairing_status, every webpilot_* and webpilot_dev_*
+  // — they either don't touch a tab, or the agent legitimately needs them
+  // to clean up. Auth is enforced separately.
+  // ----------------------------------------------------------------------
+
+  /**
+   * Wrap a JSON-rpc result-shaped MCP envelope around a "blocked by policy"
+   * response. The body matches the design doc:
+   *   { ok: false, error: 'site blocked by policy', domain, policySource,
+   *     [tabId, tabWillCloseAt, tabCloseInSeconds] }
+   */
+  function _buildBlockedResponse({ verdict, tabId, willCloseAt, closeInSeconds }) {
+    const body = {
+      ok: false,
+      error: 'site blocked by policy',
+      domain: verdict.domain,
+      policySource: verdict.source,
+    };
+    if (typeof tabId === 'number') {
+      body.tabId = tabId;
+      if (willCloseAt) body.tabWillCloseAt = willCloseAt;
+      if (typeof closeInSeconds === 'number') body.tabCloseInSeconds = closeInSeconds;
+    }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
+      isError: true,
+    };
+  }
+
+  /**
+   * Schedule the extension to close the offending tab after the standard
+   * AUTO_CLOSE_DELAY_MS countdown. Failures are logged but never thrown —
+   * the caller has already returned the blocked-error to the agent.
+   */
+  function _scheduleAutoClose(profileId, tabId) {
+    if (!profileId || typeof tabId !== 'number') return;
+    setTimeout(() => {
+      extensionBridge
+        .sendCommand(profileId, 'close_tab', { tab_id: tabId })
+        .then(() => {
+          console.log(
+            `[policy] auto-closed blocked tab tabId=${tabId} profile="${profileId}"`
+          );
+        })
+        .catch((err) => {
+          console.log(
+            `[policy] auto-close failed for tabId=${tabId} profile="${profileId}": ${err.message}`
+          );
+        });
+    }, AUTO_CLOSE_DELAY_MS);
+  }
+
+  /**
+   * Look up the current URL for a given tab via `browser_get_tabs`. Returns
+   * the URL string or null if the tab isn't present. The extension already
+   * publishes a tabs list; we reuse the same RPC rather than introduce a
+   * separate "get one tab" command. The call adds a single extra
+   * roundtrip per checkpoint-B tool call — acceptable for v1; if it shows
+   * up as a hot spot, Phase 6 can have the extension cache the active URL
+   * on every page state change.
+   */
+  async function _resolveTabUrl(profileId, tabId) {
+    if (!profileId || typeof tabId !== 'number') return null;
+    try {
+      const tabsResult = await extensionBridge.sendCommand(profileId, 'get_tabs', {});
+      const tabs = Array.isArray(tabsResult && tabsResult.tabs)
+        ? tabsResult.tabs
+        : Array.isArray(tabsResult)
+          ? tabsResult
+          : [];
+      for (const t of tabs) {
+        if (t && Number(t.id) === Number(tabId)) {
+          return typeof t.url === 'string' ? t.url : null;
+        }
+      }
+    } catch (err) {
+      console.log(
+        `[policy] _resolveTabUrl failed for tabId=${tabId}: ${err.message}`
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Apply the site-policy gate for an inbound tool call. Returns null when
+   * the call is allowed; otherwise returns the MCP envelope to return to
+   * the caller (and, for checkpoint B, schedules the auto-close).
+   *
+   * @param {string} name      tool name
+   * @param {object} args      tool arguments
+   * @param {string|null} apiKey
+   * @returns {object|null}
+   */
+  async function _enforceSitePolicy(name, args, apiKey) {
+    // Tools that never touch a site — always allowed.
+    if (
+      name === 'browser_get_tabs' ||
+      name === 'browser_close_tab' ||
+      name === 'browser_request_chain'
+    ) {
+      return null;
+    }
+
+    const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
+
+    // Checkpoint A: browser_create_tab gates on args.url.
+    if (name === 'browser_create_tab') {
+      const url = args && args.url;
+      if (typeof url !== 'string' || url.length === 0) return null;
+      const verdict = sitePolicy.isAllowed(agentId, url);
+      if (!verdict.allowed) {
+        console.log(
+          `[policy] checkpoint-A BLOCK tool=browser_create_tab url=${url} ` +
+            `domain=${verdict.domain} source=${verdict.source}`
+        );
+        return _buildBlockedResponse({ verdict });
+      }
+      return null;
+    }
+
+    // Checkpoint B: tools that operate on an existing tab_id.
+    if (TAB_ID_TOOLS.has(name)) {
+      const tabId = args && (args.tab_id ?? args.tabId);
+      if (typeof tabId !== 'number') return null; // let the regular handler raise the missing-arg error
+      const profileId = resolveTargetProfile(apiKey);
+      if (!extensionBridge.isConnected(profileId)) {
+        // Don't block on a missing extension — the regular handler will
+        // surface the "not connected" error which is the more useful one.
+        return null;
+      }
+      const currentUrl = await _resolveTabUrl(profileId, tabId);
+      if (!currentUrl) return null; // tab not found / not navigated yet — let it through
+      const verdict = sitePolicy.isAllowed(agentId, currentUrl);
+      if (verdict.allowed) return null;
+      const willCloseAt = new Date(Date.now() + AUTO_CLOSE_DELAY_MS).toISOString();
+      console.log(
+        `[policy] checkpoint-B BLOCK tool=${name} tabId=${tabId} url=${currentUrl} ` +
+          `domain=${verdict.domain} source=${verdict.source} — scheduling auto-close in ${AUTO_CLOSE_DELAY_MS}ms`
+      );
+      _scheduleAutoClose(profileId, tabId);
+      return _buildBlockedResponse({
+        verdict,
+        tabId,
+        willCloseAt,
+        closeInSeconds: Math.round(AUTO_CLOSE_DELAY_MS / 1000),
+      });
+    }
+
+    // Any other tool (request_pairing, webpilot_*, webpilot_dev_*, etc.) —
+    // no site involved.
     return null;
   }
 
@@ -1533,7 +1730,21 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
           const step = steps[i];
           try {
             const resolvedArgs = resolveReferences(step.arguments, previousResults);
-            const result = await handleToolCall(
+            // Re-apply the site-policy gate at every chained step — the gate
+            // in tools/call only fires for the outer browser_request_chain
+            // call, which is itself site-agnostic. Without this re-check, an
+            // agent could bypass policy by hiding a blocked-site step in a
+            // chain.
+            let stepResult;
+            try {
+              const blocked = await _enforceSitePolicy(step.tool, resolvedArgs || {}, apiKey);
+              if (blocked) {
+                stepResult = blocked;
+              }
+            } catch (e) {
+              console.log(`[policy] chain-step enforcement threw: ${e.message}`);
+            }
+            const result = stepResult || await handleToolCall(
               { name: step.tool, arguments: resolvedArgs },
               apiKey
             );
