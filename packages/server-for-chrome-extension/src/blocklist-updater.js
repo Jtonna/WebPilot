@@ -10,6 +10,17 @@
  * `global_site_rules` row with `source='baseline'` in a single transaction.
  * User-set rows (`source='user'`) are never touched.
  *
+ * Resilience tier (per the user's request, smoke-test 2026-05-17):
+ *   - Try remote fetch first.
+ *   - On success, write the parsed content to a LOCAL CACHE under
+ *     `<dataDir>/baseline-blocklists/` (manifest.json + each list file).
+ *   - On remote failure (network down, GitHub 404 because the branch
+ *     hasn't merged to main, etc.), READ FROM THE LOCAL CACHE and proceed.
+ *   - If neither remote nor local cache is available, write an empty
+ *     placeholder manifest so subsequent boots see a predictable state
+ *     (instead of repeatedly thrashing the network on every restart). The
+ *     baseline_blocklist_meta row is updated to reflect the empty state.
+ *
  * Hosts.txt parse rules:
  *   - Lines beginning with `#` (after trim) are comments — skip.
  *   - Blank lines — skip.
@@ -18,12 +29,14 @@
  *   - Lowercase + run through `normalizeDomain()` so we drop www. and reject
  *     ip-literals.
  *
- * Network failures are non-fatal: logged + the existing rows stay in place.
- * The user can disable the baseline pack entirely via the `config.baseline_blocklist_enabled`
- * key — when `false`, the fetch still happens (so we can show "next update
- * would have added/removed N rows" in the UI later if we want), but no DB
- * writes occur.
+ * The user can disable the baseline pack entirely via the
+ * `config.baseline_blocklist_enabled` key — when `false`, the fetch still
+ * happens (so we can show "next update would have added/removed N rows" in
+ * the UI later if we want), but no DB writes occur.
  */
+
+const fs = require('fs');
+const path = require('path');
 
 const GITHUB_RAW_BASE =
   'https://raw.githubusercontent.com/Jtonna/WebPilot/main/baseline-blocklists';
@@ -68,6 +81,100 @@ function _readMetaVersion() {
     return row && row.version ? String(row.version) : null;
   } catch (_e) {
     return null;
+  }
+}
+
+/**
+ * Resolve the on-disk cache directory used as the fallback when the remote
+ * fetch fails. Mirrors the shape of the remote source — a `manifest.json`
+ * plus each referenced list file alongside it.
+ *
+ * Path: `<dataDir>/baseline-blocklists/`. Lazy-required to dodge a top-level
+ * dep on `service/paths` (tests stub the module).
+ */
+function _getLocalCacheDir() {
+  const { getDataDir } = require('./service/paths');
+  return path.join(getDataDir(), 'baseline-blocklists');
+}
+
+function _ensureCacheDir() {
+  const dir = _getLocalCacheDir();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
+ * Persist the just-fetched manifest + list-file bodies to the local cache.
+ * Best-effort — a write failure is logged but does not abort the update.
+ */
+function _writeLocalCache(manifestText, listBodiesByFile) {
+  try {
+    const dir = _ensureCacheDir();
+    fs.writeFileSync(path.join(dir, 'manifest.json'), manifestText, 'utf8');
+    for (const [file, body] of Object.entries(listBodiesByFile || {})) {
+      // file can contain a `subdir/name.txt`-style path; mkdir the parent.
+      const dest = path.join(dir, file);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, body, 'utf8');
+    }
+  } catch (err) {
+    console.warn(`[blocklist-updater] local cache write failed: ${err.message}`);
+  }
+}
+
+/**
+ * Read the local cache, if present. Returns `{manifestText, listBodiesByFile}`
+ * or `null` if the cache is empty / missing / unreadable.
+ */
+function _readLocalCache() {
+  try {
+    const dir = _getLocalCacheDir();
+    const manifestPath = path.join(dir, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) return null;
+    const manifestText = fs.readFileSync(manifestPath, 'utf8');
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestText);
+    } catch (e) {
+      console.warn(`[blocklist-updater] local cache manifest is unparseable: ${e.message}`);
+      return null;
+    }
+    const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
+    const listBodiesByFile = {};
+    for (const list of lists) {
+      if (!list || typeof list.file !== 'string') continue;
+      const filePath = path.join(dir, list.file);
+      if (!fs.existsSync(filePath)) {
+        console.warn(`[blocklist-updater] local cache missing list file: ${list.file}`);
+        continue;
+      }
+      listBodiesByFile[list.file] = fs.readFileSync(filePath, 'utf8');
+    }
+    return { manifestText, listBodiesByFile };
+  } catch (err) {
+    console.warn(`[blocklist-updater] local cache read failed: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Write a deliberate empty placeholder when both remote and local cache are
+ * unavailable. Keeps boot behavior predictable across restarts (we know the
+ * cache exists; subsequent boots don't retry-thrash if the network's down).
+ */
+function _writeEmptyPlaceholder() {
+  try {
+    const dir = _ensureCacheDir();
+    const empty = {
+      version: '0',
+      lists: [],
+      _note:
+        'Empty placeholder written because both remote fetch and local cache were unavailable. ' +
+        'Will be overwritten on the next successful remote fetch.',
+    };
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(empty, null, 2), 'utf8');
+  } catch (err) {
+    console.warn(`[blocklist-updater] empty-placeholder write failed: ${err.message}`);
   }
 }
 
@@ -136,50 +243,124 @@ async function checkForUpdates() {
   const baseUrl = _options.baseUrl;
   console.log(`[blocklist-updater] checking ${baseUrl}/manifest.json`);
 
-  let manifest;
+  // Resolution chain: try remote first, fall back to local cache, fall back
+  // to an empty placeholder. Track where the data ultimately came from so we
+  // can log + record it on baseline_blocklist_meta.source_url.
+  let manifest = null;
+  let manifestText = null;
+  let listBodiesByFile = {};
+  let sourceLabel = baseUrl;   // 'github' fetch URL by default
+  let fromCache = false;
+  let fromEmpty = false;
+
+  // --- Step 1: try remote fetch ---
   try {
-    const manifestText = await _fetchText(`${baseUrl}/manifest.json`);
+    manifestText = await _fetchText(`${baseUrl}/manifest.json`);
     manifest = JSON.parse(manifestText);
   } catch (err) {
-    console.error(`[blocklist-updater] manifest fetch/parse failed: ${err.message}`);
-    return { updated: false, error: err.message };
+    console.warn(
+      `[blocklist-updater] remote manifest fetch failed (${err.message}) — falling back to local cache`
+    );
+    manifest = null;
+    manifestText = null;
+  }
+
+  // If remote manifest came back, fetch each list file too.
+  if (manifest) {
+    const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
+    let allListsOk = true;
+    for (const list of lists) {
+      if (!list || typeof list.file !== 'string') continue;
+      try {
+        listBodiesByFile[list.file] = await _fetchText(`${baseUrl}/${list.file}`);
+      } catch (err) {
+        console.warn(
+          `[blocklist-updater] remote fetch failed for list "${list.file}" (${err.message}) — falling back to local cache`
+        );
+        allListsOk = false;
+        break;
+      }
+    }
+    if (!allListsOk) {
+      manifest = null;
+      manifestText = null;
+      listBodiesByFile = {};
+    } else {
+      // Remote fetch fully successful — persist to the local cache for next time.
+      _writeLocalCache(manifestText, listBodiesByFile);
+    }
+  }
+
+  // --- Step 2: fall back to local cache ---
+  if (!manifest) {
+    const cached = _readLocalCache();
+    if (cached) {
+      try {
+        manifest = JSON.parse(cached.manifestText);
+        manifestText = cached.manifestText;
+        listBodiesByFile = cached.listBodiesByFile;
+        fromCache = true;
+        sourceLabel = `cache:${_getLocalCacheDir()}`;
+        console.log(`[blocklist-updater] using local cache (manifest version=${manifest.version})`);
+      } catch (e) {
+        console.warn(`[blocklist-updater] local cache manifest parse failed: ${e.message}`);
+        manifest = null;
+      }
+    }
+  }
+
+  // --- Step 3: empty placeholder ---
+  if (!manifest) {
+    console.warn(
+      '[blocklist-updater] neither remote nor local cache available — writing empty placeholder'
+    );
+    _writeEmptyPlaceholder();
+    fromEmpty = true;
+    sourceLabel = 'empty';
+    manifest = { version: '0', lists: [] };
+    manifestText = null;
+    listBodiesByFile = {};
   }
 
   const remoteVersion = manifest && manifest.version ? String(manifest.version) : null;
   if (!remoteVersion) {
-    const msg = 'Remote manifest missing required "version" field';
+    const msg = 'Manifest missing required "version" field (from ' + sourceLabel + ')';
     console.error(`[blocklist-updater] ${msg}`);
     return { updated: false, error: msg };
   }
 
   const localVersion = _readMetaVersion();
+  // If we're using the cache or empty, AND the version matches what's already
+  // in the DB, treat as no-op. (For remote fetches that fail and we fall
+  // back to cache, we DO want to re-apply on first boot — but the version
+  // check naturally short-circuits subsequent boots.)
   if (localVersion === remoteVersion) {
-    console.log(`[blocklist-updater] already up to date (version=${localVersion})`);
-    return { updated: false, currentVersion: localVersion };
+    console.log(
+      `[blocklist-updater] already up to date (version=${localVersion}, source=${sourceLabel})`
+    );
+    return { updated: false, currentVersion: localVersion, source: sourceLabel };
   }
 
-  // Fetch each list file referenced by the manifest.
+  // Parse all list files (from whichever source they came from) into the
+  // unified domain set.
   const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
-  if (lists.length === 0) {
+  if (lists.length === 0 && !fromEmpty) {
     console.warn('[blocklist-updater] manifest has no "lists" entries');
   }
   const allDomains = new Set();
   for (const list of lists) {
     if (!list || typeof list.file !== 'string') continue;
-    try {
-      const text = await _fetchText(`${baseUrl}/${list.file}`);
-      const domains = _parseHostsFile(text);
-      console.log(
-        `[blocklist-updater] parsed ${domains.length} domains from "${list.file}" ` +
-          `(${list.name || 'unnamed'})`
-      );
-      for (const d of domains) allDomains.add(d);
-    } catch (err) {
-      console.error(
-        `[blocklist-updater] failed to fetch list "${list.file}": ${err.message}`
-      );
-      return { updated: false, error: err.message };
+    const text = listBodiesByFile[list.file];
+    if (typeof text !== 'string') {
+      console.warn(`[blocklist-updater] list "${list.file}" body missing — skipping`);
+      continue;
     }
+    const domains = _parseHostsFile(text);
+    console.log(
+      `[blocklist-updater] parsed ${domains.length} domains from "${list.file}" ` +
+        `(${list.name || 'unnamed'}, source=${sourceLabel})`
+    );
+    for (const d of domains) allDomains.add(d);
   }
 
   const domainList = Array.from(allDomains);
@@ -233,7 +414,7 @@ async function checkForUpdates() {
         const res = insertStmt.run(d, nowIso, nowIso);
         if (res.changes > 0) inserted += 1;
       }
-      upsertMetaStmt.run(remoteVersion, nowIso, baseUrl, domains.length);
+      upsertMetaStmt.run(remoteVersion, nowIso, sourceLabel, domains.length);
       return { deleted, inserted };
     });
 
@@ -252,6 +433,9 @@ async function checkForUpdates() {
     fromVersion: localVersion,
     toVersion: remoteVersion,
     domainCount: domainList.length,
+    source: sourceLabel,
+    fromCache,
+    fromEmpty,
   };
 }
 
