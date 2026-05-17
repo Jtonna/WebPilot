@@ -584,6 +584,70 @@ function cleanupExpiredPairings() {
 }
 
 /**
+ * Prune terminal-state pending-pairings entries (status === 'denied' or
+ * 'expired') that are older than `maxAgeDays`. Designed for periodic
+ * maintenance so the on-disk JSON store doesn't grow unbounded as denials
+ * and expirations accumulate.
+ *
+ * Touch matrix:
+ *   - pending  → ALWAYS preserved (own 24h TTL flow via cleanupExpiredPairings)
+ *   - approved → ALWAYS preserved (active credential — dropping would log the
+ *                agent out unexpectedly)
+ *   - denied   → dropped when age > maxAgeDays
+ *   - expired  → dropped when age > maxAgeDays
+ *
+ * Age is measured from the entry's most recent state-change timestamp:
+ *   decidedAt → createdAt (fallback). Entries whose timestamps are missing
+ *   or unparseable are kept defensively.
+ *
+ * Safe to call concurrently with other paired-keys operations: it reads
+ * the entire store, computes the next state, and persists in a single
+ * `savePendingPairings()` write — the same pattern used by
+ * cleanupExpiredPairings().
+ *
+ * @param {number} [maxAgeDays=7] Threshold in days. Entries strictly older
+ *   than this many days (by their state-change timestamp) are removed.
+ * @returns {{ removed: number, kept: number }} Counts of dropped vs retained
+ *   entries after the sweep.
+ */
+function cleanupOldPairings(maxAgeDays = 7) {
+  const pairings = loadPendingPairings();
+  const now = Date.now();
+  const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+  const kept = [];
+  let removed = 0;
+  for (const entry of pairings) {
+    // Only denied / expired are eligible for pruning.
+    if (entry.status !== 'denied' && entry.status !== 'expired') {
+      kept.push(entry);
+      continue;
+    }
+    // Use the most recent state-change timestamp; fall back to createdAt.
+    const tsRaw = entry.decidedAt || entry.createdAt;
+    const ts = tsRaw ? Date.parse(tsRaw) : NaN;
+    // Defensive: keep entries with missing/unparseable timestamps so a
+    // malformed row isn't silently deleted by housekeeping.
+    if (!Number.isFinite(ts)) {
+      kept.push(entry);
+      continue;
+    }
+    if (now - ts > maxAgeMs) {
+      removed += 1;
+      continue;
+    }
+    kept.push(entry);
+  }
+  if (removed > 0) {
+    savePendingPairings(kept);
+    console.log(
+      `[pairing:cleanupOldPairings] removed=${removed} kept=${kept.length} ` +
+        `(maxAgeDays=${maxAgeDays}, terminal-only: denied + expired)`
+    );
+  }
+  return { removed, kept: kept.length };
+}
+
+/**
  * Walk paired-keys.json and revoke any entry whose `lastAccessed` is still
  * null more than `maxAgeMs` after `createdAt`. Designed to be called at
  * startup and hourly, in the same schedule as `cleanupExpiredPairings`.
@@ -656,6 +720,7 @@ module.exports = {
   listPendingPairings,
   listAllPairings,
   cleanupExpiredPairings,
+  cleanupOldPairings,
   cleanupUnusedKeys,
   onPairingEvent,
   // Constant-time string equality helper. Exposed so other auth paths

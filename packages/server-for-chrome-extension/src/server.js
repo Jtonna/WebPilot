@@ -793,15 +793,30 @@ function mountWebUiRoutes(app, deps) {
 
   // ---- Pairings history (Phase 3 A) ----
   // GET /api/ui/pairings/history?cursor=<isoTimestamp>&limit=<n>
+  // GET /api/ui/pairings/history?before=<isoTimestamp>&limit=<n>  (alias)
   //
   // Returns terminal-state pairings (approved/denied/expired) sorted by
   // decidedAt DESC, cursor-paginated. Pending entries are not "history" — they
   // live on /api/ui/status under `pendingPairings`.
+  //
+  // `cursor` and `before` are accepted interchangeably; both mean "return
+  // entries strictly older than this timestamp". `cursor` is the original
+  // name (still used by lib/api.js#getPairingHistory); `before` is the
+  // industry-standard name and is supported for new callers.
+  //
+  // Response shape: { entries, hasMore, nextCursor } where `hasMore` is true
+  // iff more terminal entries exist beyond the returned page, and
+  // `nextCursor` is the timestamp to pass back to fetch the next page (null
+  // when there's nothing more).
   app.get('/api/ui/pairings/history', auth, (req, res) => {
     try {
-      const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0
+      const rawCursor = typeof req.query.cursor === 'string' && req.query.cursor.length > 0
         ? req.query.cursor
         : null;
+      const rawBefore = typeof req.query.before === 'string' && req.query.before.length > 0
+        ? req.query.before
+        : null;
+      const cursor = rawCursor || rawBefore;
       const rawLimit = parseInt(req.query.limit, 10);
       const limit = Number.isFinite(rawLimit) && rawLimit > 0
         ? Math.min(rawLimit, 200)
@@ -836,10 +851,10 @@ function mountWebUiRoutes(app, deps) {
 
       console.log(
         `[ui-api:pairings:history] cursor=${cursor || '(none)'} limit=${limit} ` +
-          `returned=${page.length} nextCursor=${nextCursor || '(end)'}`
+          `returned=${page.length} hasMore=${hasMore} nextCursor=${nextCursor || '(end)'}`
       );
 
-      res.json({ entries: page, nextCursor });
+      res.json({ entries: page, hasMore, nextCursor });
     } catch (e) {
       console.error('[ui-api] /pairings/history failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -1440,6 +1455,20 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     console.log(`[pairing:cleanup] startup pass failed: ${e.message}`);
   }
 
+  // Terminal-state pruning: drop denied / expired pairings older than 7 days.
+  // Complements cleanupExpiredPairings (which only hard-drops by createdAt
+  // age, not by decision-time). Runs once at startup and then daily.
+  try {
+    const oldInitial = pairedKeys.cleanupOldPairings();
+    if (oldInitial.removed > 0) {
+      console.log(
+        `[pairing:cleanupOldPairings] startup pass: removed=${oldInitial.removed} kept=${oldInitial.kept}`
+      );
+    }
+  } catch (e) {
+    console.log(`[pairing:cleanupOldPairings] startup pass failed: ${e.message}`);
+  }
+
   // Unused-keys housekeeping: revoke paired-keys entries that were minted
   // (typically by the pair-agent modal Copy click) but never used for a
   // single tool call within 48h. Runs at startup and hourly. If anything
@@ -1463,7 +1492,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   } catch (e) {
     console.log(`[extension-installs:cleanup] startup pass failed: ${e.message}`);
   }
-  setInterval(() => {
+  const hourlyCleanupInterval = setInterval(() => {
     try {
       pairedKeys.cleanupExpiredPairings();
     } catch (e) {
@@ -1481,6 +1510,21 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       console.log(`[paired-keys:cleanup] hourly pass failed: ${e.message}`);
     }
   }, 3600 * 1000);
+
+  // Daily terminal-state prune. Hourly is overkill for entries that are at
+  // least 7 days old; once a day is enough. Stored so shutdown can clearInterval.
+  const dailyOldPairingsInterval = setInterval(() => {
+    try {
+      const r = pairedKeys.cleanupOldPairings();
+      if (r.removed > 0) {
+        console.log(
+          `[pairing:cleanupOldPairings] daily pass: removed=${r.removed} kept=${r.kept}`
+        );
+      }
+    } catch (e) {
+      console.log(`[pairing:cleanupOldPairings] daily pass failed: ${e.message}`);
+    }
+  }, 24 * 60 * 60 * 1000);
 
   // Bridge async-pairing events back to the extension's WS so existing
   // `paired_agents_list` listeners in background.js keep working even though
@@ -1599,16 +1643,26 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     console.log(`Server URL: ws://${publicHost}:${port}`);
   });
 
+  // Clear maintenance intervals during graceful shutdown so they don't keep
+  // the event loop alive past server.close().
+  function clearMaintenanceIntervals() {
+    try { clearInterval(hourlyCleanupInterval); } catch (_e) { /* ignore */ }
+    try { clearInterval(dailyOldPairingsInterval); } catch (_e) { /* ignore */ }
+  }
+
   // Clean up PID/port files on shutdown
   process.on('SIGTERM', () => {
+    clearMaintenanceIntervals();
     cleanupPidAndPortFiles();
     server.close(() => process.exit(0));
   });
   process.on('SIGINT', () => {
+    clearMaintenanceIntervals();
     cleanupPidAndPortFiles();
     server.close(() => process.exit(0));
   });
   process.on('exit', () => {
+    clearMaintenanceIntervals();
     cleanupPidAndPortFiles();
   });
 
