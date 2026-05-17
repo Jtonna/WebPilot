@@ -337,6 +337,32 @@ function validateProfileName(name, userDataDir) {
  * / ::1 with HTTP 403). The MCP and extension WS endpoints have their own
  * API-key auth and are untouched.
  */
+/**
+ * Dev-mode signal — loosens the localhost-only UI auth so a developer can
+ * hit the UI / popup endpoints over LAN (e.g. via `http://192.168.x.x:3456/ui`)
+ * during iteration. NEVER true in production: pkg .exe builds don't run with
+ * `node --watch` and don't have `WEBPILOT_DEV` set. The check uses both
+ * signals so users running plain `node index.js` from source can opt in
+ * explicitly, while the `npm run dev` script (which uses `node --watch`)
+ * picks it up automatically.
+ *
+ * In dev mode, ui-auth / mutating-ui-auth / ui-ws-upgrade still LOG that
+ * they accepted a non-local request so it's visible in daemon.log, but do
+ * not reject. The mutating layer's policy is preserved in production where
+ * it matters.
+ */
+const IS_DEV_MODE =
+  process.env.WEBPILOT_DEV === '1' ||
+  process.execArgv.some((a) =>
+    a === '--watch' || a.startsWith('--watch=') || a.startsWith('--watch-path')
+  );
+
+if (IS_DEV_MODE) {
+  console.log(
+    '[ui-auth] DEV MODE detected (node --watch or WEBPILOT_DEV=1) — localhost-only UI gates will pass-through with a warning log. Do NOT ship a production build in this mode.'
+  );
+}
+
 function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
   return function uiAuth(req, res, next) {
     const remote = req.socket && req.socket.remoteAddress;
@@ -345,6 +371,10 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
       remote === '::1' ||
       remote === '::ffff:127.0.0.1';
     if (isLocal) {
+      return next();
+    }
+    if (IS_DEV_MODE) {
+      console.log(`[ui-auth] DEV MODE — allowing non-local ${req.method} ${req.url} from ${remote}`);
       return next();
     }
     console.log(`[ui-auth] rejecting non-local request to ${req.method} ${req.url} from ${remote}`);
@@ -373,6 +403,10 @@ function makeMutatingUiAuth() {
       remote === '::1' ||
       remote === '::ffff:127.0.0.1';
     if (isLocal) return next();
+    if (IS_DEV_MODE) {
+      console.log(`[ui-auth] DEV MODE — allowing non-local MUTATING ${req.method} ${req.url} from ${remote}`);
+      return next();
+    }
     console.log(`[ui-auth] rejecting non-local mutating request to ${req.method} ${req.url} from ${remote}`);
     return res.status(403).json({ error: 'Forbidden: mutating UI endpoints are localhost-only' });
   };
@@ -1446,11 +1480,14 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
         remoteAddr === '127.0.0.1' ||
         remoteAddr === '::1' ||
         remoteAddr === '::ffff:127.0.0.1';
-      if (!isLocal) {
+      if (!isLocal && !IS_DEV_MODE) {
         console.log(`[ui-ws] rejecting non-local UI WS upgrade from ${remoteAddr}`);
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
+      }
+      if (!isLocal && IS_DEV_MODE) {
+        console.log(`[ui-ws] DEV MODE — allowing non-local UI WS upgrade from ${remoteAddr}`);
       }
       uiWss.handleUpgrade(request, socket, head, (ws) => {
         uiWss.emit('connection', ws, request);
