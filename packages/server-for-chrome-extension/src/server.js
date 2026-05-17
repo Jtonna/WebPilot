@@ -1998,9 +1998,21 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   {
     const sitePolicyPopup = require('./site-policy');
 
-    // Extract a paired-agent API key from the request. Supports either the
-    // X-API-Key header (preferred) or an `apiKey` query param. Returns
-    // { key, entry, agentId } on success, or null on auth failure.
+    // Extract an API key from the request and resolve it to either a paired
+    // agent OR the server-wide transport key. Supports X-API-Key header
+    // (preferred) or `apiKey` query param.
+    //
+    // Two valid auth shapes:
+    //   1. PAIRED-AGENT key — `entry` and `agentId` are populated; popup
+    //      shows per-agent overrides + the agent name.
+    //   2. SERVER TRANSPORT key — `entry: null`, `agentId: null`; popup is
+    //      authenticated for read-only state but has no agent context.
+    //      Lets the popup work on profiles where no agent has paired yet
+    //      (e.g. a fresh Chrome profile that's only running auto-connect).
+    //      The extension always has the transport key in chrome.storage
+    //      via /connect, even before any agent pairs.
+    //
+    // Returns the resolved shape or null on auth failure.
     function _authPopup(req) {
       const key =
         req.headers['x-api-key'] ||
@@ -2008,10 +2020,20 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
         (req.query && req.query.apiKey) ||
         null;
       if (!key || typeof key !== 'string') return null;
+      // Try paired-agent first — most callers will be on a paired profile.
       const entry = pairedKeys.validateKey(key);
-      if (!entry) return null;
-      const agentId = sitePolicyPopup.resolveAgentIdFromApiKey(key);
-      return { key, entry, agentId };
+      if (entry) {
+        const agentId = sitePolicyPopup.resolveAgentIdFromApiKey(key);
+        return { key, entry, agentId };
+      }
+      // Fall back to the server transport key. Constant-time compare against
+      // the legacy server-wide apiKey so a profile without a paired agent
+      // still gets a functional popup (connection status, global site
+      // policy view, dashboard link).
+      if (pairedKeys.constantTimeEqual(key, apiKey)) {
+        return { key, entry: null, agentId: null };
+      }
+      return null;
     }
 
     // Map (decision, source) into a single state-pill key consumed by the
@@ -2032,11 +2054,15 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });
       const { entry, agentId } = auth;
-      const profileId = entry.profileId || null;
-      const connection =
-        profileId && extensionBridge.isConnected(profileId)
-          ? 'connected'
-          : 'disconnected';
+      // entry may be null when we authenticated via the server transport key
+      // (no paired agent for this profile). In that case profileId is unknown
+      // to the server — best-effort: any connected profile counts as 'connected'
+      // for the indicator (the extension is connected via WS regardless of
+      // which profile if it has the transport key working).
+      const profileId = entry ? (entry.profileId || null) : null;
+      const connection = entry
+        ? (profileId && extensionBridge.isConnected(profileId) ? 'connected' : 'disconnected')
+        : (extensionBridge.getConnectedProfiles().length > 0 ? 'connected' : 'disconnected');
 
       const tabUrlRaw = (req.query && req.query.tabUrl) || null;
       let currentTab = null;
@@ -2061,7 +2087,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       const body = {
         connection,
         profileId,
-        agent: agentId ? { id: agentId, name: entry.agentName } : null,
+        agent: agentId && entry ? { id: agentId, name: entry.agentName } : null,
         serverUrl,
       };
       if (currentTab) body.currentTab = currentTab;
