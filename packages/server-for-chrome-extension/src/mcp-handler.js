@@ -624,7 +624,7 @@ function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager,
           serverInfo: { name: 'WebPilot', version: '1.1.1' },
           instructions: `WebPilot is an MCP server that controls a real Chrome browser via a paired Chrome extension. All browser interactions happen in the user's actual browser, not a headless instance.
 
-**Authentication — read this first.** Every browser_* tool requires a paired API key. If you do NOT already have one for this server (i.e., your client config has no X-API-Key header / api_key parameter): your FIRST action must be to call \`request_pairing\` with a memorable agent_name. That tool returns immediately with a pairing_id and status — read its description and follow the async flow (surface the approval URL to the human, stop calling browser_* tools, poll \`check_pairing_status\` later). Skipping this step means every browser tool call will fail with an authentication error. The tools \`request_pairing\`, \`check_pairing_status\`, \`webpilot_get_formatter_info\`, and \`webpilot_reload_formatters\` do NOT require a key.
+**Authentication — read this first.** Every browser_* tool requires a paired API key. If you do NOT already have one for this server (i.e., your client config has no X-API-Key header / api_key parameter): your FIRST action must be to call \`request_pairing\` with a memorable agent_name. That tool returns immediately with a pairing_id and status — read its description and follow the async flow (surface the approval URL to the human, stop calling browser_* tools, poll \`check_pairing_status\` later). Skipping this step means every browser tool call will fail with an authentication error. The tools \`request_pairing\`, \`check_pairing_status\`, \`webpilot_get_formatter_info\`, and \`webpilot_dev_get_formatter_logs\` do NOT require a key.
 
 Tool workflow: Use browser_get_tabs to find open tabs, then browser_get_accessibility_tree to read page content, then use the refs returned (e1, e2, etc.) with browser_click, browser_scroll, and browser_type for precise element targeting. Chain these operations to navigate and interact with pages.
 
@@ -665,15 +665,17 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     }
 
     if (method === 'tools/call') {
-      // Auth gate: exempt pairing handshake + read-only formatter inspection
-      // (info, reload, log readout) — these don't touch the browser. Mutation
-      // tools (browser_*, webpilot_dev_reload_extension, webpilot_run_workflow)
-      // require a valid API key.
+      // Auth gate: exempt the pairing handshake (request_pairing,
+      // check_pairing_status) and the strictly read-only formatter inspection
+      // tools (webpilot_get_formatter_info, webpilot_dev_get_formatter_logs).
+      // Every mutating tool — including webpilot_reload_formatters, which
+      // reloads formatter code from disk and therefore mutates server state —
+      // requires a valid paired API key. browser_*, webpilot_dev_reload_extension,
+      // and webpilot_run_workflow are all auth-gated.
       const noAuthRequired =
         params.name === 'request_pairing' ||
         params.name === 'check_pairing_status' ||
         params.name === 'webpilot_get_formatter_info' ||
-        params.name === 'webpilot_reload_formatters' ||
         params.name === 'webpilot_dev_get_formatter_logs';
       // Resolved API key for the call. Used for both auth and per-agent
       // profile routing (Wave 7 J2). For auth-exempt tools that don't carry a

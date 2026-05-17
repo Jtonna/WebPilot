@@ -6,6 +6,23 @@ const crypto = require('node:crypto');
 
 const { getDataDir } = require('./service/paths');
 
+/**
+ * Constant-time string equality. Used for every comparison of a caller-supplied
+ * API key against a stored key, so a string-compare short-circuit on the first
+ * differing byte cannot be measured to recover the secret. Returns false for
+ * non-strings or strings of differing length (length is not secret — the stored
+ * keys are all the same width — so the early return is safe).
+ *
+ * @param {unknown} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+}
+
 function getKeysPath() {
   return path.join(getDataDir(), 'config', 'paired-keys.json');
 }
@@ -203,7 +220,7 @@ function createPairedAgent({ agentName, profileId }) {
  */
 function validateKey(apiKey) {
   const keys = loadKeys();
-  return keys.find((entry) => entry.key === apiKey) || null;
+  return keys.find((entry) => constantTimeEqual(entry.key, apiKey)) || null;
 }
 
 /**
@@ -216,7 +233,7 @@ function validateKey(apiKey) {
  */
 function renameKey(apiKey, newName) {
   const keys = loadKeys();
-  const entry = keys.find((e) => e.key === apiKey);
+  const entry = keys.find((e) => constantTimeEqual(e.key, apiKey));
   if (!entry) return false;
   entry.agentName = newName;
   saveKeys(keys);
@@ -236,7 +253,7 @@ function renameKey(apiKey, newName) {
  */
 function updateProfileBinding(apiKey, profileId) {
   const keys = loadKeys();
-  const entry = keys.find((e) => e.key === apiKey);
+  const entry = keys.find((e) => constantTimeEqual(e.key, apiKey));
   if (!entry) return false;
   entry.profileId = profileId || null;
   saveKeys(keys);
@@ -250,7 +267,7 @@ function updateProfileBinding(apiKey, profileId) {
  */
 function touchKey(apiKey) {
   const keys = loadKeys();
-  const entry = keys.find((e) => e.key === apiKey);
+  const entry = keys.find((e) => constantTimeEqual(e.key, apiKey));
   if (entry) {
     entry.lastAccessed = new Date().toISOString();
     saveKeys(keys);
@@ -266,7 +283,7 @@ function touchKey(apiKey) {
  */
 function revokeKey(apiKey) {
   const keys = loadKeys();
-  const filtered = keys.filter((entry) => entry.key !== apiKey);
+  const filtered = keys.filter((entry) => !constantTimeEqual(entry.key, apiKey));
   if (filtered.length === keys.length) {
     return false;
   }
@@ -641,6 +658,9 @@ module.exports = {
   cleanupExpiredPairings,
   cleanupUnusedKeys,
   onPairingEvent,
+  // Constant-time string equality helper. Exposed so other auth paths
+  // (extension WS handshake in server.js, etc.) can share the same primitive.
+  constantTimeEqual,
   // Constants (exposed for docs / tests; not strictly part of the runtime API)
   UNUSED_KEY_EXPIRY_MS,
 };

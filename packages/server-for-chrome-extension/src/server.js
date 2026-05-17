@@ -355,7 +355,7 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
  * Defense-in-depth localhost gate for MUTATING Web UI endpoints
  * (/api/ui/agents/*, /api/ui/profiles, /api/ui/settings/network-mode,
  * /api/ui/server/restart, /api/ui/chrome/restart, /api/ui/pairings/:id/approve,
- * /api/ui/pairings/:id/deny, etc.).
+ * /api/ui/pairings/:id/deny, /api/ui/formatters/:name/dismiss, etc.).
  *
  * The general `makeUiAuth` already rejects non-loopback callers, but mutating
  * admin actions are sensitive enough to deserve a second, narrowly-scoped check
