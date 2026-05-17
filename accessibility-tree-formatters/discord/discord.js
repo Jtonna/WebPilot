@@ -1030,29 +1030,56 @@ module.exports = function formatDiscord(nodes) {
   }
 
   // --- Extract DM conversation partner from title/header ---
+  // Returns { username, displayName } where:
+  //   username    = the @handle (e.g. "notboosted") — from page title or @-prefixed heading
+  //   displayName = the human-facing label (e.g. "Jtonna") — from the chat-area toolbar
+  //                 heading that does NOT start with "@". Either may be empty.
+  // Surfacing both lets the agent recognize that "Jtonna" and "@notboosted" refer
+  // to the same person (a frequent source of confusion when users mix them).
   function extractDmRecipient() {
     var info = detectUrl();
-    var recipient = '';
+    var username = '';
+    var displayName = '';
 
-    // Check the page title: usually "Discord | @Username" or "@Username"
+    // 1) Username from page title — "Discord | @Username"
     if (info.title) {
       var m = info.title.match(/@(\S+)/);
-      if (m) recipient = m[1];
+      if (m) username = m[1];
     }
 
-    // Also look for a heading with @ prefix in the chat area
-    if (!recipient) {
-      var heading = findNode(function (node) {
+    // 2) Username fallback — any heading whose text starts with "@"
+    if (!username) {
+      var atHeading = findNode(function (node) {
         return role(node) === 'heading' && name(node).trim().startsWith('@');
       });
-      if (heading) {
-        recipient = name(heading).trim().replace(/^@/, '');
+      if (atHeading) {
+        username = name(atHeading).trim().replace(/^@/, '');
       }
     }
 
-    // Fallback: toolbar area at top of chat
-    if (!recipient) {
-      var toolbarHeading = findNode(function (node) {
+    // 3) Display name — heading or static text inside toolbar/banner whose text
+    //    is NOT @-prefixed. Discord renders the recipient's display name as a
+    //    plain heading in the chat header toolbar; the username may also appear
+    //    nearby as a separate @-prefixed node, which we skip here.
+    var headerNode = findNode(function (node) {
+      var r = role(node);
+      if (r !== 'heading' && r !== 'StaticText') return false;
+      var n = name(node).trim();
+      if (!n || n.length >= 40) return false;
+      if (n.startsWith('@')) return false;
+      if (n.toLowerCase() === 'direct messages') return false;
+      return hasAncestor(node, function (anc) {
+        return role(anc) === 'toolbar' || role(anc) === 'banner';
+      }, 5);
+    });
+    if (headerNode) {
+      displayName = name(headerNode).trim();
+    }
+
+    // 4) If we still have nothing for username, fall back to any short
+    //    toolbar/banner text (legacy behavior before the displayName split).
+    if (!username && !displayName) {
+      var anyHeading = findNode(function (node) {
         var r = role(node);
         return (r === 'heading' || r === 'StaticText') &&
           name(node).trim().length > 0 &&
@@ -1061,12 +1088,18 @@ module.exports = function formatDiscord(nodes) {
             return role(anc) === 'toolbar' || role(anc) === 'banner';
           }, 5);
       });
-      if (toolbarHeading) {
-        recipient = name(toolbarHeading).trim().replace(/^@/, '');
+      if (anyHeading) {
+        username = name(anyHeading).trim().replace(/^@/, '');
       }
     }
 
-    return recipient;
+    // If display name and username collapse to the same value, drop the
+    // displayName so we don't render "@foo (@foo)".
+    if (displayName && username && displayName.replace(/^@/, '').toLowerCase() === username.toLowerCase()) {
+      displayName = '';
+    }
+
+    return { username: username, displayName: displayName };
   }
 
   // --- Extract member list ---
@@ -2013,8 +2046,20 @@ module.exports = function formatDiscord(nodes) {
   function formatDmConversation() {
     var lines = [];
     var recipient = extractDmRecipient();
+    var headerLabel;
+    if (recipient.displayName && recipient.username) {
+      // Both available — render display name first, username in parens.
+      // Tells the agent that e.g. "Jtonna" and "@notboosted" are the same person.
+      headerLabel = recipient.displayName + ' (@' + recipient.username + ')';
+    } else if (recipient.username) {
+      headerLabel = '@' + recipient.username;
+    } else if (recipient.displayName) {
+      headerLabel = recipient.displayName;
+    } else {
+      headerLabel = '@Unknown';
+    }
 
-    lines.push('Discord | @' + (recipient || 'Unknown') + ' (DM)');
+    lines.push('Discord | ' + headerLabel + ' (DM)');
     lines.push('');
 
     // Only show UNREAD DMs in sidebar (fix: filter to unread only)
@@ -2109,7 +2154,9 @@ module.exports = function formatDiscord(nodes) {
       elementCount: refCounter - 1,
       refs: refs,
       pageType: 'dm_conversation',
-      recipient: recipient,
+      recipient: recipient.username || recipient.displayName || '',
+      recipientUsername: recipient.username,
+      recipientDisplayName: recipient.displayName,
       messageCount: messageData.filter(function (m) { return m.type === 'message'; }).length
     };
   }
