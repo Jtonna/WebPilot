@@ -1653,6 +1653,124 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
 
+  // --- Extension popup state route ---
+  //
+  // P2 phase 6. The minimal popup hits these two endpoints to render its
+  // four-component layout (connection dot, current-tab state, Block/Allow
+  // toggle, dashboard link). Auth uses the paired API key the extension
+  // already holds in chrome.storage; no separate token. Kept in a
+  // visually-distinct block so the parallel Sites-admin webapp routes
+  // (mounted inside mountWebUiRoutes above) do not collide here.
+  {
+    const sitePolicyPopup = require('./site-policy');
+
+    // Extract a paired-agent API key from the request. Supports either the
+    // X-API-Key header (preferred) or an `apiKey` query param. Returns
+    // { key, entry, agentId } on success, or null on auth failure.
+    function _authPopup(req) {
+      const key =
+        req.headers['x-api-key'] ||
+        req.headers['X-API-Key'] ||
+        (req.query && req.query.apiKey) ||
+        null;
+      if (!key || typeof key !== 'string') return null;
+      const entry = pairedKeys.validateKey(key);
+      if (!entry) return null;
+      const agentId = sitePolicyPopup.resolveAgentIdFromApiKey(key);
+      return { key, entry, agentId };
+    }
+
+    // Map (decision, source) into a single state-pill key consumed by the
+    // popup UI: 'allowed' | 'blocked_baseline' | 'blocked_user'
+    // | 'allowed_override' | 'blocked_override'.
+    function _statePillFromPolicy(policy) {
+      if (policy.source === 'agent_override') {
+        return policy.decision === 'allow' ? 'allowed_override' : 'blocked_override';
+      }
+      if (policy.decision === 'allow') return 'allowed';
+      if (policy.source === 'baseline') return 'blocked_baseline';
+      return 'blocked_user';
+    }
+
+    // GET /api/popup/state?tabUrl=<url>
+    // Returns connection + agent + current-tab policy state + dashboard URL.
+    app.get('/api/popup/state', (req, res) => {
+      const auth = _authPopup(req);
+      if (!auth) return res.status(401).json({ error: 'unauthorized' });
+      const { entry, agentId } = auth;
+      const profileId = entry.profileId || null;
+      const connection =
+        profileId && extensionBridge.isConnected(profileId)
+          ? 'connected'
+          : 'disconnected';
+
+      const tabUrlRaw = (req.query && req.query.tabUrl) || null;
+      let currentTab = null;
+      if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 0) {
+        const domain = sitePolicyPopup.normalizeDomain(tabUrlRaw);
+        if (domain) {
+          const policy = sitePolicyPopup.isAllowed(agentId, tabUrlRaw);
+          currentTab = {
+            url: tabUrlRaw,
+            domain,
+            state: _statePillFromPolicy(policy),
+            source: policy.source,
+            decision: policy.decision,
+          };
+        }
+      }
+
+      const proto = (req.headers && req.headers['x-forwarded-proto']) || 'http';
+      const hostHdr = (req.headers && req.headers.host) || `localhost:${port}`;
+      const serverUrl = `${proto}://${hostHdr}`;
+
+      const body = {
+        connection,
+        profileId,
+        agent: agentId ? { id: agentId, name: entry.agentName } : null,
+        serverUrl,
+      };
+      if (currentTab) body.currentTab = currentTab;
+      return res.json(body);
+    });
+
+    // POST /api/popup/site-toggle  { domain, action: 'block' | 'allow' }
+    // Sets a GLOBAL user rule for the domain (per the locked design decision —
+    // the popup's toggle is the "no AI touches this site" fast button; per-
+    // agent overrides live on the webapp Sites page).
+    app.post('/api/popup/site-toggle', express.json(), (req, res) => {
+      const auth = _authPopup(req);
+      if (!auth) return res.status(401).json({ error: 'unauthorized' });
+      const { agentId } = auth;
+      const body = req.body || {};
+      const action = body.action;
+      const domainRaw = body.domain;
+      if (action !== 'block' && action !== 'allow') {
+        return res.status(400).json({ error: "action must be 'block' or 'allow'" });
+      }
+      const normalized = sitePolicyPopup.normalizeDomain(domainRaw);
+      if (!normalized) {
+        return res.status(400).json({ error: 'invalid domain' });
+      }
+      try {
+        sitePolicyPopup.setGlobalRule(normalized, action, 'user');
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      // Compute new pill state for this agent + domain (a per-agent override
+      // could still win — same shape as /state above).
+      const policy = sitePolicyPopup.isAllowed(agentId, normalized);
+      const newState = _statePillFromPolicy(policy);
+      // Tell the webapp Sites page (and any other UI consumer) the rule list
+      // changed. Same event name Phase 5's Sites admin routes emit.
+      try {
+        broadcastUiEvent({ type: 'sites_changed', reason: 'popup_toggle' });
+      } catch (_e) { /* non-fatal */ }
+      return res.json({ ok: true, domain: normalized, decision: action, newState });
+    });
+  }
+  // --- end Extension popup state route ---
+
   // ---- Web UI static mount + REST ----
   mountWebUiStatic(app);
   mountWebUiRoutes(app, {

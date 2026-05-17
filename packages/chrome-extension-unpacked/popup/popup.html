@@ -1,188 +1,52 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=320, initial-scale=1">
   <title>WebPilot</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
-    <header class="header">
-      <div class="logo">
-        <img src="../icons/icon48.png" alt="WebPilot" width="28" height="28">
-        <h1>WebPilot</h1>
+  <div class="wp-popup">
+
+    <!-- 1. Connection header: dot + label + (profile/server underneath). -->
+    <header class="wp-popup-header">
+      <div class="wp-popup-conn">
+        <span id="conn-dot" class="wp-dot" data-state="unknown" aria-hidden="true"></span>
+        <span id="conn-label" class="wp-conn-label">Connecting…</span>
       </div>
-      <span class="version" id="versionDisplay"></span>
+      <div id="conn-meta" class="wp-conn-meta" hidden></div>
     </header>
 
-    <!-- Tab Bar -->
-    <div class="tab-bar">
-      <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-      <button class="tab-btn" data-tab="settings">Settings</button>
-    </div>
-
-    <!-- Dashboard Tab -->
-    <div class="tab-content active" id="tab-dashboard">
-      <!-- Profile Identification View -->
-      <div id="profileIdentifyView" class="view hidden">
-        <div class="status-card connecting">
-          <div class="status-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-          </div>
-          <div class="status-content">
-            <span class="status-title">Profile identification needed</span>
-            <span class="status-subtitle">Which Chrome profile is this?</span>
-          </div>
-        </div>
-        <select id="profileIdSelect" class="setting-select" style="width:100%; margin-top:12px;"></select>
-        <button id="profileIdConfirmBtn" class="reconnect-btn" style="width:100%; margin-top:8px;">I am this profile</button>
+    <!-- 2 & 3. Current tab section: domain + state pill + toggle button. -->
+    <section id="tab-section" class="wp-popup-tab" hidden>
+      <div class="wp-tab-line">
+        <span id="tab-domain" class="wp-tab-domain"></span>
+        <span id="tab-state-pill" class="wp-pill" data-state="unknown">
+          <span class="wp-pill-dot" aria-hidden="true"></span>
+          <span id="tab-state-label" class="wp-pill-label">—</span>
+        </span>
       </div>
-
-      <!-- Connected View -->
-      <div id="connectedView" class="view hidden">
-        <div class="status-card connected">
-          <div class="status-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
-            </svg>
-          </div>
-          <div class="status-content">
-            <span class="status-title">Connected</span>
-            <span class="status-subtitle" id="serverUrlDisplay">ws://localhost:3456</span>
-          </div>
-        </div>
-
-        <div class="endpoints-section">
-          <div class="endpoint-row">
-            <span class="endpoint-label">WS</span>
-            <span class="endpoint-url" id="wsUrlDisplay">ws://localhost:3456</span>
-          </div>
-          <div class="endpoint-row">
-            <span class="endpoint-label">SSE</span>
-            <span class="endpoint-url" id="sseUrlDisplay">http://localhost:3456/sse</span>
-          </div>
-          <div class="endpoint-row">
-            <span class="endpoint-label">Mode</span>
-            <span class="endpoint-value" id="networkModeDisplay">Local only</span>
-          </div>
-        </div>
-
-        <div class="profile-row hidden" id="currentProfileRow">
-          <span class="profile-row-label">Profile</span>
-          <span class="profile-row-name" id="currentProfileName">—</span>
-          <button class="profile-change-btn" id="changeProfileBtn">Change</button>
-        </div>
-
-        <button class="disconnect-btn" id="disconnectBtn">
-          Disconnect
+      <div id="tab-agent-line" class="wp-tab-agent" hidden></div>
+      <div class="wp-tab-actions">
+        <button id="toggle-btn" type="button" class="wp-btn-primary" disabled>
+          <span id="toggle-btn-label">…</span>
         </button>
-
-        <div class="formatter-updates-section" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
-          <button id="checkFormatterUpdates" class="action-btn" style="width: 100%;">Check for formatter updates</button>
-          <div id="formatterUpdateStatus" style="margin-top: 6px; font-size: 12px; color: #666; display: none;"></div>
-        </div>
-
-        <!-- Restricted Mode (moved from settings) -->
-        <div class="dashboard-section">
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Restricted mode</span>
-              <span class="setting-desc">Only allow whitelisted sites</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" id="restrictedMode" checked>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div id="whitelistPanel" class="whitelist-panel hidden">
-            <button class="whitelist-current-btn" id="whitelistCurrentBtn">Whitelist this site</button>
-
-            <div class="whitelist-input-row">
-              <input type="text" id="domainInput" class="domain-input" placeholder="example.com">
-              <button class="add-domain-btn" id="addDomainBtn">Add</button>
-            </div>
-
-            <div class="domain-list-container">
-              <div id="domainList" class="domain-list"></div>
-            </div>
-          </div>
-        </div>
       </div>
+      <div id="tab-error" class="wp-tab-error" hidden></div>
+    </section>
 
-      <!-- Connecting View -->
-      <div id="connectingView" class="view hidden">
-        <div class="status-card connecting">
-          <div class="status-icon spinning">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-            </svg>
-          </div>
-          <div class="status-content">
-            <span class="status-title">Connecting...</span>
-            <span class="status-subtitle" id="connectingUrlDisplay">ws://localhost:3456</span>
-          </div>
-        </div>
+    <!-- Hint when the active tab isn't policy-managed (chrome://, file://, etc.). -->
+    <section id="tab-skip" class="wp-popup-skip" hidden>
+      <p class="wp-skip-text">No policy on this page.</p>
+    </section>
 
-        <div class="error-message" id="connectingError"></div>
-      </div>
-
-      <!-- Disconnected View -->
-      <div id="disconnectedView" class="view hidden">
-        <div class="status-card disconnected">
-          <div class="status-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-            </svg>
-          </div>
-          <div class="status-content">
-            <span class="status-title">Disconnected</span>
-            <span class="status-subtitle" id="disconnectedUrlDisplay">ws://localhost:3456</span>
-          </div>
-        </div>
-
-        <button class="reconnect-btn" id="retryBtn" style="width:100%">Retry</button>
-      </div>
-    </div>
-
-    <!-- Settings Tab -->
-    <div class="tab-content" id="tab-settings">
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">Focus new tabs</span>
-          <span class="setting-desc">Switch to new tabs when opened</span>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="focusNewTabs">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">Tab organization</span>
-          <span class="setting-desc">How WebPilot tabs are organized</span>
-        </div>
-        <select id="tabMode" class="setting-select">
-          <option value="group">Existing window</option>
-          <option value="window">New window</option>
-        </select>
-      </div>
-
-    </div>
-
-    <footer class="footer">
-      <span>MCP Browser Control</span>
+    <!-- 4. Open dashboard escape hatch. -->
+    <footer class="wp-popup-footer">
+      <a id="dashboard-link" class="wp-btn-secondary" href="#" target="_blank" rel="noopener">Open dashboard</a>
     </footer>
-  </div>
 
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>
