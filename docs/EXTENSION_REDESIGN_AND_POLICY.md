@@ -1,7 +1,7 @@
 # Extension Redesign + SQLite + Site Policy
 
-**Status:** Design — not yet implemented. Tracks P2 work scoped 2026-05-17.
-**Branch target:** TBD. Likely cut a feature branch off `QOL-Features` once the open P1 swarm is merged.
+**Status:** SHIPPED on `QOL-Features` (2026-05-17). All seven phases landed; see "What landed" at the bottom for commit hashes.
+**Branch target:** `QOL-Features`.
 **Supersedes:** the draft in `docs/SQLITE_MIGRATION_DESIGN.md` (worktree commit `6826e08`, not yet merged). When we cherry-pick the DOCS agent's worktree back, we'll drop that file in favor of this one — most of its schema work is folded in below with revised scope.
 
 ---
@@ -306,40 +306,40 @@ UI fetches via `GET /api/ui/action-items` which queries the cache (10 recent per
 
 Each phase is one or two commits, independently testable.
 
-**Phase 1 — DB layer, no behavior change.**
+**Phase 1 — DB layer, no behavior change.** ✓ done (`edf83ab`)
 - Add `better-sqlite3` dep, bundle prebuilt for pkg.
 - Create `packages/server-for-chrome-extension/src/db/` with `schema.sql`, `connection.js` (opens the file, runs PRAGMAs for WAL mode), and the migration-on-first-boot logic.
 - Server boots, runs schema, doesn't touch JSON yet. Verify the DB file gets created and the import path runs cleanly on a copy of real `<dataDir>`.
 
-> **Phase 1 status (2026-05-17):** Shipped. `better-sqlite3 ^12.10.0` added. `src/db/{schema.sql,connection.js,migration.js}` in place. Schema applies all 8 tables + indexes idempotently. WAL/foreign_keys/synchronous=NORMAL PRAGMAs verified. `runImportFromJsonStores()` is a Phase-1 stub: it detects each legacy store and logs "would import N rows" but performs no writes — Phases 2/3/4 plug into the marked TODO branches. The pkg native-binary bundling is deferred to Phase 7 (a `_comment_native_modules` TODO is parked in `packages/server-for-chrome-extension/package.json` describing what's needed: copy `node_modules/better-sqlite3/build/Release/better_sqlite3.node` next to the pkg-built `.exe`, plus the loader/env-var step).
+> **Phase 1 status (2026-05-17, superseded by Phase 7):** Shipped. `better-sqlite3 ^12.10.0` added. `src/db/{schema.sql,connection.js,migration.js}` in place. Schema applies all 8 tables + indexes idempotently. WAL/foreign_keys/synchronous=NORMAL PRAGMAs verified. `runImportFromJsonStores()` started as a Phase-1 stub; Phases 2/3/7 plugged into the branches. The pkg native-binary bundling is left as a tracked verify item in `OPEN_ITEMS.md` (P2) — the comment in `packages/server-for-chrome-extension/package.json` documents the exact copy step required during the Electron deploy.
 
-**Phase 2 — Migrate `paired-keys` to DB.**
+**Phase 2 — Migrate `paired-keys` to DB.** ✓ done (`78a1f51`)
 - Replace `paired-keys.json` + `pending-pairings.json` reads/writes with DB queries.
 - First-boot import: parse existing JSON, populate `agents` + `pairings` tables, rename JSON to `.imported`. Hash API keys at rest during import.
 - All existing pairing flows (request → approve → use → revoke) must keep working unchanged from the agent's POV.
 
-**Phase 3 — Migrate formatter incidents.**
+**Phase 3 — Migrate formatter incidents.** ✓ done (`eea1d4b`)
 - New `formatter_incidents` table populated on every `recordError` call. In-memory cache hydrates from DB on boot. Pruning: daily `DELETE WHERE dismissed_at IS NOT NULL AND dismissed_at < now()-90 days`.
 - Update `webpilot_dev_get_formatter_logs` and the UI logs page to read from cache first, DB on demand.
 - Drop the JSON ring buffer; the in-memory cache replaces it.
 
-**Phase 4 — Site policy plumbing.**
+**Phase 4 — Site policy plumbing.** ✓ done (`6740c31`)
 - New tables: `global_site_rules`, `agent_site_overrides`, `baseline_blocklist_meta`.
 - New `blocklist-updater.js` module fetching from GitHub. Boot fetch + 24h interval.
 - Initial GitHub repo + the curated financial-institutions list. Hosts.txt format.
 - Server-side enforcement function `isAllowed(agentId, url) → {allowed, source, decision}`. Add it as a check at the top of every `browser_*` handler in `mcp-handler.js`.
 - Auto-close scheduler: blocked tab → `setTimeout(() => extensionBridge.send(profile, 'close_tab', {tab_id}), 5000)`.
 
-**Phase 5 — Webapp Sites page.**
+**Phase 5 — Webapp Sites page.** ✓ done (`56b933d`)
 - New `/ui/sites/` route. Two sections: Global rules (CRUD on `global_site_rules` rows with `source='user'`) and Per-agent overrides (agent dropdown → that agent's `agent_site_overrides`).
 - Setting toggle for the baseline pack.
 
-**Phase 6 — Extension redesign.**
+**Phase 6 — Extension redesign.** ✓ done (`4009982`)
 - Gut `popup.html`/`.js`/`.css`. Implement the 4-component layout.
 - Theme matches webapp. Bump extension version.
 - One-time-per-profile reload required to install the new popup.
 
-**Phase 7 — Cleanup.**
+**Phase 7 — Cleanup.** ✓ done (this commit)
 - Drop the old JSON-handling code paths from `paired-keys.js`, `formatter-logs.js`, `server.js`.
 - Move any remaining `.json` files in `<dataDir>` into `config` rows or delete them.
 - Update `docs/MCP_SERVER.md`, `docs/CHROME_EXTENSION.md`, `accessibility-tree-formatters/DEV_GUIDE.md` to reflect the new state.
@@ -370,3 +370,21 @@ Per phase:
 7. Cleanup: no stale `paired-keys.json` / `pending-pairings.json` / `formatter-logs.json` paths in the code after Phase 7.
 
 End-to-end: a fresh install on a new machine should boot, pair an agent, demonstrate blocking on a baseline-blocked site (chase.com), allow on a user-added rule, override per-agent, and dismiss a formatter incident — all without touching any JSON file.
+
+---
+
+## What landed
+
+All seven phases shipped on `QOL-Features` (2026-05-17). Commit hashes for traceability:
+
+| Phase | Commit | Headline |
+|-------|--------|----------|
+| 1 | `edf83ab` | SQLite foundation — schema, connection, migration stub. |
+| 2 | `78a1f51` | `paired-keys` + `pending-pairings` → `agents` / `pairings` tables. API keys hashed at rest. |
+| 3 | `eea1d4b` | Formatter incidents → `formatter_incidents` table. In-memory 10-per-formatter cache hydrates from DB. |
+| 4 | `6740c31` | Site-policy enforcement at every `browser_*` handler + baseline blocklist auto-updater. |
+| 5 | `56b933d` | Webapp `/ui/sites/` admin page — global rules + per-agent overrides + baseline toggle. |
+| 6 | `4009982` | Minimal popup — connection dot + current-site pill + Block/Allow + Open dashboard. Themed to webapp. Extension bumped to `1.1.4`. |
+| 7 | (this commit) | `extension-installs.json` + `network.enabled` → DB. Dead popup-coupled handlers removed from `background.js`. Docs updated. |
+
+Legacy JSON stores after Phase 7: all three Phase-2/3 stores and the two Phase-7 stores are imported on first boot, then renamed to `<name>.imported.<ISO>` so the user has a recovery copy. None of them are read after migration runs. The pkg native-binary bundling step (better-sqlite3's `.node`) is tracked as a verify item in `OPEN_ITEMS.md`'s P2 section — the code path itself works; only the production build pipeline needs a smoke test on a fresh Windows VM.

@@ -23,7 +23,7 @@
       "index.js",
       "../server-web-ui/out/**/*"
     ],
-    "_comment_native_modules": "TODO (P2 phase 7): better-sqlite3 has a native binding (build/Release/better_sqlite3.node). @yao-pkg/pkg cannot bundle native .node files into the snapshot — they must be shipped as loose files next to the pkg-built .exe. At pkg time we will need to (a) copy node_modules/better-sqlite3/build/Release/better_sqlite3.node into the dist/ output and (b) either set the BETTER_SQLITE3_BINARY env var or add a `bin` entry to pkg.targets so the binary is loaded from disk at runtime. Confirm on a fresh Windows VM before Phase 7 closes."
+    "_comment_native_modules": "P2 phase 7: better-sqlite3 has a native binding (build/Release/better_sqlite3.node). @yao-pkg/pkg cannot bundle native .node files into the snapshot — they must be shipped as loose files next to the pkg-built .exe. Hoisted under monorepo node_modules at: <repo>/node_modules/better-sqlite3/build/Release/better_sqlite3.node. The Electron deploy step (packages/electron/) already copies the server dist + sidecar files into %LOCALAPPDATA%\\WebPilot; extend that step to also copy the .node binary next to the .exe. better-sqlite3's loader (node_modules/better-sqlite3/lib/database.js) auto-discovers the .node binary alongside the running executable. NOT verified end-to-end against a fresh build — see OPEN_ITEMS.md P2 entry."
   },
   "keywords": [
     "mcp",

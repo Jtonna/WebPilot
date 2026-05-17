@@ -206,22 +206,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleConfigUpdate(message.config);
       break;
 
-    case 'GET_STATUS':
-      chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl'], (result) => {
-        sendResponse({
-          enabled: result.enabled || false,
-          connected: connectionStatus === 'connected',
-          connectionStatus: connectionStatus,
-          connectionError: connectionError,
-          errorType: connectionErrorType,
-          manuallyDisconnected: manuallyDisconnected,
-          config: {
-            hasApiKey: !!result.apiKey,
-            serverUrl: result.serverUrl
-          }
-        });
-      });
-      break;
+    // GET_STATUS removed in P2 phase 7: the new minimal popup polls the
+    // server's REST surface directly for connection state; it no longer asks
+    // the service worker for it. No remaining caller in the extension.
 
     case 'CONNECT_REQUEST':
       chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
@@ -238,12 +225,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
-    case 'DISCONNECT':
-      manuallyDisconnected = true;
-      chrome.storage.local.set({ manuallyDisconnected: true });
-      disconnectWebSocket();
-      sendResponse({ success: true });
-      break;
+    // DISCONNECT removed in P2 phase 7: the new minimal popup has no
+    // disconnect affordance. The old popup's user-initiated disconnect path
+    // is gone — connection lifecycle is automatic from the user's POV.
 
     case 'RECONNECT':
       manuallyDisconnected = false;
@@ -278,112 +262,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    case 'RESET_PROFILE_ID': {
-      // User picked the wrong profile or wants to switch. Clear the stored
-      // profileId, close the current WS (it's bound to the previous profile
-      // server-side), and reconnect — the server will reply with
-      // `identify_required` and the popup will show the picker view again.
-      console.log('[hello] RESET_PROFILE_ID — clearing profileId and reconnecting');
-      // NOTE: `webpilot.installId` is intentionally NOT cleared — it is
-      // install-bound, not pairing-bound. The user is rebinding which
-      // profile this install corresponds to; the server-side installs
-      // store will be updated when the new hello resolves.
-      chrome.storage.local.remove(['webpilot.profileId'], () => {
-        disconnectWebSocket();
-        // Restore auto-reconnect semantics: pretend the connection just
-        // dropped naturally so the existing reconnect path takes over.
-        manuallyDisconnected = false;
-        chrome.storage.local.set({ manuallyDisconnected: false });
-        if (config.apiKey && config.serverUrl) {
-          isEnabled = true;
-          connectWebSocket();
-        } else {
-          attemptAutoConnect();
-        }
-        sendResponse({ success: true });
-      });
-      return true;
-    }
-
-    case 'RETRY_AUTO_CONNECT':
-      manuallyDisconnected = false;
-      chrome.storage.local.set({ manuallyDisconnected: false });
-      attemptAutoConnect();
-      sendResponse({ success: true });
-      break;
-
-    // SET_PAIRING_REQUIRED / GET_PAIRING_REQUIRED removed (web UI owns this).
-    // See QOL review extension/C1 and CLAUDE-driven fix-up F3.
-
-    case 'GET_PROFILE_IDENTITY': {
-      chrome.storage.local.get(['webpilot.profileId', 'webpilot.knownProfiles'], (data) => {
-        sendResponse({
-          profileId: data['webpilot.profileId'] || null,
-          knownProfiles: data['webpilot.knownProfiles'] || []
-        });
-      });
-      return true;
-    }
-
-    case 'SET_PROFILE_ID': {
-      const chosen = message.profileId;
-      if (!chosen) {
-        sendResponse({ success: false, error: 'profileId required' });
-        return true;
-      }
-      chrome.storage.local.set({ 'webpilot.profileId': chosen }, () => {
-        console.log('[hello] user picked profileId=' + chosen + ', retrying handshake');
-        // Retry hello handshake using the now-stored id
-        sendHelloHandshake().then(() => {
-          sendResponse({ success: true });
-        }).catch((err) => {
-          sendResponse({ success: false, error: err && err.message });
-        });
-      });
-      return true;
-    }
-
-    case 'CHECK_FORMATTER_UPDATES':
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        const updateCheckRequestId = `update-check-${Date.now()}`;
-        let responseReceived = false;
-
-        // Set up a timeout for the response
-        const timeout = setTimeout(() => {
-          if (!responseReceived) {
-            responseReceived = true;
-            sendResponse({ error: 'Request timeout' });
-          }
-        }, 10000);
-
-        // Temporarily store the response handler
-        const originalOnMessage = wsConnection.onmessage;
-        const tempHandler = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'formatter_update_result') {
-              if (!responseReceived) {
-                responseReceived = true;
-                clearTimeout(timeout);
-                wsConnection.onmessage = originalOnMessage;
-                sendResponse(message);
-              }
-            }
-          } catch (e) {
-            console.error('Failed to parse formatter update response:', e);
-          }
-        };
-
-        wsConnection.onmessage = tempHandler;
-
-        // Send the check formatter updates request
-        wsConnection.send(JSON.stringify({
-          type: 'check_formatter_updates'
-        }));
-      } else {
-        sendResponse({ error: 'Not connected to server' });
-      }
-      break;
+    // The following handlers were removed in P2 phase 7. The new minimal
+    // popup (Phase 6) does not send any of these messages — profile re-bind
+    // happens in the webapp, the formatter-update check moved to the
+    // server-side hourly auto-updater + UI button, and there is no popup UI
+    // for retry-auto-connect anymore (the worker handles reconnect itself):
+    //   - RESET_PROFILE_ID
+    //   - RETRY_AUTO_CONNECT
+    //   - GET_PROFILE_IDENTITY
+    //   - SET_PROFILE_ID
+    //   - CHECK_FORMATTER_UPDATES
+    // SET_PAIRING_REQUIRED / GET_PAIRING_REQUIRED were removed earlier (web
+    // UI owns this) — see QOL review extension/C1.
   }
   return true;
 });
@@ -487,9 +377,9 @@ function connectWebSocket() {
             'webpilot.knownProfiles': knownProfiles,
             'webpilot.profileId': null
           });
-          try {
-            chrome.runtime.sendMessage({ type: 'IDENTIFY_REQUIRED', knownProfiles });
-          } catch (_) { /* popup may not be open */ }
+          // The popup picker has moved to the webapp's /pairings flow in
+          // Phase 6 — the IDENTIFY_REQUIRED broadcast had no remaining
+          // listener and was removed in P2 phase 7.
           console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
           return;
         }
@@ -691,12 +581,9 @@ function updateConnectionStatus(status, error = null, errorType = null) {
   connectionStatus = status;
   connectionError = error;
   connectionErrorType = errorType;
-  chrome.runtime.sendMessage({
-    type: 'CONNECTION_STATUS_CHANGED',
-    status: status,
-    error: error,
-    errorType: errorType
-  }).catch(() => {});
+  // The CONNECTION_STATUS_CHANGED broadcast was removed in P2 phase 7. The
+  // new minimal popup polls the server for connection state and does not
+  // subscribe to chrome.runtime messages from the service worker.
 }
 
 // Command routing

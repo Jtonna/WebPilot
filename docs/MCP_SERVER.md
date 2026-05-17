@@ -53,7 +53,7 @@ Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Config file / Environment | `API_KEY` | `dev-123-test` | WebSocket authentication key |
 | Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
-| Data file | `network.enabled` | (absent) | Persisted network mode preference (`1` or `0`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. Any value other than `'1'` in the file explicitly disables network mode, even if `NETWORK=1` was set in env — the file's presence overrides both. |
+| SQLite row | `config.network_enabled` | (absent) | Persisted network mode preference (`'true'` / `'false'`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. The legacy `<dataDir>/network.enabled` flag file is read as a fallback only when the DB row is absent (first-boot path) — migration imports it on first boot and renames it to `network.enabled.imported.<ISO>`. |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -68,7 +68,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 - Mounts the web UI at `/ui/`. In production (and inside the pkg snapshot), serves the Next.js static export via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). In dev (`WEBPILOT_DEV=1`, set by `npm run dev` at the repo root), instead proxies `/ui/*` to `http://localhost:3100` via `http-proxy-middleware` with `ws: true` so Next.js HMR works. The pkg/Electron path never sets `WEBPILOT_DEV` so installed users always go through the static branch.
 - Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings) — see [Web UI API](#web-ui-api).
 - On startup, calls `formatterManager.init()`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks. Also loads `notificationsSettings`, runs an initial `pairedKeys.cleanupExpiredPairings()` pass, and runs `pairedKeys.cleanupUnusedKeys()` to auto-revoke 48h-stale never-used keys. Both cleanup passes also run hourly thereafter.
-- Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `gaiaEmail` (the field name on the wire), persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in `<dataDir>/config/extension-installs.json`), and replies with `hello_ack` once the binding resolves. A 5-second server-side `helloDeadline` watchdog pushes `identify_required` pre-emptively if the extension never sends `hello` in time (see `server.js`).
+- Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `gaiaEmail` (the field name on the wire), persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in the `extension_installs` SQLite table), and replies with `hello_ack` once the binding resolves. A 5-second server-side `helloDeadline` watchdog pushes `identify_required` pre-emptively if the extension never sends `hello` in time (see `server.js`).
 - Handles WebSocket messages from the extension: `{ type: 'ping' }` → `{ type: 'pong' }` (keep-alive); `{ type: 'hello' }` → `{ type: 'hello_ack' }` or `{ type: 'identify_required' }`; `{ type: 'revoke_key' }`, `{ type: 'rename_agent' }`, `{ type: 'list_paired_agents' }` for paired-agent management; `{ type: 'check_formatter_updates' }` → `{ type: 'formatter_update_result' }`. `{ type: 'set_network_mode' }` and `{ type: 'set_pairing_required' }` are **deprecated** — the server logs and ignores them; network mode is now owned by `POST /api/ui/settings/network-mode`, and the pairing-required toggle has been retired (pairing is always on).
 - Auto-opens the web UI in the default browser on `--foreground` start (via `service/open-browser.js`).
 - On startup, opens `chromeManager` for the user's default Chrome `user-data-dir`. The manager is queried per tool call via a cheap PID liveness check, with full re-detection only on cache miss.
@@ -104,7 +104,7 @@ WebSocket bridge supporting **multiple simultaneous extension connections**, key
 
 ### `src/extension-installs.js`
 
-Persistent `installId → profileId` map (`<dataDir>/config/extension-installs.json`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `lastResolved` older than 90 days.
+Persistent `installId → profileId` map. SQLite-backed (P2 phase 7) via the `extension_installs` table — replaces the legacy `<dataDir>/config/extension-installs.json` JSON store (imported on first boot and renamed to `.imported.<TS>`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `last_seen_at` older than 90 days.
 
 ### `src/chrome/`
 
@@ -133,10 +133,10 @@ Reads / writes `<dataDir>/config/notifications.json` (`systemNotifications`, `so
 
 ### `src/paired-keys.js`
 
-Manages paired agent API keys **and** the async pending-pairings ledger:
+Manages paired agent API keys **and** the async pending-pairings ledger. SQLite-backed (P2 phase 2) — replaces the legacy JSON stores `<dataDir>/config/paired-keys.json` and `<dataDir>/config/pending-pairings.json` (imported on first boot and renamed to `.imported.<TS>`):
 
-- `<dataDir>/config/paired-keys.json` -- approved/active agents, each entry `{ key, agentName, profileId, createdAt, lastAccessed, source? }`.
-- `<dataDir>/config/pending-pairings.json` -- async pairing ledger. Pending entries TTL out at 24 hours of inactivity; terminal-state entries (approved/denied/expired) are hard-dropped after 7 days by the periodic cleanup.
+- `agents` table — approved/active agents, columns `{ id, name, api_key_hash, profile_id, created_at, last_seen_at, state }`. API keys are HMAC-SHA-256 hashed with a per-server pepper stored in `config.api_key_pepper`.
+- `pairings` table — async pairing ledger, columns `{ id, pairing_id, agent_name, requested_at, expires_at, decided_at, state, approved_agent_id, metadata_json }`. Pending entries TTL out at 24 hours of inactivity; terminal-state entries (approved/denied/expired) are hard-dropped after 7 days by the periodic cleanup.
 
 Key APIs:
 
@@ -167,7 +167,7 @@ Loads and runs accessibility tree formatters:
 
 ### `src/formatter-logs.js`
 
-In-memory ring buffer + on-disk persistence for per-formatter health tracking. Records success and error invocations of `format()` plus workflow runtime errors. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Ring capacity 50 entries per formatter, flushed to `<dataDir>/formatter-logs.json` every 60s (and on `SIGINT`/`SIGTERM`/`exit`). Entries older than 7 days are dropped on hydrate. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `FLUSH_INTERVAL_MS`, `TTL_MS`, `STACK_MAX`.
+In-memory cache (10 most recent per formatter) + SQLite write-through for per-formatter health tracking (P2 phase 3). Records success and error invocations of `format()` plus workflow runtime errors as rows in the `formatter_incidents` table. The cache hydrates from the DB on boot; the legacy `<dataDir>/formatter-logs.json` JSON ring buffer is imported on first boot and renamed to `.imported.<TS>`. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `STACK_MAX`.
 
 ### `src/lib/tree-query.js`
 
@@ -216,13 +216,35 @@ The `return_mode` parameter controls the response shape: `"all"` (default) retur
 
 WebPilot runs three distinct trust boundaries: MCP tool calls from AI agents, the extension's WebSocket transport, and the localhost-only Web UI admin surface. Each is gated independently so that compromising one credential does not silently expose the others.
 
-API keys are obtained through the **pairing handshake**. An AI agent without a key calls the `request_pairing` MCP tool with a memorable `agent_name`. The server creates a pending pairing entry, surfaces an approval URL through the desktop notification path, and returns a `pairing_id` to the agent. The human reviewer approves (or denies) the request in the local Web UI and chooses which Chrome profile the new key will be bound to. The agent then calls `check_pairing_status` with that `pairing_id` and — once the status flips to `approved` — receives the freshly minted `api_key`. The same key can be re-used across sessions; it is presented either as the `X-API-Key` HTTP header or as an `api_key` argument on each tool call. Keys are persisted in `paired-keys.json` along with their bound profile, `createdAt`, and `lastAccessed` timestamps; unused keys auto-expire after 48 hours and pending pairings expire after 24 hours.
+API keys are obtained through the **pairing handshake**. An AI agent without a key calls the `request_pairing` MCP tool with a memorable `agent_name`. The server creates a pending pairing entry, surfaces an approval URL through the desktop notification path, and returns a `pairing_id` to the agent. The human reviewer approves (or denies) the request in the local Web UI and chooses which Chrome profile the new key will be bound to. The agent then calls `check_pairing_status` with that `pairing_id` and — once the status flips to `approved` — receives the freshly minted `api_key`. The same key can be re-used across sessions; it is presented either as the `X-API-Key` HTTP header or as an `api_key` argument on each tool call. Keys are persisted in the `agents` SQLite table (HMAC-SHA-256 hash + per-server pepper, never the plaintext) along with their bound profile, `created_at`, and `last_seen_at` timestamps; unused keys auto-expire after 48 hours and pending pairings expire after 24 hours.
 
 Four tools are intentionally exempt from the auth gate: `request_pairing` and `check_pairing_status` (because they *are* the handshake — requiring a key would be circular), and `webpilot_get_formatter_info` plus `webpilot_dev_get_formatter_logs` (strictly read-only inspection of formatter metadata and the in-memory error ring buffer; nothing sensitive is exposed). Every other tool — `browser_*`, `webpilot_run_workflow`, `webpilot_reload_formatters`, `webpilot_dev_reload_extension`, `browser_request_chain` — requires a valid paired key. `webpilot_reload_formatters` reloads formatter code from disk and therefore mutates server state, so it is auth-gated like the other mutating tools.
 
 Every comparison of a caller-supplied API key against a stored key uses `crypto.timingSafeEqual` (wrapped in the `constantTimeEqual` helper in `src/paired-keys.js`). This applies to the MCP tool-call auth path (`pairedKeys.validateKey`), the extension WebSocket handshake (`?apiKey=...` query param), and every paired-keys lookup the Web UI admin endpoints perform (rename, re-bind, revoke, touch). A naive `===` short-circuits at the first differing byte and leaks position information; the constant-time compare prevents that.
 
 The Web UI admin surface is **localhost-only**. The general `makeUiAuth` middleware rejects every `/api/ui/*` request whose remote address is not `127.0.0.1` or `::1` with HTTP 403, and the `/api/ui/events` WebSocket upgrade is gated identically. On top of that, the mutating endpoints (`POST /api/ui/agents`, `POST /api/ui/agents/:key/rename`, `PATCH /api/ui/agents/:key`, `DELETE /api/ui/agents/:key`, `POST /api/ui/profiles`, `POST /api/ui/settings/network-mode`) layer a second, narrower `mutatingUiAuth` localhost check as defense-in-depth — if the broader UI auth policy is ever relaxed to permit read-only network access, those mutating admin actions stay loopback-only. Read-only endpoints (`GET /api/ui/status`, the events WebSocket) do not use the extra gate, so they remain reachable if a future change exposes read-only views over the network.
+
+### Site-policy gate (P2 phase 4)
+
+Independently of API-key authentication, every `browser_*` tool call (`browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`) and `webpilot_run_workflow` runs through a server-side site-policy check before any extension command is dispatched. See `src/site-policy.js`.
+
+The decision flow for `(agent_id, url)`:
+
+1. Normalize the URL's hostname (lowercase, strip scheme/port, drop leading `www.`).
+2. Look up `agent_site_overrides` for `(agent_id, domain)`. If present, the row's `decision` wins (per-agent fine-tuning).
+3. Else, look up `global_site_rules` for `domain`. If present, the row's `decision` wins. `source='user'` means a user-set rule (from the popup toggle or webapp `/ui/sites/`); `source='baseline'` means it came from the auto-updated baseline blocklist (`src/blocklist-updater.js`).
+4. Else, default to `allow`.
+
+Subdomain matching is public-suffix-aware: a rule on `chase.com` covers `secure.chase.com` and `www.chase.com`. A rule on `secure.chase.com` covers only that subdomain.
+
+When the gate denies a call:
+
+- `browser_create_tab` returns `{ ok: false, error: "site blocked by policy", domain, policySource }` and the tab is never opened.
+- Tools that operate on an existing `tab_id` return the same error plus `{ tabId, tabWillCloseAt, tabCloseInSeconds: 5 }`. The server schedules `chrome.tabs.remove(tab_id)` via the extension after the countdown, so the agent sees the error and the tab is cleaned up.
+
+`browser_get_tabs` and `browser_close_tab` are always allowed — agents can see what's open and can close blocked tabs themselves.
+
+The webapp's `/ui/sites/` admin page is the canonical surface for managing both `global_site_rules` and `agent_site_overrides`. The minimal popup exposes a single Block/Allow toggle that mutates `global_site_rules` for the current tab's domain.
 
 ## Communication Flow
 
@@ -294,7 +316,7 @@ The server reads `<dataDir>/config/server.json` if it exists. This file can spec
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port (overridden by config file if present) |
 | `API_KEY` | `dev-123-test` | API key for WebSocket authentication (overridden by config file if present) |
-| `NETWORK` | `0` | Set to `1` for network mode (overridden by `<dataDir>/network.enabled` if present) |
+| `NETWORK` | `0` | Set to `1` for network mode (overridden by SQLite `config.network_enabled` if present; legacy `<dataDir>/network.enabled` flag file is consulted only as a fallback before first-boot migration) |
 | `WEBPILOT_FOREGROUND` | unset | Set to `1` to run in foreground (used internally by daemon self-spawn) |
 
 ### Network Mode
@@ -310,9 +332,9 @@ In network mode, the server prints the machine's LAN IP so other devices can con
 
 Network mode can also be toggled at runtime from the web UI's Settings page (`POST /api/ui/settings/network-mode`). The endpoint:
 
-1. Persists the preference to `<dataDir>/network.enabled` (survives restarts)
+1. Persists the preference to the `config.network_enabled` row in SQLite (survives restarts)
 2. Spawn-and-exits a replacement daemon (clean process restart, not an in-process rebind)
-3. The new daemon binds to the chosen interface on startup
+3. The new daemon reads the DB row in `index.js` and binds to the chosen interface on startup
 
 The `/api/ui/*` REST and WebSocket surfaces remain **localhost-only** even when network mode is enabled. Only the extension WS / MCP SSE endpoints become reachable over LAN.
 
@@ -374,7 +396,15 @@ The data directory location depends on the execution mode:
   - macOS: `~/Library/Application Support/WebPilot`
   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents: `daemon.log`, `server.pid`, `server.port`, `network.enabled` (persisted network mode preference), `logs/` subdirectory, `config/server.json`, `config/paired-keys.json` (approved paired agents and their `profileId` bindings), `config/pending-pairings.json` (async pairing ledger with 24h pending TTL + 7-day terminal-state retention), `config/extension-installs.json` (persistent `installId → profileId` map; cleaned up after 90 days), `config/notifications.json` (per-user notification preferences), `formatters/` (contains `manifest.json` and formatter JS files; downloaded from GitHub on first run and kept up to date by the auto-updater), `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater)
+Contents (post-P2):
+- `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
+- `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `baseline_blocklist_meta`, `config`, and `extension_installs` tables. See `src/db/schema.sql`.
+- `logs/` subdirectory.
+- `config/server.json` (port + apiKey override file; still file-backed because it's read at the earliest possible bootstrap moment).
+- `config/notifications.json` (per-user notification preferences — still file-backed for now).
+- `formatters/` (auto-updated formatters from GitHub).
+- `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater).
+- `*.imported.<ISO>` — legacy JSON stores (`paired-keys.json`, `pending-pairings.json`, `formatter-logs.json`, `extension-installs.json`) and the `network.enabled` flag file, renamed after first-boot import. Safe to delete once the new version has been verified.
 
 ## Build
 

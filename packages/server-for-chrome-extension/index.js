@@ -48,11 +48,45 @@ setInterval(() => {
 const PORT = getPort();
 const API_KEY = getApiKey();
 let NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+// Network-mode preference resolution (P2 phase 7):
+//   1. Prefer the SQLite `config.network_enabled` row (DB is the new source of
+//      truth post-migration).
+//   2. Fall back to the legacy `<dataDir>/network.enabled` flag file. This
+//      branch fires only on the very first boot of the new version — once
+//      `runImportFromJsonStores()` archives the flag to `.imported.<TS>` the
+//      DB row takes over and this fallback never matches again.
+//   3. Otherwise, use the CLI flag / env-var default that was just resolved.
+//
+// We initialize the DB here in index.js (before createServer wires the rest of
+// the server) so the read happens against the same connection createServer
+// will reuse — better-sqlite3 caches the handle in the connection module.
 try {
-  const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
-  NETWORK = val === '1';
+  require('./src/db/connection').init();
+  const db = require('./src/db/connection').getDb();
+  const row = db
+    .prepare('SELECT value FROM config WHERE key = ?')
+    .get('network_enabled');
+  if (row && typeof row.value === 'string') {
+    NETWORK = row.value === 'true' || row.value === '1';
+  } else {
+    // No DB row yet — fall back to the legacy flag file (first-boot path).
+    try {
+      const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
+      NETWORK = val === '1';
+    } catch (_e) {
+      // No flag file either; keep CLI/env default.
+    }
+  }
 } catch (e) {
-  // No config file, use CLI flag default
+  // DB init failure — fall back to the legacy flag file so the daemon still
+  // boots in a useful mode. This branch should not fire in normal use.
+  console.error('[boot] network-mode DB lookup failed, falling back to flag file:', e && e.message);
+  try {
+    const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
+    NETWORK = val === '1';
+  } catch (_e) {
+    // No flag file either; keep CLI/env default.
+  }
 }
 
 function getLocalIP() {

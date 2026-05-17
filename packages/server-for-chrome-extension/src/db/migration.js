@@ -11,8 +11,9 @@
  *
  * Phase coverage:
  *   - Phase 2: paired-keys.json → `agents`; pending-pairings.json → `pairings`.
- *   - Phase 3 (THIS COMMIT): formatter-logs.json → `formatter_incidents`.
- *   - Phase 4 (later): server.json / network.enabled / extension-installs.json → `config`.
+ *   - Phase 3: formatter-logs.json → `formatter_incidents`.
+ *   - Phase 7 (THIS COMMIT): extension-installs.json → `extension_installs`;
+ *                            network.enabled flag file → `config.network_enabled`.
  *
  * Idempotency: each branch checks whether its destination table is already
  * populated and skips the import if so, unless `--reimport` was passed on the
@@ -451,6 +452,158 @@ function importFormatterIncidents(detected) {
 }
 
 /**
+ * Import extension-installs.json into the `extension_installs` table.
+ *
+ * JSON shape (object-map keyed by installId UUID):
+ *   {
+ *     "<uuid>": {
+ *       "profileId":    "<chrome profile directory name>",
+ *       "firstSeen":    "<iso-8601>",
+ *       "lastResolved": "<iso-8601>"
+ *     },
+ *     ...
+ *   }
+ *
+ * @returns {{ installs: number, skippedReason?: string }}
+ */
+function importExtensionInstalls(detected) {
+  const dbModule = require('./connection');
+  const db = dbModule.getDb();
+
+  const entry = detected.find((d) => d.kind === 'extension-installs');
+  if (!entry || !entry.exists) {
+    return { installs: 0, skippedReason: 'no legacy extension-installs.json file' };
+  }
+
+  const existingRows = db.prepare('SELECT COUNT(*) AS c FROM extension_installs').get().c;
+  if (existingRows > 0 && !reimportRequested()) {
+    return {
+      installs: 0,
+      skippedReason:
+        `destination table already populated (extension_installs=${existingRows}); ` +
+        'pass --reimport to force',
+    };
+  }
+
+  let parsed;
+  try {
+    const raw = fs.readFileSync(entry.path, 'utf8');
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(`[migration] failed to parse ${entry.path}: ${e && e.message}`);
+    return { installs: 0, skippedReason: `parse error: ${e && e.message}` };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { installs: 0, skippedReason: 'extension-installs.json content was not a plain object' };
+  }
+
+  const insertInstall = db.prepare(
+    `INSERT INTO extension_installs (install_id, profile_id, first_seen_at, last_seen_at)
+     VALUES (?, ?, ?, ?)`
+  );
+
+  const importTx = db.transaction(() => {
+    if (reimportRequested() && existingRows > 0) {
+      db.prepare('DELETE FROM extension_installs').run();
+      console.log('[migration] --reimport: cleared existing extension_installs rows before import');
+    }
+
+    let inserted = 0;
+    const nowIso = new Date().toISOString();
+    for (const [installId, rec] of Object.entries(parsed)) {
+      if (!installId || typeof installId !== 'string') continue;
+      if (!rec || typeof rec !== 'object') continue;
+      const profileId = typeof rec.profileId === 'string' && rec.profileId.length > 0
+        ? rec.profileId
+        : null;
+      if (!profileId) {
+        console.warn(
+          `[migration] extension-installs: skipping installId="${installId.slice(0, 8)}..." ` +
+            'with empty profileId'
+        );
+        continue;
+      }
+      const firstSeen = typeof rec.firstSeen === 'string' && rec.firstSeen.length > 0
+        ? rec.firstSeen
+        : nowIso;
+      const lastResolved = typeof rec.lastResolved === 'string' && rec.lastResolved.length > 0
+        ? rec.lastResolved
+        : firstSeen;
+      try {
+        insertInstall.run(installId, profileId, firstSeen, lastResolved);
+        inserted += 1;
+      } catch (e) {
+        console.warn(
+          `[migration] extension-installs: skipping installId="${installId.slice(0, 8)}...": ${e && e.message}`
+        );
+      }
+    }
+    return inserted;
+  });
+
+  const inserted = importTx();
+
+  // Archive the source file after a successful commit so subsequent boots
+  // don't re-import. Idempotent — if rename fails the destination table is
+  // already populated and the next boot will skip-on-already-populated.
+  archiveImported(entry.path);
+
+  return { installs: inserted };
+}
+
+/**
+ * Import the `<dataDir>/network.enabled` flag file into the `config` table
+ * under key `network_enabled`. The flag is a 1-byte file: present + content
+ * `'1'` means enabled, anything else (or absent) means disabled.
+ *
+ * @returns {{ imported: boolean, value?: string, skippedReason?: string }}
+ */
+function importNetworkEnabledFlag(detected) {
+  const dbModule = require('./connection');
+  const db = dbModule.getDb();
+
+  const entry = detected.find((d) => d.kind === 'network-enabled');
+  if (!entry || !entry.exists) {
+    return { imported: false, skippedReason: 'no legacy network.enabled flag file' };
+  }
+
+  const existingRow = db
+    .prepare('SELECT value FROM config WHERE key = ?')
+    .get('network_enabled');
+  if (existingRow && !reimportRequested()) {
+    return {
+      imported: false,
+      skippedReason: `config.network_enabled already set to "${existingRow.value}"; pass --reimport to force`,
+    };
+  }
+
+  let value = 'false';
+  try {
+    const raw = fs.readFileSync(entry.path, 'utf8').trim();
+    value = raw === '1' ? 'true' : 'false';
+  } catch (e) {
+    console.warn(`[migration] network.enabled: failed to read flag file: ${e && e.message}`);
+    return { imported: false, skippedReason: `read error: ${e && e.message}` };
+  }
+
+  const nowIso = new Date().toISOString();
+  try {
+    db.prepare(
+      `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run('network_enabled', value, nowIso);
+  } catch (e) {
+    console.error(`[migration] network.enabled: DB write failed: ${e && e.message}`);
+    return { imported: false, skippedReason: `db write failed: ${e && e.message}` };
+  }
+
+  archiveImported(entry.path);
+
+  return { imported: true, value };
+}
+
+/**
  * Walk the legacy JSON stores and import them into the DB. Returns a summary
  * of what was detected and what was imported. Each branch is independently
  * idempotent — re-running this on a populated DB is a no-op (unless the
@@ -513,13 +666,48 @@ function runImportFromJsonStores() {
     if (e && e.stack) console.error(e.stack);
   }
 
-  // ─── Phase 4 (config / network.enabled / extension-installs) — TODO ─────
-  // for (const entry of present) { switch (entry.kind) { ... } }
+  // ─── Phase 7: extension-installs ────────────────────────────────────────
+  let importedInstalls = 0;
+  try {
+    const result = importExtensionInstalls(detected);
+    importedInstalls = result.installs;
+    if (result.skippedReason) {
+      console.log(`[migration] extension-installs skipped: ${result.skippedReason}`);
+    } else {
+      console.log(
+        `[migration] imported ${result.installs} installs ` +
+          'from extension-installs.json → SQLite.'
+      );
+    }
+  } catch (e) {
+    console.error(`[migration] extension-installs import FAILED: ${e && e.message}`);
+    if (e && e.stack) console.error(e.stack);
+  }
 
-  const totalImported = importedAgents + importedPairings + importedIncidents;
+  // ─── Phase 7: network.enabled flag file → config row ────────────────────
+  let importedNetworkFlag = false;
+  try {
+    const result = importNetworkEnabledFlag(detected);
+    importedNetworkFlag = !!result.imported;
+    if (result.skippedReason) {
+      console.log(`[migration] network.enabled skipped: ${result.skippedReason}`);
+    } else if (result.imported) {
+      console.log(
+        `[migration] imported network.enabled flag → config.network_enabled="${result.value}"`
+      );
+    }
+  } catch (e) {
+    console.error(`[migration] network.enabled import FAILED: ${e && e.message}`);
+    if (e && e.stack) console.error(e.stack);
+  }
+
+  const totalImported =
+    importedAgents + importedPairings + importedIncidents + importedInstalls +
+    (importedNetworkFlag ? 1 : 0);
   console.log(
     `[migration] complete — detected=${present.length}, imported_agents=${importedAgents}, ` +
-      `imported_pairings=${importedPairings}, imported_incidents=${importedIncidents}`
+      `imported_pairings=${importedPairings}, imported_incidents=${importedIncidents}, ` +
+      `imported_installs=${importedInstalls}, network_flag_imported=${importedNetworkFlag}`
   );
   return {
     detected,
@@ -527,6 +715,8 @@ function runImportFromJsonStores() {
     agents: importedAgents,
     pairings: importedPairings,
     incidents: importedIncidents,
+    installs: importedInstalls,
+    networkFlagImported: importedNetworkFlag,
   };
 }
 
@@ -536,5 +726,7 @@ module.exports = {
   // Exposed for tests / dev tooling.
   importPairedKeysAndPairings,
   importFormatterIncidents,
+  importExtensionInstalls,
+  importNetworkEnabledFlag,
   reimportRequested,
 };

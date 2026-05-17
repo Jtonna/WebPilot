@@ -483,6 +483,17 @@ function mountWebUiRoutes(app, deps) {
         actionItems: formatterActionItems,
         pairedAgents: pairedKeys.listKeys(),
         networkMode: (() => {
+          // P2 phase 7: prefer DB row; fall back to legacy flag file only if
+          // the row is absent (first-boot-before-migration path). The DB
+          // becomes the source of truth once migration runs.
+          try {
+            const row = require('./db/connection').getDb()
+              .prepare('SELECT value FROM config WHERE key = ?')
+              .get('network_enabled');
+            if (row && typeof row.value === 'string') {
+              return row.value === 'true' || row.value === '1';
+            }
+          } catch (_e) { /* fall through to flag file */ }
           try {
             const fp = path.join(getDataDir(), 'network.enabled');
             return fs.existsSync(fp) && fs.readFileSync(fp, 'utf8').trim() === '1';
@@ -2064,11 +2075,18 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     port,
     broadcastUiEvent,
     setNetworkMode: ({ enabled }) => {
-      // Persist + restart-spawn approach (Section 4.6)
+      // Persist + restart-spawn approach (Section 4.6).
+      // P2 phase 7: write to the DB (`config.network_enabled`) instead of the
+      // legacy flag file. The replacement daemon boots and reads the DB row
+      // in index.js, so the new binding takes effect across the restart.
       try {
-        fs.writeFileSync(path.join(getDataDir(), 'network.enabled'), enabled ? '1' : '0', 'utf8');
+        const nowIso = new Date().toISOString();
+        require('./db/connection').getDb().prepare(
+          `INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+        ).run('network_enabled', enabled ? 'true' : 'false', nowIso);
       } catch (e) {
-        console.error('[network] Failed to persist network.enabled:', e.message);
+        console.error('[network] Failed to persist network_enabled to DB:', e.message);
       }
       console.log(`[network] Network mode toggled to ${enabled ? 'on' : 'off'}; restarting daemon`);
       // Spawn a fresh detached copy of self before exiting so the user is not stranded.

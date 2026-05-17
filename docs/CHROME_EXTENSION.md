@@ -78,24 +78,22 @@ The server replies with either `hello_ack` (handshake complete; `profileId` is t
 |--------------|--------|
 | `store_refs` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting (params: `tabId`, `refs`, `refContexts`). |
 
-#### From popup (chrome.runtime.onMessage)
+#### From popup / other extension contexts (chrome.runtime.onMessage)
+
+The new minimal popup (Phase 6) does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates, future programmatic disconnect paths):
 
 | Message type | Action |
 |--------------|--------|
-| `GET_STATUS` | Returns current connection state: `enabled`, `connected`, `connectionStatus`, `connectionError`, `errorType`, `manuallyDisconnected`, and config info (`hasApiKey`, `serverUrl`). |
 | `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
-| `DISCONNECT` | Sets `manuallyDisconnected = true`, then calls `disconnectWebSocket()` which nulls `wsConnection.onclose` before closing to prevent the onclose handler from auto-reconnecting. |
 | `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
 | `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
-| `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
-| `GET_PROFILE_IDENTITY` | Reads `webpilot.profileId` and `webpilot.knownProfiles` from `chrome.storage.local` and returns `{ profileId, knownProfiles }` to the popup. |
-| `SET_PROFILE_ID` | Stores `webpilot.profileId` to the operator's pick (params: `profileId`) and re-runs `sendHelloHandshake()` so the server can ack the new binding. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
-| `CHECK_FORMATTER_UPDATES` | Forwards `check_formatter_updates` to server via WebSocket. Relays `formatter_update_result` response back to popup (10s timeout). |
-| `RESET_PROFILE_ID` | Clears `webpilot.profileId` (but not `webpilot.installId`) and reconnects to force re-identification through the picker. |
 
-> Removed: `SET_NETWORK_MODE` — the popup no longer exposes a network-mode toggle. Network mode is now configured via `POST /api/ui/settings/network-mode` from the web UI.
+> Removed in P2 phase 7 (all dormant after the Phase-6 popup rewrite, no remaining listeners in the extension):
+> `GET_STATUS`, `DISCONNECT`, `RETRY_AUTO_CONNECT`, `RESET_PROFILE_ID`, `SET_PROFILE_ID`, `GET_PROFILE_IDENTITY`, `CHECK_FORMATTER_UPDATES`. Background broadcasts `IDENTIFY_REQUIRED` and `CONNECTION_STATUS_CHANGED` also removed for the same reason.
+>
+> Removed in Phase 6: `SET_NETWORK_MODE` — network mode is configured via `POST /api/ui/settings/network-mode` from the web UI.
 
 ## Handlers
 
@@ -208,47 +206,29 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) uses a tabbed interface with **two tabs**: **Dashboard** and **Settings**. The Pairing tab has been removed — pairing approval, paired-agent management, and network-mode configuration now live in the **server-hosted web UI** at `http://localhost:3456/ui/`. The popup header displays the extension version (from `chrome.runtime.getManifest()`).
+P2 phase 6 gutted the popup to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, restricted-mode whitelist) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
 
-### Dashboard Tab
+### What the popup shows
 
-The Dashboard renders one of four views depending on state:
+Four components, top to bottom:
 
-| View | When Shown | Content |
-|------|-----------|---------|
-| Profile identification | Server can't resolve which Chrome profile this extension belongs to (`identify_required`) | Profile dropdown (populated from server-supplied `knownProfiles`) + "I am this profile" button |
-| Connecting | Connecting to server or auto-connect polling | Server URL, error messages if server unreachable |
-| Connected | WebSocket open and `hello_ack` received | Server URL, endpoint display (WS, SSE, mode), current profile row with **Change** button, Disconnect button, formatter-update check, restricted-mode controls with whitelist management |
-| Disconnected | User manually disconnected | Server URL, Retry button |
+1. **Connection status** — colored dot + one-word label (`Connected` / `Reconnecting…` / `Disconnected`). Reveals the bound profile and server URL underneath.
+2. **Current tab** — domain + state pill (`Allowed` / `Blocked (baseline)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
+3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
+4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
 
-#### Connected View Details
+The popup reads `apiKey` + `serverUrl` from `chrome.storage.local` (written by the background pairing flow) and hits two server endpoints:
 
-- **Server URL / Endpoints section** -- WS URL, SSE URL, and a Mode indicator ("Local only" or "Network (LAN)").
-- **Profile row** -- Shows the currently bound Chrome profile (display name resolved during the hello handshake). The **Change** button clears `webpilot.profileId` and forces a re-identification through the picker.
-- **Disconnect button** -- Sets `manuallyDisconnected = true` and closes the connection; the `onclose` handler is nulled before closing to prevent auto-reconnect.
-- **Check for formatter updates** (button) -- Sends `CHECK_FORMATTER_UPDATES` to the background script, which forwards `check_formatter_updates` over the extension WS and relays the `formatter_update_result` push back to the popup (10s timeout).
-- **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
+- `GET  /api/popup/state?tabUrl=<url>` — connection + current-tab pill.
+- `POST /api/popup/site-toggle` — flip the global rule.
 
-#### Whitelist Management
+It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 
-When restricted mode is enabled, the Dashboard displays whitelist controls:
+### Per-profile reload required
 
-- **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
-- **Manual domain input** (text field + Add button) -- Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
-- **Domain list** (scrollable container) -- All whitelisted domains with remove (x) buttons.
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version bumped to **`1.1.4`** in Phase 6 so you can confirm which copy is live from `chrome://extensions/`.
 
-Domain matching is domain-level and covers all subdomains.
-
-### Settings Tab
-
-The Settings tab provides:
-
-- **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`.
-- **Tab organization** (select) -- "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). Window position/size is persisted to `webPilotWindowBounds` and restored on next launch.
-
-**Removed from this tab in QOL-Features:**
-- Network-mode toggle (now in the web UI's Settings page; the server-side toggle spawn-and-exits to rebind).
-- Pairing-required toggle (the toggle is retired; pairing is always on; the legacy `set_pairing_required` WS message is logged and ignored).
+For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
 ### Web UI takeover
 

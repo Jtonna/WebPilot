@@ -1,89 +1,102 @@
 'use strict';
 
 /**
- * extension-installs.js
+ * extension-installs.js — SQLite-backed (P2 — phase 7).
+ *
+ * Replaces the JSON-file implementation that used to read/write
+ * `<dataDir>/config/extension-installs.json`. Now backed by the
+ * `extension_installs` table (see `src/db/schema.sql`).
  *
  * Persistent server-side store mapping a per-install UUID (`installId`) minted
  * by the Chrome extension on `chrome.runtime.onInstalled` to the Chrome
  * `profileId` (profile-directory name) the server resolved for that install.
  *
- * Why this exists:
- *   The hello handshake has several resolution paths (direct profileId match
- *   from extension storage, gaiaEmail lookup against Local State, inference
- *   by exclusion, manual picker). When extension storage gets cleared (user
- *   resets, profile rebuilt, etc.) the cached `profileId` is gone and the
- *   server falls all the way back to the picker. This store gives the server
- *   an independent mapping keyed by an install-bound UUID that survives
- *   extension-storage wipes, so re-identification is automatic.
+ * The exported API surface is unchanged from the JSON-backed version so every
+ * existing caller in server.js continues to compile without edits:
+ *   - loadInstalls()
+ *   - saveInstalls(data)               -- still exported as a compat shim; not the
+ *                                          primary code path. Performs a full
+ *                                          replace of the table contents.
+ *   - getProfileForInstall(installId)
+ *   - setProfileForInstall(installId, profileId)
+ *   - cleanupStaleInstalls(maxAgeDays)
  *
- * On-disk shape (<dataDir>/config/extension-installs.json):
- *   {
- *     "<uuid>": {
- *       "profileId":    "<chrome profile directory name>",
- *       "firstSeen":    "<iso-8601>",
- *       "lastResolved": "<iso-8601>"
- *     },
- *     ...
- *   }
+ * Why we kept the legacy `loadInstalls` / `saveInstalls` exports: server.js
+ * snapshots the whole map for status-page rendering. Removing them would
+ * have required a bigger surgery into that endpoint; the shims keep the
+ * Phase-7 cleanup mechanical.
  */
 
-const path = require('node:path');
-const fs = require('node:fs');
-
-const { getDataDir } = require('./service/paths');
-
-function getInstallsPath() {
-  return path.join(getDataDir(), 'config', 'extension-installs.json');
-}
+const dbModule = require('./db/connection');
 
 /**
- * Reads extension-installs.json. Creates the file with `{}` on first use.
- * Returns a plain object keyed by installId.
+ * Returns a plain object keyed by installId — same shape the JSON store used
+ * to produce. Built by querying every row in `extension_installs`. Used by
+ * server.js to render the status snapshot.
  *
  * @returns {Object<string, { profileId: string, firstSeen: string, lastResolved: string }>}
  */
 function loadInstalls() {
-  const filePath = getInstallsPath();
   try {
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
-      }
-      console.log(
-        '[extension-installs:load] file content was not a plain object — treating as empty'
-      );
-      return {};
+    const db = dbModule.getDb();
+    const rows = db
+      .prepare('SELECT install_id, profile_id, first_seen_at, last_seen_at FROM extension_installs')
+      .all();
+    const out = {};
+    for (const row of rows) {
+      if (!row || typeof row.install_id !== 'string') continue;
+      out[row.install_id] = {
+        profileId: row.profile_id || '',
+        firstSeen: row.first_seen_at || '',
+        lastResolved: row.last_seen_at || '',
+      };
     }
-    // First boot — initialise an empty file so admins can find it on disk.
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify({}, null, 2), 'utf8');
-    console.log(`[extension-installs:load] created empty store at ${filePath}`);
-    return {};
+    return out;
   } catch (e) {
-    console.log(`[extension-installs:load] failed to read store: ${e.message}`);
+    console.log(`[extension-installs:load] DB read failed: ${e && e.message}`);
     return {};
   }
 }
 
 /**
- * Atomic write of the full installs object.
+ * Full-replace write. Kept for compatibility with any external caller that
+ * grabbed the snapshot via loadInstalls() and edited it in-memory. Not the
+ * recommended path — use setProfileForInstall() for upsert and
+ * cleanupStaleInstalls() for pruning.
  *
  * @param {Object} data
  */
 function saveInstalls(data) {
-  const filePath = getInstallsPath();
+  if (!data || typeof data !== 'object') {
+    console.log('[extension-installs:save] refusing — data must be a plain object');
+    return;
+  }
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    const db = dbModule.getDb();
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM extension_installs').run();
+      const insert = db.prepare(
+        `INSERT INTO extension_installs (install_id, profile_id, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?)`
+      );
+      for (const [installId, entry] of Object.entries(data)) {
+        if (!installId || !entry || typeof entry !== 'object') continue;
+        insert.run(
+          installId,
+          entry.profileId || null,
+          entry.firstSeen || new Date().toISOString(),
+          entry.lastResolved || new Date().toISOString()
+        );
+      }
+    });
+    tx();
   } catch (e) {
-    console.log(`[extension-installs:save] failed to write store: ${e.message}`);
+    console.log(`[extension-installs:save] DB write failed: ${e && e.message}`);
   }
 }
 
 /**
- * Look up the profileId mapped to an installId. Touches `lastResolved` on
+ * Look up the profileId mapped to an installId. Touches `last_seen_at` on
  * success so the entry stays fresh and won't get garbage-collected by
  * `cleanupStaleInstalls`.
  *
@@ -94,26 +107,34 @@ function getProfileForInstall(installId) {
   if (typeof installId !== 'string' || installId.length === 0) {
     return null;
   }
-  const installs = loadInstalls();
-  const entry = installs[installId];
-  if (!entry || typeof entry.profileId !== 'string' || entry.profileId.length === 0) {
+  try {
+    const db = dbModule.getDb();
+    const row = db
+      .prepare('SELECT profile_id FROM extension_installs WHERE install_id = ?')
+      .get(installId);
+    if (!row || typeof row.profile_id !== 'string' || row.profile_id.length === 0) {
+      console.log(
+        `[extension-installs:get] no mapping for installId="${installId.slice(0, 8)}..."`
+      );
+      return null;
+    }
+    const nowIso = new Date().toISOString();
+    db.prepare('UPDATE extension_installs SET last_seen_at = ? WHERE install_id = ?')
+      .run(nowIso, installId);
     console.log(
-      `[extension-installs:get] no mapping for installId="${installId.slice(0, 8)}..."`
+      `[extension-installs:get] resolved installId="${installId.slice(0, 8)}..." -> ` +
+        `profileId="${row.profile_id}"`
     );
+    return row.profile_id;
+  } catch (e) {
+    console.log(`[extension-installs:get] DB lookup failed: ${e && e.message}`);
     return null;
   }
-  entry.lastResolved = new Date().toISOString();
-  saveInstalls(installs);
-  console.log(
-    `[extension-installs:get] resolved installId="${installId.slice(0, 8)}..." -> ` +
-      `profileId="${entry.profileId}"`
-  );
-  return entry.profileId;
 }
 
 /**
- * Upsert the mapping for `installId` -> `profileId`. Sets `firstSeen` on
- * insert; always updates `lastResolved` (and `profileId`, in case the user
+ * Upsert the mapping for `installId` -> `profileId`. Sets `first_seen_at` on
+ * insert; always updates `last_seen_at` (and `profile_id`, in case the user
  * intentionally re-bound to a different profile in the picker).
  *
  * @param {string} installId
@@ -129,74 +150,71 @@ function setProfileForInstall(installId, profileId) {
     console.log('[extension-installs:set] refusing — profileId must be a non-empty string');
     return false;
   }
-  const installs = loadInstalls();
-  const now = new Date().toISOString();
-  const existing = installs[installId];
-  if (!existing) {
-    installs[installId] = {
-      profileId,
-      firstSeen: now,
-      lastResolved: now,
-    };
-    console.log(
-      `[extension-installs:set] inserted installId="${installId.slice(0, 8)}..." -> ` +
-        `profileId="${profileId}"`
-    );
-  } else {
-    const before = existing.profileId;
-    existing.profileId = profileId;
-    existing.lastResolved = now;
-    if (!existing.firstSeen) existing.firstSeen = now;
-    if (before !== profileId) {
+  try {
+    const db = dbModule.getDb();
+    const nowIso = new Date().toISOString();
+    const existing = db
+      .prepare('SELECT install_id, profile_id FROM extension_installs WHERE install_id = ?')
+      .get(installId);
+    if (!existing) {
+      db.prepare(
+        `INSERT INTO extension_installs (install_id, profile_id, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?)`
+      ).run(installId, profileId, nowIso, nowIso);
       console.log(
-        `[extension-installs:set] rebound installId="${installId.slice(0, 8)}..." ` +
-          `profileId "${before}" -> "${profileId}"`
-      );
-    } else {
-      console.log(
-        `[extension-installs:set] touched installId="${installId.slice(0, 8)}..." ` +
+        `[extension-installs:set] inserted installId="${installId.slice(0, 8)}..." -> ` +
           `profileId="${profileId}"`
       );
+    } else {
+      const before = existing.profile_id;
+      db.prepare(
+        'UPDATE extension_installs SET profile_id = ?, last_seen_at = ? WHERE install_id = ?'
+      ).run(profileId, nowIso, installId);
+      if (before !== profileId) {
+        console.log(
+          `[extension-installs:set] rebound installId="${installId.slice(0, 8)}..." ` +
+            `profileId "${before}" -> "${profileId}"`
+        );
+      } else {
+        console.log(
+          `[extension-installs:set] touched installId="${installId.slice(0, 8)}..." ` +
+            `profileId="${profileId}"`
+        );
+      }
     }
+    return true;
+  } catch (e) {
+    console.log(`[extension-installs:set] DB write failed: ${e && e.message}`);
+    return false;
   }
-  saveInstalls(installs);
-  return true;
 }
 
 /**
- * Drop entries whose `lastResolved` is older than `maxAgeDays`. Intended to be
- * called once at server startup so the file doesn't grow forever on machines
+ * Drop entries whose `last_seen_at` is older than `maxAgeDays`. Intended to be
+ * called once at server startup so the table doesn't grow forever on machines
  * where extensions get reinstalled frequently.
  *
  * @param {number} [maxAgeDays=90]
  * @returns {{ removed: number, kept: number }}
  */
 function cleanupStaleInstalls(maxAgeDays = 90) {
-  const installs = loadInstalls();
-  const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-  const kept = {};
-  let removed = 0;
-  for (const [installId, entry] of Object.entries(installs)) {
-    if (!entry || typeof entry !== 'object') {
-      removed += 1;
-      continue;
-    }
-    const last = entry.lastResolved ? Date.parse(entry.lastResolved) : NaN;
-    if (Number.isFinite(last) && last < cutoffMs) {
-      removed += 1;
-      continue;
-    }
-    kept[installId] = entry;
+  try {
+    const db = dbModule.getDb();
+    const cutoffIso = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+    const res = db
+      .prepare('DELETE FROM extension_installs WHERE last_seen_at < ?')
+      .run(cutoffIso);
+    const removed = res.changes || 0;
+    const kept = db.prepare('SELECT COUNT(*) AS c FROM extension_installs').get().c;
+    console.log(
+      `[extension-installs:cleanup] removed=${removed} kept=${kept} ` +
+        `(maxAgeDays=${maxAgeDays})`
+    );
+    return { removed, kept };
+  } catch (e) {
+    console.log(`[extension-installs:cleanup] DB op failed: ${e && e.message}`);
+    return { removed: 0, kept: 0 };
   }
-  if (removed > 0) {
-    saveInstalls(kept);
-  }
-  const keptCount = Object.keys(kept).length;
-  console.log(
-    `[extension-installs:cleanup] removed=${removed} kept=${keptCount} ` +
-      `(maxAgeDays=${maxAgeDays})`
-  );
-  return { removed, kept: keptCount };
 }
 
 module.exports = {

@@ -24,6 +24,18 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 - **Auth comparison uses `===`, not `crypto.timingSafeEqual`.** `server.js` UI middleware + WS handshake + extension WS auth all use short-circuit string equality on the shared `apiKey`. Localhost today; LAN-exposed once network mode is on. (Server review C4.)
 - **Single shared `apiKey` reused for extension transport + UI admin.** Compromise of one = compromise of both. At minimum restrict mutating UI endpoints (`/api/ui/agents/*`, `/api/ui/settings/network-mode`, `/api/ui/profiles`) to localhost regardless of header. (Server review C3.)
 
+## Shipped this branch (P2 — extension redesign + SQLite + site policy)
+
+Phased landing of the P2 redesign (design in `docs/EXTENSION_REDESIGN_AND_POLICY.md`). All seven phases shipped on `QOL-Features`:
+
+- ~~**Phase 1 — DB layer, no behavior change.**~~ ✅ `edf83ab`. Added `better-sqlite3 ^12.10.0`, `src/db/{schema.sql,connection.js,migration.js}`, 8 tables + indexes idempotent on every boot. Migration runs as a detect-only stub.
+- ~~**Phase 2 — paired-keys + pending-pairings → SQLite.**~~ ✅ `78a1f51`. `paired-keys.js` rewritten to query `agents` + `pairings` tables. API keys hashed at rest with HMAC-SHA-256 + per-server pepper. First-boot import + rename-to-`.imported.<TS>`.
+- ~~**Phase 3 — formatter incidents → SQLite.**~~ ✅ `eea1d4b`. `formatter_incidents` table + in-memory cache hydration. JSON ring buffer retired.
+- ~~**Phase 4 — Site policy plumbing.**~~ ✅ `6740c31`. `global_site_rules`, `agent_site_overrides`, `baseline_blocklist_meta` tables; `site-policy.js` + `blocklist-updater.js`. Server-side enforcement at every `browser_*` handler; auto-close countdown on blocked tabs.
+- ~~**Phase 5 — Webapp Sites page.**~~ ✅ `56b933d`. New `/ui/sites/` route — global rules CRUD + per-agent overrides + baseline pack toggle.
+- ~~**Phase 6 — Extension popup redesign.**~~ ✅ `4009982`. Popup gutted to 4 components (connection dot / current tab / Block-Allow toggle / Open dashboard). Theme matched to webapp. Extension bumped to `1.1.4`.
+- ~~**Phase 7 — Cleanup.**~~ ✅ (this commit). `extension-installs.json` → `extension_installs` table (with first-boot import + rename); `network.enabled` flag file → `config.network_enabled` row (with first-boot import + rename, and `index.js` updated to read DB-first). Dead `chrome.runtime.onMessage` handlers removed from `background.js` (`GET_STATUS`, `DISCONNECT`, `RETRY_AUTO_CONNECT`, `RESET_PROFILE_ID`, `SET_PROFILE_ID`, `GET_PROFILE_IDENTITY`, `CHECK_FORMATTER_UPDATES`) and dead broadcasts (`IDENTIFY_REQUIRED`, `CONNECTION_STATUS_CHANGED`) — all unreferenced after the Phase-6 popup rewrite. Docs updated (`MCP_SERVER.md`, `CHROME_EXTENSION.md`, `DEV_GUIDE.md`, `EXTENSION_REDESIGN_AND_POLICY.md`).
+
 ## Shipped this branch
 
 - ~~**No MCP tool for inspecting formatter errors during iteration.**~~ ✅ `webpilot_dev_get_formatter_logs({ platform, limit? })`. Returns health summary + recent error ring-buffer entries (incl. stack traces, workflow name, params, tabId for workflow errors). No auth required — read-only.
@@ -33,6 +45,7 @@ Pending work on `QOL-Features` before v1 ships — triaged 2026-05-16.
 
 ## P2 — nice to have
 
+- **better-sqlite3 native-binary needs pkg-build verification.** (P2 phase 7 follow-up.) The Phase-1 TODO comment in `packages/server-for-chrome-extension/package.json` is now an actionable note: the hoisted `<repo>/node_modules/better-sqlite3/build/Release/better_sqlite3.node` must be copied alongside the pkg-built `.exe` (the Electron deploy step is the place to extend). Not end-to-end verified — `npm run build:win` followed by a fresh-VM smoke test (server boots, DB opens) is still required before shipping. (verify)
 - **`webpilot_dev_reload_extension` is single-profile-scoped — consider an opt-in fan-out.** Today the tool routes to the caller's paired profile only, so multi-profile installs need one tool call (or manual chrome://extensions/ reload) per profile after a shared extension edit. Worth considering an `all_profiles: true` param (or sibling tool `webpilot_dev_reload_extension_all`) that iterates `extensionBridge` connected profiles and reloads each, so a single call covers a multi-profile dev loop. Open design questions: should it require *some* authenticated key but reach beyond the caller's profile (privilege escalation across profile boundaries), or should each profile's paired agent still have to opt in? Per-profile is the safer default; documenting it landed alongside this branch — fan-out is the next iteration.
 - **`ChromeManager.ensureReady` running+hasFlag path skips per-profile WS check** that the spec calls for. Currently compensated by an `isConnected` throw in `mcp-handler.js`, but UX intent is a relaunch, not an error. (Server review I2.)
 - **`ChromeManager.refresh()` picks `ours[0]` arbitrarily** when multiple browser-parents match the user-data-dir. Should prefer `hasFlag === true` or warn on mixed sets. (Server review I1.)
