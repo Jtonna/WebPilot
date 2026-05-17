@@ -204,6 +204,71 @@ export function dismissAllForFormatter(name) {
   });
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Sites (P2 phase 5)
+//
+// CRUD over the site-policy tables (global_site_rules and
+// agent_site_overrides) plus the baseline-pack on/off toggle.
+//
+// All helpers follow the existing convention: throw on non-2xx, return the
+// parsed JSON body otherwise. The Sites page subscribes to the
+// `sites_changed` WebSocket event to refetch after any write.
+
+// GET /api/ui/sites — returns { globalRules: [...], baseline: {...} }.
+export function getSites() {
+  return apiFetch('/api/ui/sites');
+}
+
+// POST /api/ui/sites — body { domain, decision: 'allow'|'block' }. Returns
+// the new (or upserted) row { domain, decision, source, createdAt, updatedAt }.
+export function createSiteRule({ domain, decision }) {
+  return apiFetch('/api/ui/sites', {
+    method: 'POST',
+    body: { domain, decision },
+  });
+}
+
+// DELETE /api/ui/sites/:domain — removes a user-source rule. Server refuses
+// baseline rows with a 400; the caller should treat the error message as
+// authoritative for the toast text.
+export function deleteSiteRule(domain) {
+  return apiFetch(`/api/ui/sites/${encodeURIComponent(domain)}`, {
+    method: 'DELETE',
+  });
+}
+
+// GET /api/ui/agents/:agentId/site-overrides — agentId is the api_key_hash
+// returned by getStatus().pairedAgents[i].key. Returns an array of
+// { domain, decision, createdAt }.
+export function getAgentSiteOverrides(agentId) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides`);
+}
+
+// POST /api/ui/agents/:agentId/site-overrides — body { domain, decision }.
+export function setAgentSiteOverride(agentId, { domain, decision }) {
+  return apiFetch(
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides`,
+    { method: 'POST', body: { domain, decision } }
+  );
+}
+
+// DELETE /api/ui/agents/:agentId/site-overrides/:domain
+export function deleteAgentSiteOverride(agentId, domain) {
+  return apiFetch(
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides/${encodeURIComponent(domain)}`,
+    { method: 'DELETE' }
+  );
+}
+
+// POST /api/ui/sites/baseline/toggle — body { enabled: bool }. Returns
+// { enabled, baseline: { enabled, version, lastFetchedAt, domainCount } }.
+export function toggleBaselineBlocklist(enabled) {
+  return apiFetch('/api/ui/sites/baseline/toggle', {
+    method: 'POST',
+    body: { enabled: !!enabled },
+  });
+}
+
 // Race guard for pages that refresh from BOTH REST and WS events.
 //
 // Without this, a slow REST `refresh()` issued before a WS event lands can

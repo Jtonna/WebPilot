@@ -1093,6 +1093,288 @@ function mountWebUiRoutes(app, deps) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // --- Sites admin routes (P2 phase 5) ---
+  //
+  // Webapp Sites page CRUD over the site-policy tables. Reads + writes are
+  // localhost-only (auth) and writes go through mutatingAuth for the same
+  // defense-in-depth gate the other admin endpoints use. Every successful
+  // write broadcasts a `sites_changed` UI event so any open Sites tab
+  // refetches.
+  const sitePolicy = require('./site-policy');
+
+  // Resolve the numeric agents.id row from the `key` parameter passed by the
+  // webapp (which is the api_key_hash, since that's what listKeys() exposes
+  // as `key`). Returns null when no active agent matches.
+  function _agentIdFromKey(key) {
+    if (typeof key !== 'string' || key.length === 0) return null;
+    try {
+      const db = require('./db/connection').getDb();
+      const row = db
+        .prepare("SELECT id FROM agents WHERE api_key_hash = ? AND state = 'active'")
+        .get(key);
+      return row ? row.id : null;
+    } catch (e) {
+      console.log(`[ui-api:sites] _agentIdFromKey failed: ${e.message}`);
+      return null;
+    }
+  }
+
+  function _broadcastSitesChanged(reason) {
+    try {
+      broadcastUiEvent && broadcastUiEvent({ type: 'sites_changed', reason: reason || null });
+    } catch (_e) { /* ignore */ }
+  }
+
+  // GET /api/ui/sites
+  // Returns the full global_site_rules list (user + baseline) plus a small
+  // summary of the baseline pack.
+  app.get('/api/ui/sites', auth, (req, res) => {
+    try {
+      const db = require('./db/connection').getDb();
+      const rows = db
+        .prepare(
+          'SELECT domain, decision, source, created_at, updated_at FROM global_site_rules ORDER BY source ASC, domain ASC'
+        )
+        .all();
+      const globalRules = rows.map((r) => ({
+        domain: r.domain,
+        decision: r.decision,
+        source: r.source,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      }));
+      let baseline;
+      try {
+        baseline = blocklistUpdater.getStatus();
+      } catch (e) {
+        baseline = { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
+      }
+      res.json({ globalRules, baseline });
+    } catch (e) {
+      console.error('[ui-api] GET /sites failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ui/sites
+  // Body: { domain, decision: 'allow'|'block' }. Adds (or upserts) a
+  // source='user' global rule.
+  app.post('/api/ui/sites', auth, mutatingAuth, express.json(), (req, res) => {
+    try {
+      const body = req.body || {};
+      const rawDomain = body.domain;
+      const decision = body.decision;
+      const normalized = sitePolicy.normalizeDomain(rawDomain);
+      if (!normalized) {
+        return res.status(400).json({
+          error: 'invalid domain',
+          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
+        });
+      }
+      if (decision !== 'allow' && decision !== 'block') {
+        return res.status(400).json({
+          error: 'invalid decision',
+          reason: "decision must be 'allow' or 'block'",
+        });
+      }
+      const result = sitePolicy.setGlobalRule(normalized, decision, 'user');
+      // Read back the persisted row so we include created_at / updated_at.
+      const db = require('./db/connection').getDb();
+      const row = db
+        .prepare(
+          'SELECT domain, decision, source, created_at, updated_at FROM global_site_rules WHERE domain = ?'
+        )
+        .get(result.domain);
+      console.log(`[ui-api:sites] upsert global rule domain=${result.domain} decision=${result.decision}`);
+      _broadcastSitesChanged('global_rule_upsert');
+      res.status(201).json({
+        domain: row ? row.domain : result.domain,
+        decision: row ? row.decision : result.decision,
+        source: row ? row.source : 'user',
+        createdAt: row ? row.created_at : null,
+        updatedAt: row ? row.updated_at : null,
+      });
+    } catch (e) {
+      console.error('[ui-api] POST /sites failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/ui/sites/:domain
+  // Only removes source='user' rows. Refuses baseline rows with a 400 and a
+  // message that nudges the user toward the baseline toggle in Settings.
+  app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
+    try {
+      const rawDomain = req.params.domain;
+      const normalized = sitePolicy.normalizeDomain(rawDomain);
+      if (!normalized) {
+        return res.status(400).json({
+          error: 'invalid domain',
+          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
+        });
+      }
+      const db = require('./db/connection').getDb();
+      const existing = db
+        .prepare('SELECT source FROM global_site_rules WHERE domain = ?')
+        .get(normalized);
+      if (!existing) {
+        return res.status(404).json({ error: 'rule not found', domain: normalized });
+      }
+      if (existing.source !== 'user') {
+        return res.status(400).json({
+          error: 'cannot delete baseline rule',
+          reason:
+            "this rule comes from the baseline blocklist pack — toggle the pack off in Settings to remove all baseline rules",
+          domain: normalized,
+          source: existing.source,
+        });
+      }
+      const removed = sitePolicy.removeGlobalRule(normalized);
+      if (!removed) {
+        return res.status(404).json({ error: 'rule not found', domain: normalized });
+      }
+      console.log(`[ui-api:sites] delete global rule domain=${normalized}`);
+      _broadcastSitesChanged('global_rule_delete');
+      res.json({ ok: true, domain: normalized });
+    } catch (e) {
+      console.error('[ui-api] DELETE /sites/:domain failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/ui/agents/:agentId/site-overrides
+  // The :agentId param here is the api_key_hash exposed by listKeys() as
+  // `key`. We resolve it to the numeric agents.id for the lookup.
+  app.get('/api/ui/agents/:agentId/site-overrides', auth, (req, res) => {
+    try {
+      const agentId = _agentIdFromKey(req.params.agentId);
+      if (!agentId) {
+        return res.status(404).json({ error: 'agent not found' });
+      }
+      const db = require('./db/connection').getDb();
+      const rows = db
+        .prepare(
+          'SELECT domain, decision, created_at FROM agent_site_overrides WHERE agent_id = ? ORDER BY domain ASC'
+        )
+        .all(agentId);
+      res.json(
+        rows.map((r) => ({
+          domain: r.domain,
+          decision: r.decision,
+          createdAt: r.created_at,
+        }))
+      );
+    } catch (e) {
+      console.error('[ui-api] GET /agents/:agentId/site-overrides failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ui/agents/:agentId/site-overrides
+  // Body: { domain, decision }
+  app.post('/api/ui/agents/:agentId/site-overrides', auth, mutatingAuth, express.json(), (req, res) => {
+    try {
+      const agentId = _agentIdFromKey(req.params.agentId);
+      if (!agentId) {
+        return res.status(404).json({ error: 'agent not found' });
+      }
+      const body = req.body || {};
+      const normalized = sitePolicy.normalizeDomain(body.domain);
+      if (!normalized) {
+        return res.status(400).json({
+          error: 'invalid domain',
+          reason: `domain ${JSON.stringify(body.domain)} did not normalize to a usable hostname`,
+        });
+      }
+      if (body.decision !== 'allow' && body.decision !== 'block') {
+        return res.status(400).json({
+          error: 'invalid decision',
+          reason: "decision must be 'allow' or 'block'",
+        });
+      }
+      sitePolicy.setAgentOverride(agentId, normalized, body.decision);
+      const db = require('./db/connection').getDb();
+      const row = db
+        .prepare(
+          'SELECT domain, decision, created_at FROM agent_site_overrides WHERE agent_id = ? AND domain = ?'
+        )
+        .get(agentId, normalized);
+      console.log(
+        `[ui-api:sites] upsert agent override agentId=${agentId} domain=${normalized} decision=${body.decision}`
+      );
+      _broadcastSitesChanged('agent_override_upsert');
+      res.status(201).json({
+        domain: row ? row.domain : normalized,
+        decision: row ? row.decision : body.decision,
+        createdAt: row ? row.created_at : null,
+      });
+    } catch (e) {
+      console.error('[ui-api] POST /agents/:agentId/site-overrides failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE /api/ui/agents/:agentId/site-overrides/:domain
+  app.delete('/api/ui/agents/:agentId/site-overrides/:domain', auth, mutatingAuth, (req, res) => {
+    try {
+      const agentId = _agentIdFromKey(req.params.agentId);
+      if (!agentId) {
+        return res.status(404).json({ error: 'agent not found' });
+      }
+      const normalized = sitePolicy.normalizeDomain(req.params.domain);
+      if (!normalized) {
+        return res.status(400).json({
+          error: 'invalid domain',
+          reason: `domain ${JSON.stringify(req.params.domain)} did not normalize`,
+        });
+      }
+      const removed = sitePolicy.removeAgentOverride(agentId, normalized);
+      if (!removed) {
+        return res.status(404).json({ error: 'override not found', domain: normalized });
+      }
+      console.log(
+        `[ui-api:sites] delete agent override agentId=${agentId} domain=${normalized}`
+      );
+      _broadcastSitesChanged('agent_override_delete');
+      res.json({ ok: true, domain: normalized });
+    } catch (e) {
+      console.error('[ui-api] DELETE /agents/:agentId/site-overrides/:domain failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ui/sites/baseline/toggle
+  // Body: { enabled: bool }. Updates the config table key
+  // `baseline_blocklist_enabled`. Note: the auto-update interval still runs
+  // in the background regardless — flipping this off means the next fetch
+  // skips DB writes, but existing baseline rows remain until a fetch lands
+  // (or the server is restarted). The webapp surfaces that subtlety in the
+  // baseline summary card.
+  app.post('/api/ui/sites/baseline/toggle', auth, mutatingAuth, express.json(), (req, res) => {
+    try {
+      const enabled = !!(req.body && req.body.enabled);
+      const db = require('./db/connection').getDb();
+      const nowIso = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO config (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
+      ).run('baseline_blocklist_enabled', enabled ? 'true' : 'false', nowIso);
+      console.log(`[ui-api:sites] baseline toggle enabled=${enabled}`);
+      _broadcastSitesChanged('baseline_toggle');
+      let status;
+      try {
+        status = blocklistUpdater.getStatus();
+      } catch (_e) {
+        status = { enabled, version: null, lastFetchedAt: null, domainCount: 0 };
+      }
+      res.json({ enabled, baseline: status });
+    } catch (e) {
+      console.error('[ui-api] POST /sites/baseline/toggle failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
 
 function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {

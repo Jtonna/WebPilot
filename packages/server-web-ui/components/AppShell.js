@@ -9,6 +9,7 @@ import {
   CpuChipIcon as CpuChipOutline,
   CommandLineIcon as CommandLineOutline,
   Cog6ToothIcon as Cog6ToothOutline,
+  GlobeAltIcon as GlobeAltOutline,
   Bars3Icon,
 } from '@heroicons/react/24/outline';
 import {
@@ -18,6 +19,7 @@ import {
   CpuChipIcon as CpuChipSolid,
   CommandLineIcon as CommandLineSolid,
   Cog6ToothIcon as Cog6ToothSolid,
+  GlobeAltIcon as GlobeAltSolid,
 } from '@heroicons/react/24/solid';
 import { getStatus } from '../lib/api';
 
@@ -65,6 +67,13 @@ const NAV_WORKSPACE = [
     match: (p) => p.startsWith('/ui/agents'),
     IconOutline: CpuChipOutline,
     IconSolid: CpuChipSolid,
+  },
+  {
+    href: '/ui/sites/',
+    label: 'Sites',
+    match: (p) => p.startsWith('/ui/sites'),
+    IconOutline: GlobeAltOutline,
+    IconSolid: GlobeAltSolid,
   },
   {
     href: '/ui/formatters/',
