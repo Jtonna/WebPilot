@@ -10,6 +10,13 @@
  *   - DM List:         discord.com/channels/@me
  *   - DM Conversation: discord.com/channels/@me/<id>
  *   - Server Channel:  discord.com/channels/<serverId>/<channelId>
+ *
+ * Composer rendering: the message composer is a textbox whose accessible
+ * name discriminates the conversation. It renders as
+ *   [eN] Message @<recipient> textbox   (DM)
+ *   [eN] Message #<channel> textbox     (server channel)
+ * preserving the discriminating prefix so workflows can disambiguate
+ * multiple composers from the formatted tree alone.
  */
 
 module.exports = function formatDiscord(nodes) {
@@ -675,6 +682,19 @@ module.exports = function formatDiscord(nodes) {
         name(node).toLowerCase().includes('message');
     });
     return textbox;
+  }
+
+  // Format the message composer line, preserving the discriminating part
+  // of its accessible name (e.g. "Message @notboosted" or "Message #general")
+  // so workflows can disambiguate which composer they're looking at from the
+  // formatted tree alone. Falls back to plain "Message textbox" if the name
+  // doesn't match the expected pattern.
+  function formatComposerLine(ref, textboxNode) {
+    var nm = name(textboxNode).trim();
+    if (/^Message\s+[#@]/.test(nm)) {
+      return '[' + ref + '] ' + nm + ' textbox';
+    }
+    return '[' + ref + '] Message textbox';
   }
 
   // --- Extract channel/server info ---
@@ -2053,7 +2073,7 @@ module.exports = function formatDiscord(nodes) {
     var textbox = extractTextbox();
     if (textbox) {
       var tbRef = addRef(textbox);
-      lines.push('[' + tbRef + '] Message textbox');
+      lines.push(formatComposerLine(tbRef, textbox));
     }
 
     // Profile sidebar
@@ -2181,7 +2201,7 @@ module.exports = function formatDiscord(nodes) {
     var textbox = extractTextbox();
     if (textbox) {
       var tbRef = addRef(textbox);
-      lines.push('[' + tbRef + '] Message textbox');
+      lines.push(formatComposerLine(tbRef, textbox));
     }
 
     // Member list
@@ -2290,7 +2310,7 @@ module.exports = function formatDiscord(nodes) {
     var textbox = extractTextbox();
     if (textbox) {
       var ref = addRef(textbox);
-      lines.push('[' + ref + '] Message textbox');
+      lines.push(formatComposerLine(ref, textbox));
     }
 
     if (refCounter === 1) {
