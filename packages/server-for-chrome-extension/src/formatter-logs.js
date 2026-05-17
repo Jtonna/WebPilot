@@ -1,82 +1,94 @@
 'use strict';
 
 /**
- * formatter-logs.js — in-memory ring buffer + health tracking for each
- * registered formatter, with periodic disk persistence.
+ * formatter-logs.js — DB-backed formatter incident log + in-memory hot cache
+ * (P2 — phase 3).
  *
- * Scope:
- *   - Records success and error invocations of formatter `format()` calls.
- *   - Records workflow runtime errors raised inside `webpilot_run_workflow`.
- *   - Surfaces aggregate health + the most recent N entries to the
- *     `/api/ui/formatters` and `/api/ui/formatters/:name/logs` endpoints.
+ * Replaces the previous in-memory ring buffer + periodic JSON flush
+ * implementation. Every error becomes a row in the `formatter_incidents`
+ * SQLite table (durable across server restart). A per-formatter in-memory
+ * cache holds the 10 most recent incidents, hydrated lazily from the DB,
+ * for fast reads from the dashboard's Action Items list and the
+ * `webpilot_dev_get_formatter_logs` MCP tool.
  *
  * Design notes:
- *   - Per-formatter ring buffer, capacity = RING_CAPACITY (default 50).
- *   - Health rule: HEALTHY if total invocations < 3, OR if the last 10
- *     invocations contain no errors. UNHEALTHY otherwise.
- *   - Persistence: write to <dataDir>/formatter-logs.json every 60s + on
- *     process exit / SIGINT / SIGTERM. Entries older than 7 days are dropped
- *     on read (hydrate).
- *   - Stack traces truncated to ~1024 chars.
+ *   - Write-through pattern: recordError → INSERT row → prepend to cache.
+ *   - Cache capacity per formatter: CACHE_CAPACITY_PER_FORMATTER (=10).
+ *   - Reads up to capacity hit the cache only. Reads above capacity fall
+ *     through to a direct DB query (`webpilot_dev_get_formatter_logs` caps
+ *     at 50 so this fires for limit > 10).
+ *   - Per-incident dismiss: recordDismiss(incidentId, dismissedBy) sets
+ *     dismissed_at on a single row. recordDismissAll(formatterName) is the
+ *     bulk version for the dashboard's "Dismiss all" button.
+ *   - Success counts stay in-memory only. Per the P2 design, the DB audit
+ *     trail is for errors specifically; recording every successful invocation
+ *     would be high-volume noise.
+ *   - Health rule unchanged: HEALTHY if total invocations < 3, OR if the
+ *     last 10 invocations are all-success. UNHEALTHY otherwise. A formatter
+ *     whose recent incidents are ALL dismissed counts as healthy too, so
+ *     dismissing makes it drop off the dashboard until the next error.
+ *
+ * Exports (preserved API for callers that haven't changed):
+ *   - recordSuccess, recordError, hasFormatter, getStatus, getLogs,
+ *     listAll, flush (no-op now), _resetForTests, events (EventEmitter).
+ *
+ * Intentional signature change (per the P2 design):
+ *   - recordDismiss(incidentId, dismissedBy = 'user')  — was (formatterName).
+ *     The old "dismiss the whole formatter" semantic is gone; each incident
+ *     row gets its own dismiss.
+ *   - recordDismissAll(formatterName, dismissedBy = 'user')  — NEW. Bulk
+ *     dismiss for the dashboard header's "Dismiss all" action.
+ *
+ * Pruning: cleanupDismissedIncidents(maxAgeDays = 90) mirrors paired-keys'
+ * cleanupOldPairings — server.js calls it at boot and daily.
  */
 
-const fs = require('fs');
-const path = require('path');
 const { EventEmitter } = require('events');
 
-const RING_CAPACITY = 50;
-const FLUSH_INTERVAL_MS = 60 * 1000;
-const TTL_MS = 7 * 24 * 3600 * 1000;
+const CACHE_CAPACITY_PER_FORMATTER = 10;
 const STACK_MAX = 1024;
 
-// formatterName -> { logs: [{ timestamp, phase, workflow?, message, stack, params?, tabId? }],
-//                    successCount, errorCount, lastSuccessAt, lastErrorAt,
-//                    recentOutcomes: ['ok'|'err', ...] (capacity 10),
-//                    dismissedAt: string | null }
+// formatterName -> { successCount, errorCount, lastSuccessAt, lastErrorAt,
+//                    recentOutcomes: ['ok'|'err', ...] cap 10,
+//                    cache: Incident[] (newest first, cap 10) }
+//
+// An Incident row matches the row shape we hand to callers:
+//   { id, formatter, timestamp, phase, workflow, message, stack, params,
+//     tabId, dismissedAt, dismissedBy }
+// (timestamp / dismissedAt are ISO strings; id is the DB rowid.)
 const state = new Map();
 
-// EventEmitter that fires `'changed'` with `{ name, status }` after every
-// recordError / recordDismiss. server.js listens to this so it can broadcast
-// `formatter_status_changed` over the UI WebSocket. Picked EventEmitter over
-// a constructor-time callback because it lets multiple subscribers attach
-// without changing the module's surface (idiomatic Node).
 const emitter = new EventEmitter();
-// Avoid noisy "MaxListeners exceeded" warnings if anything ever attaches
-// per-formatter listeners — we expect just the one server.js subscriber.
 emitter.setMaxListeners(50);
 
-let flushTimer = null;
-let exitHandlersInstalled = false;
 let hydrated = false;
 
-function getLogPath() {
-  // Lazy-require to avoid a top-level dependency on paths during tests that
-  // stub the module.
-  const { getDataDir } = require('./service/paths');
-  return path.join(getDataDir(), 'formatter-logs.json');
-}
-
-function ensureFormatter(name) {
-  let entry = state.get(name);
-  if (!entry) {
-    entry = {
-      logs: [],
-      successCount: 0,
-      errorCount: 0,
-      lastSuccessAt: null,
-      lastErrorAt: null,
-      recentOutcomes: [],
-      dismissedAt: null
-    };
-    state.set(name, entry);
-  }
-  return entry;
+function getDb() {
+  // Lazy-require to avoid pulling the DB module in at top level — keeps
+  // _resetForTests() viable and lets the unit test harness stub the module.
+  return require('./db/connection').getDb();
 }
 
 function truncateStack(stack) {
   if (typeof stack !== 'string') return '';
   if (stack.length <= STACK_MAX) return stack;
   return stack.slice(0, STACK_MAX) + '\n[truncated]';
+}
+
+function ensureFormatter(name) {
+  let entry = state.get(name);
+  if (!entry) {
+    entry = {
+      successCount: 0,
+      errorCount: 0,
+      lastSuccessAt: null,
+      lastErrorAt: null,
+      recentOutcomes: [],
+      cache: [],
+    };
+    state.set(name, entry);
+  }
+  return entry;
 }
 
 function pushOutcome(entry, outcome) {
@@ -86,10 +98,79 @@ function pushOutcome(entry, outcome) {
   }
 }
 
-function pushLog(entry, log) {
-  entry.logs.unshift(log); // newest first
-  if (entry.logs.length > RING_CAPACITY) {
-    entry.logs.length = RING_CAPACITY;
+/**
+ * Convert a `formatter_incidents` DB row to the shape callers expect.
+ * Field names align with the legacy ring-buffer entry shape so callers
+ * (mcp-handler, server.js UI routes, FormatterErrorCard) keep working
+ * with no changes: { id, timestamp, phase, workflow, message, stack,
+ * params, tabId, dismissedAt, dismissedBy, formatter }.
+ */
+function rowToIncident(row) {
+  if (!row) return null;
+  let params = null;
+  if (row.params_json) {
+    try { params = JSON.parse(row.params_json); } catch (_e) { params = null; }
+  }
+  return {
+    id: row.id,
+    formatter: row.formatter,
+    timestamp: row.occurred_at,
+    phase: row.phase,
+    workflow: row.workflow || null,
+    message: row.message || '',
+    stack: row.stack_truncated || '',
+    params,
+    tabId: row.tab_id == null ? null : row.tab_id,
+    dismissedAt: row.dismissed_at || null,
+    dismissedBy: row.dismissed_by || null,
+  };
+}
+
+/**
+ * Hydrate per-formatter caches from the DB. One-shot, lazy. On first call
+ * after boot, queries every distinct formatter that has ever logged an
+ * incident and loads the 10 most recent rows into its cache. Counts
+ * (successCount / errorCount / recentOutcomes) start fresh — those are
+ * in-memory only and reset on every server restart, which matches the
+ * "process-uptime stats" semantic dashboards expect.
+ */
+function hydrateOnce() {
+  if (hydrated) return;
+  hydrated = true;
+  let db;
+  try {
+    db = getDb();
+  } catch (e) {
+    // DB not initialized — happens in tests that skip connection.init().
+    // Stay in pure-memory mode; next call will retry.
+    hydrated = false;
+    return;
+  }
+  try {
+    const formatters = db
+      .prepare('SELECT formatter, COUNT(*) AS c, MAX(occurred_at) AS last_at FROM formatter_incidents GROUP BY formatter')
+      .all();
+    const recentStmt = db.prepare(
+      `SELECT id, formatter, occurred_at, phase, workflow, message,
+              stack_truncated, params_json, tab_id, dismissed_at, dismissed_by
+         FROM formatter_incidents
+        WHERE formatter = ?
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT ?`
+    );
+    for (const f of formatters) {
+      const entry = ensureFormatter(f.formatter);
+      const rows = recentStmt.all(f.formatter, CACHE_CAPACITY_PER_FORMATTER);
+      entry.cache = rows.map(rowToIncident);
+      entry.errorCount = f.c;
+      entry.lastErrorAt = f.last_at || null;
+      // Seed recentOutcomes from the cached rows so health is meaningful
+      // immediately after boot (no false "healthy" reads before the next
+      // error lands).
+      entry.recentOutcomes = entry.cache.slice(0, 10).map(() => 'err').reverse();
+    }
+  } catch (e) {
+    console.log(`[formatter-logs] hydrate failed: ${e && e.message}`);
   }
 }
 
@@ -100,7 +181,9 @@ function recordSuccess(formatterName) {
   entry.successCount += 1;
   entry.lastSuccessAt = new Date().toISOString();
   pushOutcome(entry, 'ok');
-  scheduleFlush();
+  try {
+    emitter.emit('changed', { name: formatterName, status: statusForEntry(entry) });
+  } catch (_e) { /* ignore */ }
 }
 
 function recordError(formatterName, info = {}) {
@@ -110,49 +193,192 @@ function recordError(formatterName, info = {}) {
   entry.errorCount += 1;
   entry.lastErrorAt = new Date().toISOString();
   pushOutcome(entry, 'err');
-  // A fresh error supersedes any prior user dismissal — the formatter is
-  // re-surfaced as an action item.
-  entry.dismissedAt = null;
 
   const err = info.error || {};
-  const log = {
-    timestamp: entry.lastErrorAt,
-    phase: info.phase || (info.workflow ? 'workflow' : 'format'),
-    workflow: info.workflow || null,
-    message: typeof err === 'string' ? err : (err.message || 'Unknown error'),
-    stack: truncateStack(err && err.stack),
-    params: info.params || null,
-    tabId: info.tabId != null ? info.tabId : null
-  };
-  pushLog(entry, log);
-  scheduleFlush();
+  const message = typeof err === 'string' ? err : (err.message || 'Unknown error');
+  const stack = truncateStack(err && err.stack);
+  const phase = info.phase || (info.workflow ? 'workflow' : 'format');
+  const workflow = info.workflow || null;
+  const params = info.params != null ? info.params : null;
+  const tabId = info.tabId != null ? info.tabId : null;
+  const occurredAt = entry.lastErrorAt;
+
+  let incident;
+  try {
+    const db = getDb();
+    const res = db
+      .prepare(
+        `INSERT INTO formatter_incidents
+           (formatter, occurred_at, phase, workflow, message, stack_truncated,
+            params_json, tab_id, dismissed_at, dismissed_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+      )
+      .run(
+        formatterName,
+        occurredAt,
+        phase,
+        workflow,
+        message,
+        stack,
+        params == null ? null : JSON.stringify(params),
+        tabId
+      );
+    incident = {
+      id: res.lastInsertRowid,
+      formatter: formatterName,
+      timestamp: occurredAt,
+      phase,
+      workflow,
+      message,
+      stack,
+      params,
+      tabId,
+      dismissedAt: null,
+      dismissedBy: null,
+    };
+  } catch (e) {
+    console.log(`[formatter-logs] DB insert failed (continuing in-memory): ${e && e.message}`);
+    // Fallback so the dashboard still shows something when the DB is broken.
+    // No id — caller can still display the row, but per-incident dismiss
+    // won't work for it (dismiss looks up by id).
+    incident = {
+      id: null,
+      formatter: formatterName,
+      timestamp: occurredAt,
+      phase,
+      workflow,
+      message,
+      stack,
+      params,
+      tabId,
+      dismissedAt: null,
+      dismissedBy: null,
+    };
+  }
+
+  // Prepend to cache; trim to CACHE_CAPACITY_PER_FORMATTER.
+  entry.cache.unshift(incident);
+  if (entry.cache.length > CACHE_CAPACITY_PER_FORMATTER) {
+    entry.cache.length = CACHE_CAPACITY_PER_FORMATTER;
+  }
+
   try {
     emitter.emit('changed', { name: formatterName, status: statusForEntry(entry) });
   } catch (_e) { /* listener errors are not our problem */ }
 }
 
 /**
- * Mark `formatterName` as user-dismissed. Does NOT clear historical log
- * entries — the /ui/formatters/logs/?name=X view still shows them. Sets a
- * `dismissedAt` timestamp; computeHealth() treats `dismissedAt > lastErrorAt`
- * as healthy so the formatter drops out of the dashboard action-items list
- * until the next error event arrives (which clears dismissedAt).
+ * Per-incident dismiss. Updates the DB row and, if the row is in any
+ * formatter's cache, updates the cached copy in place.
  *
- * Returns the new status payload (same shape as statusForEntry), or null if
- * the formatter is unknown.
+ * @param {number|string} incidentId — DB rowid of the `formatter_incidents` row.
+ * @param {string} [dismissedBy='user'] — actor; 'user' for UI dismiss, an
+ *   agent name for tool-call dismiss.
+ * @returns {{ ok: boolean, incidentId: number, formatter?: string, status?: object, error?: string }}
  */
-function recordDismiss(formatterName) {
-  if (!formatterName) return null;
+function recordDismiss(incidentId, dismissedBy = 'user') {
+  if (incidentId == null || incidentId === '') {
+    return { ok: false, incidentId, error: 'incidentId required' };
+  }
+  const id = Number(incidentId);
+  if (!Number.isFinite(id)) {
+    return { ok: false, incidentId, error: 'incidentId must be numeric' };
+  }
   hydrateOnce();
+
+  let row;
+  try {
+    const db = getDb();
+    row = db.prepare('SELECT formatter, dismissed_at FROM formatter_incidents WHERE id = ?').get(id);
+  } catch (e) {
+    return { ok: false, incidentId: id, error: e && e.message };
+  }
+  if (!row) {
+    return { ok: false, incidentId: id, error: 'incident not found' };
+  }
+
+  const dismissedAt = new Date().toISOString();
+  try {
+    const db = getDb();
+    // Only set the dismiss timestamp if it's still NULL. Re-dismissing is a
+    // no-op (we don't overwrite an earlier dismissed_at).
+    db.prepare(
+      `UPDATE formatter_incidents
+         SET dismissed_at = COALESCE(dismissed_at, ?),
+             dismissed_by = COALESCE(dismissed_by, ?)
+       WHERE id = ?`
+    ).run(dismissedAt, dismissedBy, id);
+  } catch (e) {
+    return { ok: false, incidentId: id, error: e && e.message };
+  }
+
+  // Update the cached copy if present.
+  const formatterName = row.formatter;
   const entry = state.get(formatterName);
-  if (!entry) return null;
-  entry.dismissedAt = new Date().toISOString();
-  scheduleFlush();
-  const status = statusForEntry(entry);
+  if (entry) {
+    const cached = entry.cache.find((c) => c && c.id === id);
+    if (cached) {
+      if (!cached.dismissedAt) {
+        cached.dismissedAt = dismissedAt;
+        cached.dismissedBy = dismissedBy;
+      }
+    }
+  }
+
+  const status = entry ? statusForEntry(entry) : null;
   try {
     emitter.emit('changed', { name: formatterName, status });
   } catch (_e) { /* ignore */ }
-  return status;
+  return { ok: true, incidentId: id, formatter: formatterName, status };
+}
+
+/**
+ * Bulk dismiss every undismissed incident for a formatter. Used by the
+ * dashboard Action Items header's "Dismiss all" button. Updates the cache
+ * for the affected formatter so subsequent reads reflect the change without
+ * a DB roundtrip.
+ *
+ * @param {string} formatterName
+ * @param {string} [dismissedBy='user']
+ * @returns {{ ok: boolean, formatter: string, affected: number, status?: object, error?: string }}
+ */
+function recordDismissAll(formatterName, dismissedBy = 'user') {
+  if (!formatterName) {
+    return { ok: false, formatter: formatterName, affected: 0, error: 'formatter required' };
+  }
+  hydrateOnce();
+  const dismissedAt = new Date().toISOString();
+  let affected = 0;
+  try {
+    const db = getDb();
+    const res = db
+      .prepare(
+        `UPDATE formatter_incidents
+            SET dismissed_at = ?, dismissed_by = ?
+          WHERE formatter = ? AND dismissed_at IS NULL`
+      )
+      .run(dismissedAt, dismissedBy, formatterName);
+    affected = res.changes;
+  } catch (e) {
+    return { ok: false, formatter: formatterName, affected: 0, error: e && e.message };
+  }
+
+  // Mirror the dismiss into the cache.
+  const entry = state.get(formatterName);
+  if (entry) {
+    for (const inc of entry.cache) {
+      if (inc && !inc.dismissedAt) {
+        inc.dismissedAt = dismissedAt;
+        inc.dismissedBy = dismissedBy;
+      }
+    }
+  }
+
+  const status = entry ? statusForEntry(entry) : null;
+  try {
+    emitter.emit('changed', { name: formatterName, status });
+  } catch (_e) { /* ignore */ }
+  return { ok: true, formatter: formatterName, affected, status };
 }
 
 function hasFormatter(formatterName) {
@@ -163,18 +389,35 @@ function hasFormatter(formatterName) {
 
 function computeHealth(entry) {
   if (!entry) return 'unknown';
-  // User-dismissed AFTER the last error → treat as healthy for dashboard
-  // surfacing. A subsequent recordError() clears dismissedAt, so the next
-  // failure re-surfaces the formatter automatically.
-  if (entry.dismissedAt && entry.lastErrorAt) {
-    const d = Date.parse(entry.dismissedAt);
-    const e = Date.parse(entry.lastErrorAt);
-    if (Number.isFinite(d) && Number.isFinite(e) && d >= e) return 'healthy';
+  // If every cached recent incident is dismissed AND we have no fresh
+  // post-dismiss error, treat as healthy — the user has explicitly
+  // acknowledged the open items.
+  if (entry.cache.length > 0 && entry.cache.every((inc) => inc && inc.dismissedAt)) {
+    // Yet we still want to fall through to the regular rule for formatters
+    // that have a healthy success rate. So this is just one path to healthy.
+    return 'healthy';
   }
   const total = entry.successCount + entry.errorCount;
   if (total < 3) return 'healthy';
   const hasRecentError = entry.recentOutcomes.some((o) => o === 'err');
   return hasRecentError ? 'unhealthy' : 'healthy';
+}
+
+function lastErrorFromCache(entry) {
+  if (!entry || entry.cache.length === 0) return null;
+  // Newest first; pick the first undismissed for the dashboard preview, but
+  // fall back to the absolute newest if everything is dismissed (so the
+  // "Last error" line still has content on the per-formatter logs page).
+  const newest = entry.cache.find((c) => c && !c.dismissedAt) || entry.cache[0];
+  if (!newest) return null;
+  return {
+    id: newest.id,
+    timestamp: newest.timestamp,
+    message: newest.message,
+    phase: newest.phase,
+    workflow: newest.workflow || null,
+    stack: newest.stack || '',
+  };
 }
 
 function statusForEntry(entry) {
@@ -186,20 +429,22 @@ function statusForEntry(entry) {
       lastErrorAt: null,
       successCount: 0,
       errorCount: 0,
-      dismissedAt: null
+      dismissedAt: null,
     };
   }
-  const lastErrorLog = entry.logs.find((l) => l.phase === 'format' || l.phase === 'workflow') || null;
+  // `dismissedAt` on the status payload kept for backward compat with the
+  // old "whole-formatter dismiss" UI. We surface the newest cached incident's
+  // dismiss timestamp (or null) — close enough for the existing readers,
+  // and the dashboard already moved to per-incident dismiss anyway.
+  const newest = entry.cache[0] || null;
   return {
     health: computeHealth(entry),
-    lastError: lastErrorLog
-      ? { timestamp: lastErrorLog.timestamp, message: lastErrorLog.message, phase: lastErrorLog.phase, workflow: lastErrorLog.workflow, stack: lastErrorLog.stack || '' }
-      : null,
+    lastError: lastErrorFromCache(entry),
     lastSuccessAt: entry.lastSuccessAt,
     lastErrorAt: entry.lastErrorAt,
     successCount: entry.successCount,
     errorCount: entry.errorCount,
-    dismissedAt: entry.dismissedAt || null
+    dismissedAt: newest && newest.dismissedAt ? newest.dismissedAt : null,
   };
 }
 
@@ -208,11 +453,41 @@ function getStatus(formatterName) {
   return statusForEntry(state.get(formatterName));
 }
 
-function getLogs(formatterName, limit = RING_CAPACITY) {
+/**
+ * Recent incidents for a formatter. Reads from the cache when `limit` is
+ * small enough; otherwise falls through to the DB. Newest first.
+ */
+function getLogs(formatterName, limit = CACHE_CAPACITY_PER_FORMATTER) {
   hydrateOnce();
+  const safeLimit = Math.max(0, Number(limit) || 0);
+  if (safeLimit === 0) return [];
+
   const entry = state.get(formatterName);
-  if (!entry) return [];
-  return entry.logs.slice(0, Math.max(0, limit));
+
+  // Hot path: cache covers the request.
+  if (safeLimit <= CACHE_CAPACITY_PER_FORMATTER) {
+    if (!entry) return [];
+    return entry.cache.slice(0, safeLimit);
+  }
+
+  // Cold path: caller wants more history than the cache holds. Hit the DB.
+  try {
+    const db = getDb();
+    const rows = db
+      .prepare(
+        `SELECT id, formatter, occurred_at, phase, workflow, message,
+                stack_truncated, params_json, tab_id, dismissed_at, dismissed_by
+           FROM formatter_incidents
+          WHERE formatter = ?
+          ORDER BY occurred_at DESC, id DESC
+          LIMIT ?`
+      )
+      .all(formatterName, safeLimit);
+    return rows.map(rowToIncident);
+  } catch (e) {
+    console.log(`[formatter-logs] getLogs DB query failed: ${e && e.message}`);
+    return entry ? entry.cache.slice(0, safeLimit) : [];
+  }
 }
 
 function listAll() {
@@ -224,114 +499,78 @@ function listAll() {
   return out;
 }
 
-function hydrateOnce() {
-  if (hydrated) return;
-  hydrated = true;
-  try {
-    const logPath = getLogPath();
-    if (!fs.existsSync(logPath)) return;
-    const raw = fs.readFileSync(logPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    const cutoff = Date.now() - TTL_MS;
-    for (const [name, snap] of Object.entries(parsed.formatters || {})) {
-      const entry = ensureFormatter(name);
-      entry.successCount = snap.successCount || 0;
-      entry.errorCount = snap.errorCount || 0;
-      entry.lastSuccessAt = snap.lastSuccessAt || null;
-      entry.lastErrorAt = snap.lastErrorAt || null;
-      entry.recentOutcomes = Array.isArray(snap.recentOutcomes) ? snap.recentOutcomes.slice(-10) : [];
-      entry.dismissedAt = typeof snap.dismissedAt === 'string' ? snap.dismissedAt : null;
-      const logs = Array.isArray(snap.logs) ? snap.logs : [];
-      entry.logs = logs.filter((l) => {
-        if (!l || !l.timestamp) return false;
-        const t = Date.parse(l.timestamp);
-        return Number.isFinite(t) && t >= cutoff;
-      }).slice(0, RING_CAPACITY);
-    }
-  } catch (e) {
-    // Non-fatal — fall back to empty state and let the next flush overwrite.
-    console.log(`[formatter-logs] hydrate failed: ${e.message}`);
-  }
-  installExitHandlers();
-}
-
-function scheduleFlush() {
-  installExitHandlers();
-  if (flushTimer) return;
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    try { flush(); } catch (e) {
-      console.log(`[formatter-logs] periodic flush failed: ${e.message}`);
-    }
-  }, FLUSH_INTERVAL_MS);
-  // Don't keep the event loop alive for this timer.
-  if (flushTimer.unref) flushTimer.unref();
-}
-
+/**
+ * No-op in the DB-backed implementation — writes are synchronous via
+ * better-sqlite3, there's no buffer to flush. Kept on the public surface
+ * so any leftover callers (e.g. shutdown hooks) don't break.
+ */
 function flush() {
-  hydrateOnce();
+  /* intentionally empty — see module docstring */
+}
+
+/**
+ * Daily prune: drop dismissed incidents older than `maxAgeDays` days.
+ * Mirrors paired-keys.cleanupOldPairings — server.js wires this into the
+ * boot pass + a daily setInterval.
+ *
+ * Undismissed rows are NEVER pruned: those are the durable audit trail for
+ * "errors the user hasn't acknowledged yet." Only the dismissed tail is
+ * trimmed to keep the DB tidy.
+ *
+ * @param {number} [maxAgeDays=90]
+ * @returns {{ removed: number, kept: number }}
+ */
+function cleanupDismissedIncidents(maxAgeDays = 90) {
+  let db;
   try {
-    const logPath = getLogPath();
-    const dir = path.dirname(logPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const cutoff = Date.now() - TTL_MS;
-    const snapshot = { writtenAt: new Date().toISOString(), formatters: {} };
-    for (const [name, entry] of state.entries()) {
-      snapshot.formatters[name] = {
-        successCount: entry.successCount,
-        errorCount: entry.errorCount,
-        lastSuccessAt: entry.lastSuccessAt,
-        lastErrorAt: entry.lastErrorAt,
-        recentOutcomes: entry.recentOutcomes,
-        dismissedAt: entry.dismissedAt || null,
-        logs: entry.logs.filter((l) => {
-          if (!l || !l.timestamp) return false;
-          const t = Date.parse(l.timestamp);
-          return Number.isFinite(t) && t >= cutoff;
-        })
-      };
-    }
-    fs.writeFileSync(logPath, JSON.stringify(snapshot, null, 2), 'utf8');
+    db = getDb();
   } catch (e) {
-    console.log(`[formatter-logs] flush failed: ${e.message}`);
+    return { removed: 0, kept: 0 };
   }
+  const cutoffIso = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+  const res = db
+    .prepare(
+      `DELETE FROM formatter_incidents
+         WHERE dismissed_at IS NOT NULL
+           AND dismissed_at < ?`
+    )
+    .run(cutoffIso);
+  const remaining = db.prepare('SELECT COUNT(*) AS c FROM formatter_incidents').get().c;
+  if (res.changes > 0) {
+    console.log(
+      `[formatter-logs:cleanup] removed=${res.changes} kept=${remaining} ` +
+        `(maxAgeDays=${maxAgeDays}, dismissed-only)`
+    );
+  }
+  return { removed: res.changes, kept: remaining };
 }
 
-function installExitHandlers() {
-  if (exitHandlersInstalled) return;
-  exitHandlersInstalled = true;
-  const handler = () => {
-    try { flush(); } catch (e) { /* ignore on exit */ }
-  };
-  process.on('exit', handler);
-  process.on('SIGINT', handler);
-  process.on('SIGTERM', handler);
-}
-
-// Test seam: clear in-memory state. Not exported on the public API.
+/**
+ * Test seam: clears the in-memory state + counters and resets the
+ * hydration flag so the next call re-reads from the DB. Does NOT touch
+ * the DB — tests that want full isolation should point connection.init()
+ * at a temp file (or use a sandbox dataDir) before calling this.
+ */
 function _resetForTests() {
   state.clear();
   hydrated = false;
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
 }
 
 module.exports = {
   recordSuccess,
   recordError,
   recordDismiss,
+  recordDismissAll,
   hasFormatter,
   getStatus,
   getLogs,
   listAll,
   flush,
-  // EventEmitter used by server.js to bridge log updates to the UI WebSocket.
-  // Emits `'changed'` with `{ name, status }` after every recordError /
-  // recordDismiss. See server.js mountWebUiRoutes for the subscriber.
+  cleanupDismissedIncidents,
+  // EventEmitter used by server.js to bridge incident updates to the UI
+  // WebSocket. Emits `'changed'` with `{ name, status }` after recordError,
+  // recordSuccess, recordDismiss, and recordDismissAll. See server.js
+  // mountWebUiRoutes for the subscriber.
   events: emitter,
-  _resetForTests
+  _resetForTests,
 };

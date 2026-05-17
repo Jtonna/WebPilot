@@ -906,23 +906,48 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/formatters/:name/dismiss
+  // POST /api/ui/incidents/:id/dismiss
   //
-  // Marks the formatter as user-dismissed so it stops appearing as a
-  // dashboard action item until a new error event arrives. Historical log
-  // entries are preserved on the /ui/formatters/logs/?name=X view. See
-  // formatter-logs.recordDismiss. P1 #1.
-  app.post('/api/ui/formatters/:name/dismiss', auth, express.json(), (req, res) => {
+  // Per-incident dismiss (P2 phase 3). Each formatter_incidents row gets its
+  // own dismiss; the legacy "dismiss the whole formatter" semantic is gone.
+  // Sets dismissed_at on the row and emits a `changed` event so the
+  // dashboard WebSocket subscriber re-renders.
+  app.post('/api/ui/incidents/:id/dismiss', auth, express.json(), (req, res) => {
+    try {
+      const idRaw = req.params.id;
+      const id = Number(idRaw);
+      if (!Number.isFinite(id)) {
+        return res.status(400).json({ error: 'incident id must be numeric', id: idRaw });
+      }
+      const result = formatterLogs.recordDismiss(id, 'user');
+      if (!result.ok) {
+        const status = result.error === 'incident not found' ? 404 : 400;
+        return res.status(status).json({ error: result.error, incidentId: id });
+      }
+      console.log(`[ui-api] dismiss incident id=${id} formatter="${result.formatter}"`);
+      res.json({ ok: true, incidentId: id, formatter: result.formatter, status: result.status });
+    } catch (e) {
+      console.error('[ui-api] dismiss incident failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ui/formatters/:name/dismiss-all
+  //
+  // Bulk dismiss for the dashboard Action Items header's "Dismiss all" button.
+  // Marks every undismissed incident for `name` as dismissed; returns the
+  // affected row count so the UI can show a toast.
+  app.post('/api/ui/formatters/:name/dismiss-all', auth, express.json(), (req, res) => {
     try {
       const name = req.params.name;
-      if (!formatterLogs.hasFormatter(name)) {
-        return res.status(404).json({ error: 'formatter not found', name });
+      const result = formatterLogs.recordDismissAll(name, 'user');
+      if (!result.ok) {
+        return res.status(400).json({ error: result.error, name });
       }
-      const status = formatterLogs.recordDismiss(name);
-      console.log(`[ui-api] dismiss formatter="${name}"`);
-      res.json({ ok: true, name, status });
+      console.log(`[ui-api] dismiss-all formatter="${name}" affected=${result.affected}`);
+      res.json({ ok: true, name, affected: result.affected, status: result.status });
     } catch (e) {
-      console.error('[ui-api] dismiss formatter failed:', e.message);
+      console.error('[ui-api] dismiss-all formatter failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1540,6 +1565,25 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       console.log(`[pairing:cleanupOldPairings] daily pass failed: ${e.message}`);
     }
   }, 24 * 60 * 60 * 1000);
+
+  // Dismissed-incident pruning (P2 phase 3). Drop rows where
+  // dismissed_at < now() - 90d so the audit table doesn't grow without
+  // bound. Mirrors the cleanupOldPairings cadence: one boot pass + a daily
+  // setInterval. Undismissed rows are NEVER pruned.
+  try {
+    formatterLogs.cleanupDismissedIncidents();
+  } catch (e) {
+    console.log(`[formatter-logs:cleanup] startup pass failed: ${e.message}`);
+  }
+  const dailyFormatterIncidentsInterval = setInterval(() => {
+    try {
+      formatterLogs.cleanupDismissedIncidents();
+    } catch (e) {
+      console.log(`[formatter-logs:cleanup] daily pass failed: ${e.message}`);
+    }
+  }, 24 * 60 * 60 * 1000);
+  // Don't keep the event loop alive just for this housekeeping timer.
+  if (dailyFormatterIncidentsInterval.unref) dailyFormatterIncidentsInterval.unref();
 
   // Bridge async-pairing events back to the extension's WS so existing
   // `paired_agents_list` listeners in background.js keep working even though

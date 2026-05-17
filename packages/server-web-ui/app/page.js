@@ -9,7 +9,7 @@ import StatusRow from '../components/StatusRow';
 import Skeleton from '../components/Skeleton';
 import ErrorCard from '../components/ErrorCard';
 import { useToast } from '../components/ToastRegion';
-import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome, dismissFormatter } from '../lib/api';
+import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome, dismissIncident, dismissAllForFormatter } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 import { profileOptions } from '../lib/format';
 
@@ -101,14 +101,21 @@ export default function HomePage() {
     }
   }
 
-  async function handleDismissFormatter(name) {
+  async function handleDismissFormatter({ incidentId, name }) {
     setBusy(true);
     try {
-      await dismissFormatter(name);
-      toast.info(`Dismissed formatter "${name}".`);
+      // P2 phase 3: dismiss is per-incident. If the card lacks an incident id
+      // (e.g. the row was synthesized in a DB-down fallback), fall back to
+      // the bulk endpoint so the user can still clear the card from the list.
+      if (incidentId != null) {
+        await dismissIncident(incidentId);
+      } else {
+        await dismissAllForFormatter(name);
+      }
+      toast.info(`Dismissed error from "${name}".`);
       await refresh();
     } catch (e) {
-      toast.error(e.message || `Couldn’t dismiss formatter "${name}".`);
+      toast.error(e.message || `Couldn’t dismiss error from "${name}".`);
     } finally {
       setBusy(false);
     }

@@ -183,12 +183,22 @@ export function getFormatterLogs(name, limit = 50) {
   );
 }
 
-// Dismiss a formatter from the dashboard's action-items list (P1 #1). The
-// server marks it as user-dismissed; the formatter is re-surfaced on the
-// next error event. Historical log entries are NOT cleared — the
-// /ui/formatters/logs/?name=X view still shows them.
-export function dismissFormatter(name) {
-  return apiFetch(`/api/ui/formatters/${encodeURIComponent(name)}/dismiss`, {
+// Dismiss a single formatter incident from the dashboard's action-items list
+// (P2 phase 3). Per the design, dismiss is now per-incident — each row in
+// `formatter_incidents` gets its own dismiss timestamp. The Action Items
+// entry exposes the latest undismissed incident's id under
+// `lastError.id`; pass that here.
+export function dismissIncident(incidentId) {
+  return apiFetch(`/api/ui/incidents/${encodeURIComponent(incidentId)}/dismiss`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
+// Bulk-dismiss every undismissed incident for a formatter (P2 phase 3).
+// Wired to the Action Items header's "Dismiss all from <formatter>" button.
+export function dismissAllForFormatter(name) {
+  return apiFetch(`/api/ui/formatters/${encodeURIComponent(name)}/dismiss-all`, {
     method: 'POST',
     body: {},
   });

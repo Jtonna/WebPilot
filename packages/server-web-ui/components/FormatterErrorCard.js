@@ -79,8 +79,11 @@ function buildIssueUrl(formatter) {
  * Props:
  *   - formatter: { name, lastError, lastErrorAt, errorCount, ... } from
  *     /api/ui/status `actionItems[]` (type === 'formatter_error').
- *   - onDismiss(name) → Promise<void> — caller wires it to dismissFormatter()
- *     + refresh(). The card disables both buttons while the dismiss resolves.
+ *     `lastError` carries the DB incident `id` (P2 phase 3) used for
+ *     per-incident dismiss.
+ *   - onDismiss({ incidentId, name }) → Promise<void> — caller wires it to
+ *     dismissIncident() + refresh(). The card disables both buttons while
+ *     the dismiss resolves.
  *
  * Layout deliberately mirrors PairingPromptCard so the two card types sit
  * side by side in the same Action Items list without looking out of place.
@@ -101,7 +104,10 @@ export default function FormatterErrorCard({ formatter, onDismiss }) {
     if (dismissing) return;
     setDismissing(true);
     try {
-      if (onDismiss) await onDismiss(formatter.name);
+      if (onDismiss) {
+        const incidentId = lastError && lastError.id != null ? lastError.id : null;
+        await onDismiss({ incidentId, name: formatter.name });
+      }
     } finally {
       setDismissing(false);
     }

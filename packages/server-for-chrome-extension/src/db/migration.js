@@ -10,8 +10,8 @@
  * boot and the user keeps a recovery copy.
  *
  * Phase coverage:
- *   - Phase 2 (THIS COMMIT): paired-keys.json → `agents`; pending-pairings.json → `pairings`.
- *   - Phase 3 (next): formatter-logs.json → `formatter_incidents`.
+ *   - Phase 2: paired-keys.json → `agents`; pending-pairings.json → `pairings`.
+ *   - Phase 3 (THIS COMMIT): formatter-logs.json → `formatter_incidents`.
  *   - Phase 4 (later): server.json / network.enabled / extension-installs.json → `config`.
  *
  * Idempotency: each branch checks whether its destination table is already
@@ -308,6 +308,149 @@ function importPairedKeysAndPairings(detected) {
 }
 
 /**
+ * Import formatter-logs.json into the `formatter_incidents` table.
+ *
+ * JSON shape (the legacy ring-buffer flush format — see the pre-Phase-3
+ * formatter-logs.js):
+ *   {
+ *     writtenAt: '<ISO>',
+ *     formatters: {
+ *       '<formatterName>': {
+ *         successCount, errorCount, lastSuccessAt, lastErrorAt,
+ *         recentOutcomes, dismissedAt,
+ *         logs: [
+ *           { timestamp, phase, workflow?, message, stack, params?, tabId? },
+ *           ...newest first...
+ *         ]
+ *       }
+ *     }
+ *   }
+ *
+ * We unfurl `formatters[*].logs[*]` into individual `formatter_incidents`
+ * rows. Per-row fields preserved: timestamp → occurred_at, phase, workflow,
+ * message, stack → stack_truncated, params (JSON-stringified) → params_json,
+ * tabId → tab_id. The legacy whole-formatter `dismissedAt` doesn't map
+ * cleanly to per-incident dismiss (the design intentionally changed) — we
+ * propagate it to every imported row for that formatter so historical
+ * dismisses don't re-surface as fresh action items on the dashboard.
+ *
+ * Success/error counters and recentOutcomes are NOT migrated — those are
+ * in-memory uptime stats post-Phase-3.
+ *
+ * @returns {{ incidents: number, skippedReason?: string }}
+ */
+function importFormatterIncidents(detected) {
+  const dbModule = require('./connection');
+  const db = dbModule.getDb();
+
+  const entry = detected.find((d) => d.kind === 'formatter-logs');
+  if (!entry || !entry.exists) {
+    return { incidents: 0, skippedReason: 'no legacy formatter-logs.json file' };
+  }
+
+  const existingRows = db.prepare('SELECT COUNT(*) AS c FROM formatter_incidents').get().c;
+  if (existingRows > 0 && !reimportRequested()) {
+    return {
+      incidents: 0,
+      skippedReason:
+        `destination table already populated (formatter_incidents=${existingRows}); ` +
+        'pass --reimport to force',
+    };
+  }
+
+  let parsed;
+  try {
+    const raw = fs.readFileSync(entry.path, 'utf8');
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error(`[migration] failed to parse ${entry.path}: ${e && e.message}`);
+    return { incidents: 0, skippedReason: `parse error: ${e && e.message}` };
+  }
+
+  const formatters = parsed && parsed.formatters && typeof parsed.formatters === 'object'
+    ? parsed.formatters
+    : {};
+
+  const insertIncident = db.prepare(
+    `INSERT INTO formatter_incidents
+       (formatter, occurred_at, phase, workflow, message, stack_truncated,
+        params_json, tab_id, dismissed_at, dismissed_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  const importTx = db.transaction(() => {
+    if (reimportRequested() && existingRows > 0) {
+      db.prepare('DELETE FROM formatter_incidents').run();
+      console.log('[migration] --reimport: cleared existing formatter_incidents rows before import');
+    }
+
+    let inserted = 0;
+    for (const [formatterName, snap] of Object.entries(formatters)) {
+      if (!formatterName || !snap || typeof snap !== 'object') continue;
+      const wholeFormatterDismissedAt = typeof snap.dismissedAt === 'string' ? snap.dismissedAt : null;
+      const logs = Array.isArray(snap.logs) ? snap.logs : [];
+      for (const log of logs) {
+        if (!log || typeof log !== 'object') continue;
+        const occurredAt = typeof log.timestamp === 'string' ? log.timestamp : null;
+        if (!occurredAt) continue;
+        let phase = log.phase === 'workflow' ? 'workflow' : 'format';
+        const workflow = typeof log.workflow === 'string' ? log.workflow : null;
+        const message = typeof log.message === 'string' ? log.message : 'Unknown error';
+        const stack = typeof log.stack === 'string' ? log.stack : null;
+        let paramsJson = null;
+        if (log.params != null) {
+          try { paramsJson = JSON.stringify(log.params); } catch (_e) { paramsJson = null; }
+        }
+        const tabId = (log.tabId == null || !Number.isFinite(Number(log.tabId))) ? null : Number(log.tabId);
+        // If the whole formatter was dismissed AFTER this log, carry that
+        // dismiss forward so we don't resurface old errors as fresh action
+        // items. The dismiss timestamp on each row is just the formatter-level
+        // dismissedAt the user already chose.
+        let dismissedAt = null;
+        let dismissedBy = null;
+        if (wholeFormatterDismissedAt) {
+          const d = Date.parse(wholeFormatterDismissedAt);
+          const e = Date.parse(occurredAt);
+          if (Number.isFinite(d) && Number.isFinite(e) && d >= e) {
+            dismissedAt = wholeFormatterDismissedAt;
+            dismissedBy = 'user';
+          }
+        }
+        try {
+          insertIncident.run(
+            formatterName,
+            occurredAt,
+            phase,
+            workflow,
+            message,
+            stack,
+            paramsJson,
+            tabId,
+            dismissedAt,
+            dismissedBy
+          );
+          inserted += 1;
+        } catch (e) {
+          console.warn(
+            `[migration] formatter-logs: skipping unparseable row for "${formatterName}": ${e && e.message}`
+          );
+        }
+      }
+    }
+    return inserted;
+  });
+
+  const inserted = importTx();
+
+  // Archive only after a successful commit. If 0 rows were imported we still
+  // archive — the file is consumed; leaving it would cause a confusing
+  // "would re-import on --reimport but the source is empty" state.
+  archiveImported(entry.path);
+
+  return { incidents: inserted };
+}
+
+/**
  * Walk the legacy JSON stores and import them into the DB. Returns a summary
  * of what was detected and what was imported. Each branch is independently
  * idempotent — re-running this on a populated DB is a no-op (unless the
@@ -352,21 +495,38 @@ function runImportFromJsonStores() {
     // Do NOT rename source files on failure — leave them for retry.
   }
 
-  // ─── Phase 3 (formatter incidents) — TODO ───────────────────────────────
-  // for (const entry of present) { if (entry.kind === 'formatter-logs') { ... } }
+  // ─── Phase 3: formatter incidents ───────────────────────────────────────
+  let importedIncidents = 0;
+  try {
+    const result = importFormatterIncidents(detected);
+    importedIncidents = result.incidents;
+    if (result.skippedReason) {
+      console.log(`[migration] formatter-logs skipped: ${result.skippedReason}`);
+    } else {
+      console.log(
+        `[migration] imported ${result.incidents} incidents ` +
+          'from formatter-logs.json → SQLite.'
+      );
+    }
+  } catch (e) {
+    console.error(`[migration] formatter-logs import FAILED: ${e && e.message}`);
+    if (e && e.stack) console.error(e.stack);
+  }
 
   // ─── Phase 4 (config / network.enabled / extension-installs) — TODO ─────
   // for (const entry of present) { switch (entry.kind) { ... } }
 
-  const totalImported = importedAgents + importedPairings;
+  const totalImported = importedAgents + importedPairings + importedIncidents;
   console.log(
-    `[migration] complete — detected=${present.length}, imported_agents=${importedAgents}, imported_pairings=${importedPairings}`
+    `[migration] complete — detected=${present.length}, imported_agents=${importedAgents}, ` +
+      `imported_pairings=${importedPairings}, imported_incidents=${importedIncidents}`
   );
   return {
     detected,
     imported: totalImported,
     agents: importedAgents,
     pairings: importedPairings,
+    incidents: importedIncidents,
   };
 }
 
@@ -375,5 +535,6 @@ module.exports = {
   runImportFromJsonStores,
   // Exposed for tests / dev tooling.
   importPairedKeysAndPairings,
+  importFormatterIncidents,
   reimportRequested,
 };
