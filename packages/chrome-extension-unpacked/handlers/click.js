@@ -47,6 +47,35 @@ export async function click(params) {
     throw new Error('button must be left, right, or middle');
   }
 
+  // ---------------------------------------------------------------------------
+  // Detach watch.
+  //
+  // When a click triggers SPA navigation (e.g. Discord, GitHub PR pages, gmail
+  // — anything that swaps the document via pushState + DOM replacement), the
+  // CDP target attached to this tab can be torn down mid-flight. Any
+  // `chrome.debugger.sendCommand` call in progress at that moment may neither
+  // resolve nor reject — the await hangs forever. The mouse events have
+  // already fired (the click "worked" from the user's POV), but the handler
+  // never reaches its `return`, no response is sent back to the server, and
+  // the server's COMMAND_TIMEOUT (30s) eventually fires with a misleading
+  // "Command timeout" error.
+  //
+  // We listen for chrome.debugger.onDetach scoped to this tab. If it fires
+  // partway through the click, we short-circuit at the next checkpoint and
+  // return success with `navigated: true` so the caller knows the click
+  // landed AND triggered a context teardown.
+  // ---------------------------------------------------------------------------
+  let detached = false;
+  let detachReason = null;
+  const onDetach = (source, reason) => {
+    if (source && source.tabId === tab_id) {
+      detached = true;
+      detachReason = reason || 'unknown';
+    }
+  };
+  chrome.debugger.onDetach.addListener(onDetach);
+
+  try {
   const target = await getSession(tab_id);
 
   // Get viewport dimensions for start position calculation
@@ -327,42 +356,60 @@ export async function click(params) {
       }
     }
 
-    // Play ripple animation
-    if (showCursor) {
-      await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
-        expression: generateRippleCode(),
-        returnByValue: true
-      });
+    // Play ripple animation (skip if already detached)
+    if (showCursor && !detached) {
+      await raceWithDetach(
+        chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+          expression: generateRippleCode(),
+          returnByValue: true
+        }),
+        () => detached
+      );
     }
 
-    // Mouse press
-    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x,
-      y,
-      button,
-      clickCount
-    });
+    // Mouse press — race against detach because Discord-style SPAs can swap
+    // the document on mousedown.
+    if (!detached) {
+      await raceWithDetach(
+        chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x,
+          y,
+          button,
+          clickCount
+        }),
+        () => detached
+      );
+    }
 
     // Delay between press and release
-    if (clickDelay > 0) {
+    if (clickDelay > 0 && !detached) {
       await sleep(clickDelay);
     }
 
-    // Mouse release
-    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x,
-      y,
-      button,
-      clickCount
-    });
+    // Mouse release — same detach-watch reasoning. By the time we reach this
+    // line on a navigating page, the press has already triggered the SPA
+    // transition, the target may be tearing down, and `sendCommand` could
+    // hang indefinitely.
+    if (!detached) {
+      await raceWithDetach(
+        chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x,
+          y,
+          button,
+          clickCount
+        }),
+        () => detached
+      );
+    }
 
-    // Update last position for this tab
+    // Update last position for this tab (local-only, always safe)
     setLastPosition(tab_id, x, y);
 
-    // Schedule cursor removal (non-blocking)
-    if (showCursor) {
+    // Schedule cursor removal (non-blocking, fire-and-forget). Skip if
+    // detached — the target is gone and the eval would just throw.
+    if (showCursor && !detached) {
       chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
         expression: generateCursorRemoveCode(lingerDelay),
         returnByValue: true
@@ -381,6 +428,14 @@ export async function click(params) {
       delay: clickDelay,
       lingerDelay,
       scrolled,
+      // navigated=true means the click triggered a context teardown
+      // (SPA navigation, full-page load, tab close, etc.). The mouse events
+      // were dispatched before the detach. Callers can treat this as a
+      // success signal — the page has moved on. detachReason is whichever
+      // string Chrome's onDetach API supplied ('target_closed',
+      // 'replaced_with_devtools', etc.).
+      navigated: detached,
+      detachReason: detached ? detachReason : null,
       path: {
         points: stats.points,
         duration: stats.duration,
@@ -390,6 +445,42 @@ export async function click(params) {
       },
       startPosition: startPos
     };
+  } finally {
+    chrome.debugger.onDetach.removeListener(onDetach);
+  }
+}
+
+/**
+ * Race a CDP promise against a "detached" flag. If the promise resolves or
+ * rejects normally, that result wins. If `getDetached()` flips true while the
+ * promise is still pending, we resolve with a sentinel so the caller's
+ * `await` returns and control can fall through to the function's detach
+ * check — instead of hanging on a promise that will never settle.
+ *
+ * 25 ms poll interval keeps the overhead negligible (most clicks complete in
+ * < 1 ms once they reach this layer; the polling fires at most a couple of
+ * times before the underlying promise settles).
+ *
+ * @param {Promise} promise — CDP promise we'd normally await
+ * @param {() => boolean} getDetached — closure over the detach flag
+ * @returns {Promise<*>} the promise's value, or { __detached: true } sentinel
+ */
+function raceWithDetach(promise, getDetached) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const tick = setInterval(() => {
+      if (settled) return;
+      if (getDetached()) {
+        settled = true;
+        clearInterval(tick);
+        resolve({ __detached: true });
+      }
+    }, 25);
+    promise.then(
+      (v) => { if (!settled) { settled = true; clearInterval(tick); resolve(v); } },
+      (e) => { if (!settled) { settled = true; clearInterval(tick); reject(e); } }
+    );
+  });
 }
 
 /**
