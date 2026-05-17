@@ -80,10 +80,15 @@ export async function type(params) {
     let charCount = 0;
     let stalled = false;
 
-    // Type each character
+    // Type each character. Newlines (`\n`) are emitted as Shift+Enter so
+    // chat composers (Discord, Slack, etc.) interpret them as soft line
+    // breaks rather than a SUBMIT — plain Enter is reserved for the
+    // optional `pressEnter: true` send below.
     for (const char of text) {
       if (detached) break;
-      const r = await typeChar(target, char, safeCdp);
+      const r = char === '\n'
+        ? await typeShiftEnter(target, safeCdp)
+        : await typeChar(target, char, safeCdp);
       if (r && r.__stalled) { stalled = true; break; }
       if (r && r.__detached) break;
       charCount++;
@@ -152,6 +157,73 @@ async function typeChar(target, char, safeCdp) {
       key: char
     }),
     'keyUp'
+  );
+}
+
+/**
+ * Emit a Shift+Enter keystroke sequence — used to encode a `\n` in input
+ * text as a soft line break in chat composers (Discord, Slack, etc.)
+ * instead of a SUBMIT. Sequence is: Shift down → Enter down (with
+ * modifiers=8) → Enter up (with modifiers=8) → Shift up. Each step
+ * goes through `safeCdp` so the stall watchdog protects every call,
+ * matching `typeChar` / `typeKey`.
+ *
+ * CDP `Input.dispatchKeyEvent` modifiers bitmask: Alt=1, Ctrl=2, Meta=4,
+ * Shift=8. See
+ * https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchKeyEvent
+ *
+ * @param {Object} target - Debugger target
+ * @param {Function} safeCdp - per-call detach+stall wrapper
+ */
+async function typeShiftEnter(target, safeCdp) {
+  const shiftDown = await safeCdp(
+    chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Shift',
+      code: 'ShiftLeft',
+      windowsVirtualKeyCode: 16,
+      nativeVirtualKeyCode: 16,
+      modifiers: 8
+    }),
+    'keyDown:Shift'
+  );
+  if (shiftDown && (shiftDown.__stalled || shiftDown.__detached)) return shiftDown;
+
+  const enterDown = await safeCdp(
+    chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      modifiers: 8
+    }),
+    'keyDown:Shift+Enter'
+  );
+  if (enterDown && (enterDown.__stalled || enterDown.__detached)) return enterDown;
+
+  const enterUp = await safeCdp(
+    chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      modifiers: 8
+    }),
+    'keyUp:Shift+Enter'
+  );
+  if (enterUp && (enterUp.__stalled || enterUp.__detached)) return enterUp;
+
+  return await safeCdp(
+    chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Shift',
+      code: 'ShiftLeft',
+      windowsVirtualKeyCode: 16,
+      nativeVirtualKeyCode: 16
+    }),
+    'keyUp:Shift'
   );
 }
 

@@ -144,6 +144,12 @@ formatter does this with `name_starts_with: 'Message '` to match composer
 textboxes whose accessible name varies per channel / recipient. See
 `discord/workflows.js` for the pattern.
 
+Multiline `params.text` passed through to `browser.type({ ... })` is handled
+correctly: any `\n` character is emitted by the extension as a `Shift+Enter`
+keystroke, so chat composers (Discord, Slack, etc.) treat it as a soft line
+break instead of a SUBMIT. Plain `Enter` is still reserved for the optional
+`pressEnter: true` send at the end of the typed text.
+
 ---
 
 ## When you also need to edit the Chrome extension
