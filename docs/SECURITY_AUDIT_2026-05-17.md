@@ -384,26 +384,42 @@ longer accept an `apiKey` parameter. `GET /connect` no longer returns
 files that still carry `apiKey` are silently ignored — the field has
 no consumer.
 
-**Goal:** delete the single-shared-secret. `/connect` becomes a "claim
-installId" handshake. `server.json` no longer contains an apiKey.
+**Goal:** delete the single-shared-secret. `/connect` becomes a
+zero-credential addressing endpoint. `server.json` no longer contains an
+apiKey.
+
+> **Divergence from the original plan.** Items 1 and 2 below were the
+> Phase-C-dependent design (auto-provision a per-profile paired key on
+> first `/connect` / WS upgrade). Phase C was dropped, so what actually
+> shipped is simpler: `GET /connect` stayed a GET but no longer returns
+> a key (just `serverUrl` / `sseUrl` / `networkMode`); the WS upgrade
+> accepts any installId without an auth compare (installId is a
+> non-secret routing identifier — agent-layer paired keys remain the
+> only credential that grants real power). Items 3 and 4 shipped as
+> written.
 
 **What ships:**
-1. Replace `GET /connect` with `POST /connect` that takes an
+1. ~~Replace `GET /connect` with `POST /connect` that takes an
    `installId` in the body and returns the per-profile paired key
-   (auto-provisioning if needed). First-call behavior: the server mints
-   the agent row, returns the plaintext key, and never returns plaintext
-   for that installId again. Subsequent calls return only the WS URL +
-   profile metadata (no key — if the extension lost the key it has to
-   `request_pairing` like any other agent).
-2. The WS upgrade gate (server.js:1505) no longer compares against any
-   transport key. The only valid auth is `installId → bound agent`. An
-   unbound installId either auto-provisions (allowed in default mode) or
-   is rejected (network mode + admin policy).
+   (auto-provisioning if needed).~~ **Shipped as:** `GET /connect`
+   returns `{ serverUrl, sseUrl, networkMode }` — no key, no body. The
+   extension's own installId (minted in extension storage) is its
+   identity; the server has nothing to hand out.
+2. ~~The WS upgrade gate (server.js:1505) no longer compares against any
+   transport key. The only valid auth is `installId → bound agent`.~~
+   **Shipped as:** the WS upgrade requires `?installId=<uuid>` on the
+   URL but does no secret comparison. Claiming an installId grants zero
+   agent power; all real power is gated at the MCP `tools/call` layer
+   by paired-agent keys.
 3. `getApiKey()` and `DEFAULT_API_KEY` are removed from
    `service/paths.js`. The `apiKey` field in `server.json` is deprecated
-   (kept readable for one release for diagnostic logs, then removed).
-4. `_authPopup` simplifies to paired-key only (Phase A's revert lands
-   here for installs that came up post-Phase-B).
+   (silently ignored; readable for one release for diagnostic logs, then
+   removed). ✅ Shipped.
+4. `_authPopup` simplifies to paired-key + `X-Install-Id` only. The
+   `7dc391d` transport-key fallback is removed; popup endpoints
+   (`/api/popup/state`, `/api/popup/site-toggle`) now resolve callers via
+   `extension_installs.installId → profileId` and operate in
+   profile-context (global rules apply; per-agent overrides do not). ✅ Shipped.
 
 **Files touched:**
 - `packages/server-for-chrome-extension/src/service/paths.js` — drop

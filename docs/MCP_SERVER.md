@@ -92,7 +92,7 @@ Implements the MCP protocol:
 - **Server-side formatting** -- For `browser_get_accessibility_tree`, the server receives raw nodes from the extension and formats them via `formatterManager.formatTree(url, nodes)`. Passing `usePlatformOptimizer: false` forces the default formatter instead of a platform-matched one. After formatting, ancestry context is built using `extractAncestryContext`, and a `store_refs` notification is pushed to the extension via `extensionBridge.notify()`.
 - **Script fetching** -- For `browser_inject_script`, the server fetches the script from the provided URL before sending the content to the extension. This allows injecting scripts from localhost or external URLs regardless of page CSP.
 - **Chain execution** -- `browser_request_chain` is handled entirely server-side. It calls `handleToolCall()` internally for each step and never sends a command directly to the extension bridge.
-- `createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired, options)` — 5 positional dependencies plus an options object (`options.port`, `options.chromeManager`). The Express app is NOT passed; routes are mounted by the caller using the returned `handleSSE` and `handleMessage` functions.
+- `createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairingRequired, options)` — 4 positional dependencies plus an options object (`options.port`, `options.chromeManager`). The `apiKey` positional parameter was retired in `f7f2bb8` along with the shared transport key. The Express app is NOT passed; routes are mounted by the caller using the returned `handleSSE` and `handleMessage` functions.
 
 ### `src/extension-bridge.js`
 
@@ -402,7 +402,7 @@ Contents (post-P2):
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
 - `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `baseline_blocklist_meta`, `config`, and `extension_installs` tables. See `src/db/schema.sql`.
 - `logs/` subdirectory.
-- `config/server.json` (port + apiKey override file; still file-backed because it's read at the earliest possible bootstrap moment).
+- `config/server.json` (port override file; still file-backed because it's read at the earliest possible bootstrap moment. A legacy `apiKey` field is silently ignored — the shared transport key was retired 2026-05-17).
 - `config/notifications.json` (per-user notification preferences — still file-backed for now).
 - `formatters/` (auto-updated formatters from GitHub).
 - `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater).

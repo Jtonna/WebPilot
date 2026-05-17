@@ -8,7 +8,11 @@ WebPilot documentation covering system architecture, development guides, and API
 - [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, and service registration. For developers working on the server layer.
 - [CHROME_EXTENSION.md](CHROME_EXTENSION.md) -- Chrome extension architecture: service worker, command handlers, formatters, utilities, popup UI, and communication protocol. For developers working on browser automation.
 - [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.
+- [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
+- [CHROME_LINUX.md](CHROME_LINUX.md) -- Linux-side Chrome integration notes (same scope as the macOS doc).
 - [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: status dashboard, onboarding placeholder text, preload IPC bridge, and build scripts. For developers working on the installer and management UI.
+- [EXTENSION_REDESIGN_AND_POLICY.md](EXTENSION_REDESIGN_AND_POLICY.md) -- Design doc for the P2 redesign (SQLite migration + site policy + minimal popup). Now shipped; retained as the architectural record with per-phase commit hashes.
+- [SECURITY_AUDIT_2026-05-17.md](SECURITY_AUDIT_2026-05-17.md) -- Auth & authorization model audit and the phased transport-key retirement. Phases A + B + D shipped as a hard cutover on 2026-05-17 (`f7f2bb8`); Phase C was intentionally dropped.
 
 ## Guides
 

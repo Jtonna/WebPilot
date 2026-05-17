@@ -48,7 +48,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired 2026-05-17, see `docs/SECURITY_AUDIT_2026-05-17.md`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Hello handshake
 
@@ -56,12 +56,12 @@ Once the WebSocket is open the extension sends a `hello` message **before any ot
 
 - `profileId` -- previously-resolved Chrome profile directoryName (e.g. `"Default"`, `"Profile 1"`), if any.
 - `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
-- `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (`extension-installs.json`) survives config wipes.
+- `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (the `extension_installs` SQLite table) survives config wipes.
 
 The server resolves the binding in five ordered steps (see `server.js` around lines 980-1090):
 
 1. **Direct `profileId`** — if the extension already has a previously-resolved profile in `chrome.storage.local`, the hello message carries it and the server uses it as-is.
-2. **`installId` lookup** — the server consults `extension-installs.json` (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
+2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
 3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
 4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
 5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the popup, which renders the picker via `profileIdentifyView`. Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
@@ -228,7 +228,7 @@ It does **not** send any `chrome.runtime.sendMessage` to the background service 
 
 ### Per-profile reload required
 
-The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version bumped to **`1.1.4`** in Phase 6 so you can confirm which copy is live from `chrome://extensions/`.
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** in Phase 6 and again to **`1.2.0`** at the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge), so you can confirm which copy is live from `chrome://extensions/`.
 
 For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
@@ -265,7 +265,7 @@ Settings and state are stored in `chrome.storage.local`:
 | `webpilot.profileId` | string | null | Bound Chrome profile directoryName (cleared on `RESET_PROFILE_ID`) |
 | `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
 
-Authentication failures (invalid API key) automatically clear stored config and restart auto-connect. `webpilot.installId` is intentionally **not** cleared on config resets so the server's `installId → profileId` mapping survives storage wipes.
+`webpilot.installId` is intentionally **not** cleared on config resets (e.g. `FORGET_CONFIG`) so the server's `installId → profileId` mapping survives storage wipes. Any pre-1.2.0 `apiKey` value left in `chrome.storage.local` is purged on first startup after upgrade (one-time migration; the legacy transport key was retired 2026-05-17).
 
 ## Communication Protocol
 
@@ -332,7 +332,7 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 | Permission | Purpose |
 |-----------|---------|
-| `storage` | Persist connection config (API key, server URL, enabled state, installId, profileId) |
+| `storage` | Persist connection config (server URL, enabled state, installId, profileId) |
 | `activeTab` | Access the currently active tab |
 | `tabs` | Query and manage all browser tabs |
 | `tabGroups` | Create and manage the WebPilot tab group |
@@ -344,4 +344,4 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 Host permission `<all_urls>` allows the extension to operate on any website.
 
-Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.0.0"`. The background service worker is declared with `"type": "module"`.
+Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.2.0"`. The background service worker is declared with `"type": "module"`.

@@ -384,7 +384,7 @@ All seven phases shipped on `QOL-Features` (2026-05-17). Commit hashes for trace
 | 3 | `eea1d4b` | Formatter incidents → `formatter_incidents` table. In-memory 10-per-formatter cache hydrates from DB. |
 | 4 | `6740c31` | Site-policy enforcement at every `browser_*` handler + baseline blocklist auto-updater. |
 | 5 | `56b933d` | Webapp `/ui/sites/` admin page — global rules + per-agent overrides + baseline toggle. |
-| 6 | `4009982` | Minimal popup — connection dot + current-site pill + Block/Allow + Open dashboard. Themed to webapp. Extension bumped to `1.1.4`. |
+| 6 | `4009982` | Minimal popup — connection dot + current-site pill + Block/Allow + Open dashboard. Themed to webapp. Extension bumped to `1.1.4` (subsequently bumped to `1.2.0` in the 2026-05-17 auth cutover, `f7f2bb8`). |
 | 7 | (this commit) | `extension-installs.json` + `network.enabled` → DB. Dead popup-coupled handlers removed from `background.js`. Docs updated. |
 
 Legacy JSON stores after Phase 7: all three Phase-2/3 stores and the two Phase-7 stores are imported on first boot, then renamed to `<name>.imported.<ISO>` so the user has a recovery copy. None of them are read after migration runs. The pkg native-binary bundling step (better-sqlite3's `.node`) is tracked as a verify item in `OPEN_ITEMS.md`'s P2 section — the code path itself works; only the production build pipeline needs a smoke test on a fresh Windows VM.

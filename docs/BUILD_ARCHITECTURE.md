@@ -210,14 +210,13 @@ After spawning the background daemon, the CLI polls `http://127.0.0.1:<port>/hea
 
 ### Config File
 
-Server configuration is stored at `<dataDir>/config/server.json` with two fields:
+Server configuration is stored at `<dataDir>/config/server.json`:
 
 | Field | Env Var Fallback | Default |
 |-------|-----------------|---------|
-| `apiKey` | `API_KEY` | `'dev-123-test'` |
 | `port` | `PORT` | `3456` |
 
-The server reads from the config file first, then falls back to environment variables, then to the hardcoded defaults. See `paths.js` for the resolution logic.
+The server reads from the config file first, then falls back to environment variables, then to the hardcoded defaults. See `paths.js` for the resolution logic. A legacy `apiKey` field is silently ignored — the shared transport key was retired in `f7f2bb8` (2026-05-17); see `docs/SECURITY_AUDIT_2026-05-17.md`.
 
 ### Daemon Logging
 
