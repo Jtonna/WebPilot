@@ -161,6 +161,23 @@ Chrome. It does NOT auto-reload when you edit the files. Two options:
   issuing more `browser_*` tools — they will error with "no extension
   connected" during the gap.
 
+**Per-profile scope (important if WebPilot is paired across multiple Chrome
+profiles).** Extension reloads are per-profile — neither path is global:
+
+- The manual `chrome://extensions/` reload icon only affects the Chrome profile
+  whose window is currently in front. If you have WebPilot loaded into multiple
+  profiles, you have to switch to each profile's window and click reload there
+  too — otherwise the other profiles keep running the old code.
+- `webpilot_dev_reload_extension` only reloads the *calling agent's* paired
+  profile (the server routes the `reload_extension` command to the single
+  profile bound to that API key). To reload across all paired profiles in a
+  single iteration, either have each paired agent call the tool from its own
+  profile, or fall back to the manual `chrome://extensions/` reload in every
+  profile.
+
+This is the most common "I edited the extension and my fix isn't live" gotcha
+when you're testing the same change against more than one profile at once.
+
 If you bump `manifest.json#version` in the extension too, you can read the
 current version off `webpilot_get_formatter_info` (extension version is
 included in some responses) or by inspecting `chrome://extensions/` manually.
