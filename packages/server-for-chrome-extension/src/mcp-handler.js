@@ -53,7 +53,7 @@ async function fetchScriptFromUrl(url) {
   }
 }
 
-function createMcpHandler(extensionBridge, apiKey, pairedKeys, formatterManager, isPairingRequired, options = {}) {
+function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairingRequired, options = {}) {
   // Resolve the server port for embedding into pairing notifications / responses.
   // Preference order: explicit option → env var → paths config getter → hard fallback.
   let resolvedPort = options.port || process.env.PORT;

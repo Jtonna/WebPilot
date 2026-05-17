@@ -2,7 +2,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { createServer } = require('./src/server');
-const { getPort, getApiKey, getLogPath, getDataDir } = require('./src/service/paths');
+const { getPort, getLogPath, getDataDir } = require('./src/service/paths');
 const { setupLogging } = require('./src/service/logger');
 
 const logPath = getLogPath();
@@ -46,7 +46,6 @@ setInterval(() => {
 }, 30000).unref();
 
 const PORT = getPort();
-const API_KEY = getApiKey();
 let NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
 // Network-mode preference resolution (P2 phase 7):
 //   1. Prefer the SQLite `config.network_enabled` row (DB is the new source of
@@ -104,4 +103,4 @@ function getLocalIP() {
 const host = NETWORK ? '0.0.0.0' : '127.0.0.1';
 const publicHost = NETWORK ? getLocalIP() : 'localhost';
 
-createServer({ port: PORT, apiKey: API_KEY, host, publicHost });
+createServer({ port: PORT, host, publicHost });

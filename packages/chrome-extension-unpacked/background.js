@@ -36,7 +36,7 @@ let helloAcked = false;
 const HELLO_TIMEOUT_MS = 8000;
 let helloTimeoutTimer = null;
 let config = {
-  apiKey: null,
+  installId: null,
   serverUrl: null
 };
 
@@ -116,30 +116,47 @@ function ensureInstallId() {
 }
 
 function loadConfig() {
-  chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl', 'manuallyDisconnected'], (result) => {
-    isEnabled = result.enabled || false;
-    config.apiKey = result.apiKey || null;
-    config.serverUrl = result.serverUrl || null;
-    manuallyDisconnected = result.manuallyDisconnected === true;
+  // Read identity + server addresses. `apiKey` is intentionally NOT read here:
+  // the legacy shared transport key was retired (see server-side
+  // SECURITY_AUDIT_2026-05-17). The extension identifies itself via
+  // `webpilot.installId`; the server resolves it to a profileId. Any stale
+  // `apiKey` in storage from a pre-1.2.0 build is cleaned up below as a
+  // one-time migration so it doesn't sit around forever.
+  chrome.storage.local.get(
+    ['enabled', 'serverUrl', 'manuallyDisconnected', 'webpilot.installId', 'apiKey'],
+    (result) => {
+      isEnabled = result.enabled || false;
+      config.installId = result['webpilot.installId'] || null;
+      config.serverUrl = result.serverUrl || null;
+      manuallyDisconnected = result.manuallyDisconnected === true;
 
-    if (manuallyDisconnected) {
-      // User explicitly disconnected before Chrome closed. Stay disconnected
-      // until they click Retry/Reconnect in the popup.
-      console.log('Skipping auto-connect: user manually disconnected.');
-      updateConnectionStatus('disconnected', null, null);
-      return;
-    }
+      // One-time cleanup of the legacy transport key. Safe to call repeatedly
+      // (remove() is idempotent once the key is gone).
+      if (typeof result.apiKey !== 'undefined') {
+        chrome.storage.local.remove(['apiKey'], () => {
+          console.log('[migration] removed legacy chrome.storage.apiKey (transport key retired)');
+        });
+      }
 
-    if (isEnabled && config.apiKey && config.serverUrl) {
-      // Already have config, reconnect
-      console.log('Auto-reconnecting on service worker startup...');
-      connectWebSocket();
-    } else {
-      // No config stored — attempt auto-connect to local server
-      console.log('No config found, attempting auto-connect...');
-      attemptAutoConnect();
+      if (manuallyDisconnected) {
+        // User explicitly disconnected before Chrome closed. Stay disconnected
+        // until they click Retry/Reconnect in the popup.
+        console.log('Skipping auto-connect: user manually disconnected.');
+        updateConnectionStatus('disconnected', null, null);
+        return;
+      }
+
+      if (isEnabled && config.installId && config.serverUrl) {
+        // Already have config, reconnect
+        console.log('Auto-reconnecting on service worker startup...');
+        connectWebSocket();
+      } else {
+        // No config stored — attempt auto-connect to local server
+        console.log('No config found, attempting auto-connect...');
+        attemptAutoConnect();
+      }
     }
-  });
+  );
 }
 
 function attemptAutoConnect() {
@@ -165,14 +182,34 @@ async function doAutoConnectFetch() {
     if (!response.ok) return false;
 
     const data = await response.json();
-    if (!data.apiKey || !data.serverUrl) return false;
+    // Post-1.2.0 the server no longer returns `apiKey` from /connect — the
+    // extension's installId is its identity. We only need the addresses.
+    if (!data.serverUrl) return false;
 
-    config.apiKey = data.apiKey;
+    // Make sure we have an installId before we attempt to connect; mint one
+    // if missing (defensive — `ensureInstallId` already ran in onInstalled /
+    // onStartup, but this covers any edge case where storage was cleared
+    // between events).
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get(['webpilot.installId'], (d) => resolve(d || {}));
+    });
+    let installId = stored['webpilot.installId'] || null;
+    if (!installId) {
+      try {
+        installId = crypto.randomUUID();
+        await chrome.storage.local.set({ 'webpilot.installId': installId });
+        console.log('[hello] minted installId on /connect path: ' + installId.slice(0, 8) + '...');
+      } catch (e) {
+        console.log('[hello] failed to mint installId in /connect: ' + (e && e.message));
+        return false;
+      }
+    }
+
+    config.installId = installId;
     config.serverUrl = data.serverUrl;
     isEnabled = true;
 
     await chrome.storage.local.set({
-      apiKey: data.apiKey,
       serverUrl: data.serverUrl,
       sseUrl: data.sseUrl || `http://localhost:3456/sse`,
       networkMode: data.networkMode || false,
@@ -211,9 +248,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // the service worker for it. No remaining caller in the extension.
 
     case 'CONNECT_REQUEST':
-      chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
-        if (result.apiKey && result.serverUrl) {
-          config.apiKey = result.apiKey;
+      chrome.storage.local.get(['webpilot.installId', 'serverUrl'], (result) => {
+        const installId = result['webpilot.installId'];
+        if (installId && result.serverUrl) {
+          config.installId = installId;
           config.serverUrl = result.serverUrl;
           isEnabled = true;
           chrome.storage.local.set({ enabled: true });
@@ -246,6 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // to the extension installation, not the pairing config, and persists
       // across config resets so the server's installId->profileId mapping
       // can still re-identify this install automatically.
+      // `apiKey` is also included for one-time cleanup of pre-1.2.0 storage.
       chrome.storage.local.remove([
         'apiKey',
         'serverUrl',
@@ -254,7 +293,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         'webpilot.profileId',
         'webpilot.knownProfiles'
       ]);
-      config.apiKey = null;
+      config.installId = null;
       config.serverUrl = null;
       isEnabled = false;
       // Restart auto-connect to pick up server again
@@ -282,9 +321,10 @@ function handleServiceStatusChange(enabled) {
   isEnabled = enabled;
 
   if (enabled) {
-    chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
-      if (result.apiKey && result.serverUrl) {
-        config.apiKey = result.apiKey;
+    chrome.storage.local.get(['webpilot.installId', 'serverUrl'], (result) => {
+      const installId = result['webpilot.installId'];
+      if (installId && result.serverUrl) {
+        config.installId = installId;
         config.serverUrl = result.serverUrl;
         connectWebSocket();
       }
@@ -295,10 +335,15 @@ function handleServiceStatusChange(enabled) {
 }
 
 function handleConfigUpdate(newConfig) {
-  config.apiKey = newConfig.apiKey;
+  // `newConfig.installId` is preferred; fall back to legacy `apiKey` shape
+  // if a caller is still sending the old payload (will be removed when no
+  // such caller remains).
+  if (newConfig && typeof newConfig.installId === 'string') {
+    config.installId = newConfig.installId;
+  }
   config.serverUrl = newConfig.serverUrl;
 
-  if (isEnabled && config.apiKey && config.serverUrl) {
+  if (isEnabled && config.installId && config.serverUrl) {
     disconnectWebSocket();
     connectWebSocket();
   }
@@ -321,7 +366,11 @@ function connectWebSocket() {
 
   try {
     const wsUrl = new URL(config.serverUrl);
-    wsUrl.searchParams.set('apiKey', config.apiKey || '');
+    // Identify this install to the server. The server records (installId ->
+    // profileId) in `extension_installs` and uses it purely for routing. The
+    // server's auth boundary is at the agent layer (paired keys); the
+    // installId carries no agent power.
+    wsUrl.searchParams.set('installId', config.installId || '');
 
     wsConnection = new WebSocket(wsUrl.toString());
 
@@ -441,14 +490,18 @@ function connectWebSocket() {
         errorType = 'server_unreachable';
         shouldRetry = true;
       } else if (event.code === 1008 || event.reason === 'Unauthorized') {
-        errorMsg = 'Authentication failed - invalid API key';
+        // Post-1.2.0 a 1008 from the extension WS endpoint means our installId
+        // was missing or malformed on the upgrade URL — typically a stale
+        // service-worker memory state. Clear cached server addresses and let
+        // the auto-connect path re-fetch from /connect and re-emit the
+        // installId-bearing WS URL. installId itself is preserved.
+        errorMsg = 'Authentication failed - reconnecting';
         errorType = 'auth_failed';
         shouldRetry = false;
-        chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
-        config.apiKey = null;
+        chrome.storage.local.remove(['serverUrl', 'enabled', 'apiKey']);
         config.serverUrl = null;
         isEnabled = false;
-        // Re-fetch credentials from server
+        // Re-fetch addresses from server
         attemptAutoConnect();
       } else if (event.code === 1011) {
         errorMsg = 'Server error';
@@ -734,8 +787,8 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.enabled) {
       isEnabled = changes.enabled.newValue;
     }
-    if (changes.apiKey) {
-      config.apiKey = changes.apiKey.newValue;
+    if (changes['webpilot.installId']) {
+      config.installId = changes['webpilot.installId'].newValue;
     }
     if (changes.serverUrl) {
       config.serverUrl = changes.serverUrl.newValue;

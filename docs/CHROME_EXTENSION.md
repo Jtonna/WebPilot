@@ -86,7 +86,7 @@ The new minimal popup (Phase 6) does **not** send any `chrome.runtime.sendMessag
 |--------------|--------|
 | `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
 | `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
-| `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
+| `FORGET_CONFIG` | Disconnects, clears stored config (`serverUrl`, `enabled`, legacy `apiKey`), resets state, and restarts auto-connect to pick up server again. `webpilot.installId` is intentionally preserved. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
@@ -217,10 +217,12 @@ Four components, top to bottom:
 3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
 4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
 
-The popup reads `apiKey` + `serverUrl` from `chrome.storage.local` (written by the background pairing flow) and hits two server endpoints:
+The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (written by the background auto-connect flow) and hits two server endpoints, authenticating with the `X-Install-Id` header:
 
 - `GET  /api/popup/state?tabUrl=<url>` — connection + current-tab pill.
 - `POST /api/popup/site-toggle` — flip the global rule.
+
+The legacy `X-API-Key` header (and the `apiKey` storage key) were retired 2026-05-17 along with the shared server transport key — see `docs/SECURITY_AUDIT_2026-05-17.md`.
 
 It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 
@@ -252,8 +254,7 @@ Settings and state are stored in `chrome.storage.local`:
 | `tabMode` | string | `'group'` | Tab organization mode (`'group'` or `'window'`) |
 | `restrictedModeEnabled` | boolean | true | Whether restricted mode is active |
 | `whitelistedDomains` | string[] | `[]` | Whitelisted domains for restricted mode |
-| `apiKey` | string | null | Server API key (from `/connect`) |
-| `serverUrl` | string | null | WebSocket server URL |
+| `serverUrl` | string | null | WebSocket server URL (from `/connect`) |
 | `sseUrl` | string | null | SSE endpoint URL |
 | `networkMode` | boolean | false | Cached network mode flag (UI hint only) |
 | `enabled` | boolean | false | Whether the extension is enabled |

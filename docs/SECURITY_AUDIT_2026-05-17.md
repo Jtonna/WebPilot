@@ -2,7 +2,7 @@
 
 Author: design review pass, 2026-05-17.
 Scope: server↔extension transport, MCP tool-call auth, popup endpoints, web-UI admin endpoints.
-Status: design document. No code changes in this commit; implementation will follow in phased PRs.
+Status: design document. **Implementation status: Phases A + B + D shipped as a single hard cutover on `QOL-Features` (2026-05-17). Phase C was dropped per user — the architectural goal (extension as identity, agents as power layer) is achieved without auto-provisioning per-profile paired keys; the popup operates in profile-context using installId rather than minting a synthetic agent per profile.** See the commit body for the threat-model summary and the wire-protocol changes.
 
 ---
 
@@ -229,7 +229,14 @@ single-shared-secret model. Closing this gap is what Phases B–D do.
 
 ## 4. Recommendations — phased
 
-### Phase A — Retire the popup-auth transport-key fallback (small, safe)
+### Phase A — Retire the popup-auth transport-key fallback (small, safe) ✓ Shipped
+
+**SHIPPED 2026-05-17 (hard cutover, single commit).** The transport-key
+branch in `_authPopup` is gone. Popup auth is now `X-Install-Id` only —
+the popup operates in profile-context (no agent identity required), so
+the "needs a fallback when no paired agent exists" problem disappears.
+See server's `_authPopup` in `server.js` and the matching extension
+changes in `popup.js`.
 
 **Prerequisite:** Phase B must ship first, so that every profile that
 *could* hit the popup endpoints has a per-profile paired-agent key. Until
@@ -255,7 +262,15 @@ profile is left in the "transport-key only" state.
 
 ---
 
-### Phase B — Wire installId as the WS handshake identifier (medium)
+### Phase B — Wire installId as the WS handshake identifier (medium) ✓ Shipped (as hard cutover, not gradual)
+
+**SHIPPED 2026-05-17.** The extension WS upgrade now requires
+`?installId=<uuid>` — the transport-key compare is gone entirely (the
+gradual two-key transition described below was replaced with a one-shot
+cutover per user direction; existing extensions need a one-time reload
+per profile). `bound_at` tracking was deferred — the existing
+`extension_installs.first_seen_at` covers the same TOFU role; revisit
+if/when we add explicit lateral-movement defense.
 
 **Goal:** the server's WS upgrade decision stops trusting the transport
 key and starts trusting installId + a server-side resolution table.
@@ -298,7 +313,20 @@ phase.
 
 ---
 
-### Phase C — Auto-provision a per-profile paired-agent key on first connect (medium)
+### Phase C — Auto-provision a per-profile paired-agent key on first connect (medium) ✗ Dropped
+
+**DROPPED 2026-05-17 per user direction.** This phase was the audit's
+proposed mechanism for giving every profile a per-profile paired-agent
+key so the popup could keep its agent-shaped auth contract. The
+corrected design (locked by user) reframes the popup as
+profile-scoped, not agent-scoped — global site rules apply, per-agent
+overrides do not. The popup authenticates with installId directly.
+Anyone who can reach the server's port can claim any installId, and
+that's fine because claiming an installId grants zero agent power
+(agent-layer auth via paired keys is unchanged). Auto-provisioning a
+synthetic agent per profile would have added a row to `agents` that
+the user does not want to see in `/ui/agents` and never get a
+plain-text key delivered for. Skipping it.
 
 **Goal:** every Chrome profile that completes a hello handshake ends up
 with its own paired-agent row keyed to its installId. The transport key
@@ -344,7 +372,17 @@ so a power user might see more rows than before — minor UX consideration.
 
 ---
 
-### Phase D — Drop the transport key entirely (cleanup)
+### Phase D — Drop the transport key entirely (cleanup) ✓ Shipped
+
+**SHIPPED 2026-05-17.** `getApiKey()` and `DEFAULT_API_KEY` are deleted
+from `service/paths.js`. The `API_KEY = getApiKey()` plumb in
+`index.js` is gone. `createServer()` and `createMcpHandler()` no
+longer accept an `apiKey` parameter. `GET /connect` no longer returns
+`apiKey`. The `_authPopup` transport-key fallback from commit
+`7dc391d` is removed. The extension purges any legacy `apiKey` from
+`chrome.storage.local` on first run after upgrade. Live `server.json`
+files that still carry `apiKey` are silently ignored — the field has
+no consumer.
 
 **Goal:** delete the single-shared-secret. `/connect` becomes a "claim
 installId" handshake. `server.json` no longer contains an apiKey.

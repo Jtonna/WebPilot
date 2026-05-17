@@ -11,7 +11,7 @@ const { v4: uuidv4 } = require('uuid');
  *   - isConnected()          — alias for isAnyConnected()
  *   - isConnected(profileId) — exact profile check
  */
-function createExtensionBridge(apiKey) {
+function createExtensionBridge() {
   // profileId -> ws
   const connections = new Map();
   // commandId -> { resolve, reject, timeout, profileId }

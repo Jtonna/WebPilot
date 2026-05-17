@@ -8,7 +8,6 @@ const SERVICE_NAME = 'WebPilotServer';
 const SERVICE_LABEL = 'com.webpilot.server';
 const SERVICE_DESCRIPTION = 'WebPilot MCP Server';
 const DEFAULT_PORT = 3456;
-const DEFAULT_API_KEY = 'dev-123-test';
 
 /**
  * Detect whether we are running as a pkg-compiled binary.
@@ -98,17 +97,11 @@ function getPort() {
   return config.port || process.env.PORT || DEFAULT_PORT;
 }
 
-function getApiKey() {
-  const config = loadConfig();
-  return config.apiKey || process.env.API_KEY || DEFAULT_API_KEY;
-}
-
 module.exports = {
   SERVICE_NAME,
   SERVICE_LABEL,
   SERVICE_DESCRIPTION,
   DEFAULT_PORT,
-  DEFAULT_API_KEY,
   getDataDir,
   getLogDir,
   getLogPath,
@@ -120,6 +113,5 @@ module.exports = {
   getBinaryPath,
   loadConfig,
   getPort,
-  getApiKey,
   getFormatterDir,
 };

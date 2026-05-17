@@ -114,7 +114,7 @@ function isRenderableTab(currentTab) {
 // ────────────────────────── State + render ──────────────────────────
 
 const state = {
-  apiKey: null,
+  installId: null,
   serverUrl: null,
   httpBase: null,
   activeTabUrl: null,
@@ -203,8 +203,8 @@ function setTabError(msg) {
 // ────────────────────────── Fetch wrappers ──────────────────────────
 
 async function fetchPopupState() {
-  if (!state.apiKey || !state.httpBase) {
-    throw new Error('Not paired with WebPilot server. Pair an agent first.');
+  if (!state.installId || !state.httpBase) {
+    throw new Error('Extension has no installId yet — reload the extension.');
   }
   const url =
     state.httpBase +
@@ -214,9 +214,9 @@ async function fetchPopupState() {
       : '');
   const resp = await fetch(url, {
     method: 'GET',
-    headers: { 'X-API-Key': state.apiKey },
+    headers: { 'X-Install-Id': state.installId },
   });
-  if (resp.status === 401) throw new Error('API key rejected.');
+  if (resp.status === 401) throw new Error('Install ID not recognized by server.');
   if (!resp.ok) throw new Error('Server error ' + resp.status);
   return resp.json();
 }
@@ -225,7 +225,7 @@ async function postSiteToggle(domain, action) {
   const resp = await fetch(state.httpBase + '/api/popup/site-toggle', {
     method: 'POST',
     headers: {
-      'X-API-Key': state.apiKey,
+      'X-Install-Id': state.installId,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ domain, action }),
@@ -240,22 +240,24 @@ async function postSiteToggle(domain, action) {
 // ────────────────────────── Top-level flow ──────────────────────────
 
 async function loadAndRender() {
-  // Pull paired identity + server URL from chrome.storage. These keys are
-  // written by background.js' pairing/auto-connect flow — and we are
-  // explicitly READ-ONLY here.
-  const stored = await readStorage(['apiKey', 'serverUrl']);
-  state.apiKey = stored.apiKey || null;
+  // Pull installId + server URL from chrome.storage. These keys are written
+  // by background.js' auto-connect flow — and we are explicitly READ-ONLY
+  // here. The installId is the extension's per-profile identity (used as
+  // `X-Install-Id` for popup endpoint auth). See server's
+  // SECURITY_AUDIT_2026-05-17 doc for the auth model.
+  const stored = await readStorage(['webpilot.installId', 'serverUrl']);
+  state.installId = stored['webpilot.installId'] || null;
   state.serverUrl = stored.serverUrl || null;
   state.httpBase = deriveHttpBase(state.serverUrl);
 
   // Wire the dashboard link as soon as we know the base URL.
   $('dashboard-link').href = state.httpBase + '/ui/';
 
-  // No API key → the popup can't talk to the server. Show a disconnected
+  // No installId → the popup can't talk to the server. Show a disconnected
   // dot and point the user at the dashboard.
-  if (!state.apiKey) {
+  if (!state.installId) {
     setConnection('disconnected', null);
-    showSkip('Not paired. Open the dashboard to pair an agent.');
+    showSkip('Extension has no installId. Reload the extension in chrome://extensions/.');
     return;
   }
 

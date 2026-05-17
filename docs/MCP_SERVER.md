@@ -18,7 +18,7 @@ The MCP server is the middle layer between AI agents and the browser. It:
 
 MCP tool calls require a paired API key by default, except for `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. The key can be provided via the `X-API-Key` HTTP header, the `apiKey` query parameter on the SSE/message endpoints, or as an `api_key` parameter in individual tool call arguments. The server's resolved key for each call drives both authentication and per-agent profile routing via `resolveTargetProfile` in `mcp-handler.js`.
 
-The extension-facing WebSocket endpoint requires the server's WebSocket auth key (`?apiKey=`); the `/api/ui/*` REST and WebSocket endpoints are **localhost-only** and require no API key (rejected from non-loopback addresses with HTTP 403).
+The extension-facing WebSocket endpoint identifies the connecting extension by `?installId=<uuid>` — there is no shared transport key (retired 2026-05-17, see `docs/SECURITY_AUDIT_2026-05-17.md`). The `/api/ui/*` REST and WebSocket endpoints are **localhost-only** and require no API key (rejected from non-loopback addresses with HTTP 403).
 
 ## Entry Points
 
@@ -42,16 +42,17 @@ Binary entry point. Parses command-line flags using Node 18's built-in `util.par
 
 ### `index.js`
 
-Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.js` (writes to the log path returned by `getLogPath()`), then reads configuration using a three-tier loading chain via `getPort()` and `getApiKey()` from `src/service/paths.js`:
+Server bootstrap. Sets up logging via `setupLogging()` from `src/service/logger.js` (writes to the log path returned by `getLogPath()`), then reads configuration using a two-tier loading chain via `getPort()` from `src/service/paths.js`:
 
 1. **Config file** at `<dataDir>/config/server.json` (if it exists)
-2. **Environment variables** (`PORT`, `API_KEY`) as fallback
-3. **Hardcoded defaults** (`3456`, `dev-123-test`) as final fallback
+2. **Environment variables** (`PORT`) as fallback
+3. **Hardcoded defaults** (`3456`) as final fallback
+
+The `apiKey` field in `server.json` (and the legacy `API_KEY` env var) is no longer consulted — the shared transport key was retired 2026-05-17 (see `docs/SECURITY_AUDIT_2026-05-17.md`). Any value present in `server.json` is silently ignored.
 
 | Source | Variable | Default | Description |
 |--------|----------|---------|-------------|
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
-| Config file / Environment | `API_KEY` | `dev-123-test` | WebSocket authentication key |
 | Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
 | SQLite row | `config.network_enabled` | (absent) | Persisted network mode preference (`'true'` / `'false'`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. The legacy `<dataDir>/network.enabled` flag file is read as a fallback only when the DB row is absent (first-boot path) — migration imports it on first boot and renames it to `network.enabled.imported.<ISO>`. |
 
@@ -64,7 +65,7 @@ Calls `createServer()` from `src/server.js` with the resolved configuration.
 Sets up the Express HTTP server and two WebSocket servers (one for extensions, one for the web UI):
 
 - Creates an Express app with CORS and JSON body parsing
-- Creates an HTTP server and two `WebSocketServer`s in `noServer` mode (manual upgrade routing): the extension WS at the root path, and the web-ui events WS at `/api/ui/events`. Extension upgrades authenticate via `?apiKey=`; UI upgrades are accepted only from loopback addresses with no API key.
+- Creates an HTTP server and two `WebSocketServer`s in `noServer` mode (manual upgrade routing): the extension WS at the root path, and the web-ui events WS at `/api/ui/events`. Extension upgrades require `?installId=<uuid>` on the URL — the server records the mapping in `extension_installs` and uses it purely for routing (claiming any installId grants zero agent power; agent-layer auth is the security boundary for tool calls). UI upgrades are accepted only from loopback addresses with no API key.
 - Mounts the web UI at `/ui/`. In production (and inside the pkg snapshot), serves the Next.js static export via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). In dev (`WEBPILOT_DEV=1`, set by `npm run dev` at the repo root), instead proxies `/ui/*` to `http://localhost:3100` via `http-proxy-middleware` with `ws: true` so Next.js HMR works. The pkg/Electron path never sets `WEBPILOT_DEV` so installed users always go through the static branch.
 - Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings) — see [Web UI API](#web-ui-api).
 - On startup, calls `formatterManager.init()`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks. Also loads `notificationsSettings`, runs an initial `pairedKeys.cleanupExpiredPairings()` pass, and runs `pairedKeys.cleanupUnusedKeys()` to auto-revoke 48h-stale never-used keys. Both cleanup passes also run hourly thereafter.
@@ -74,7 +75,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 - On startup, opens `chromeManager` for the user's default Chrome `user-data-dir`. The manager is queried per tool call via a cheap PID liveness check, with full re-detection only on cache miss.
 - Writes `server.pid` and `server.port` files to the data directory on listen; cleans them up on SIGTERM, SIGINT, and `exit` events
 - Mounts MCP handler routes (`GET /sse`, `POST /message`)
-- Exposes `GET /health` (server status with `extensionConnected`, `connectedProfiles`, and `sessions` count) and `GET /connect` (returns `apiKey`, `serverUrl`, `sseUrl`, and `networkMode` for extension auto-connect)
+- Exposes `GET /health` (server status with `extensionConnected`, `connectedProfiles`, and `sessions` count) and `GET /connect` (returns `serverUrl`, `sseUrl`, and `networkMode` for extension auto-connect — no credentials; the extension's own installId is its identity)
 
 ## Source Files
 
@@ -214,13 +215,15 @@ The `return_mode` parameter controls the response shape: `"all"` (default) retur
 
 ## Authentication & authorization
 
-WebPilot runs three distinct trust boundaries: MCP tool calls from AI agents, the extension's WebSocket transport, and the localhost-only Web UI admin surface. Each is gated independently so that compromising one credential does not silently expose the others.
+WebPilot runs three distinct trust boundaries: MCP tool calls from AI agents (paired API keys), the extension's WebSocket transport (installId-as-identity), and the localhost-only Web UI admin surface (loopback gate, no key). Each is gated independently so that compromising one credential does not silently expose the others.
 
-API keys are obtained through the **pairing handshake**. An AI agent without a key calls the `request_pairing` MCP tool with a memorable `agent_name`. The server creates a pending pairing entry, surfaces an approval URL through the desktop notification path, and returns a `pairing_id` to the agent. The human reviewer approves (or denies) the request in the local Web UI and chooses which Chrome profile the new key will be bound to. The agent then calls `check_pairing_status` with that `pairing_id` and — once the status flips to `approved` — receives the freshly minted `api_key`. The same key can be re-used across sessions; it is presented either as the `X-API-Key` HTTP header or as an `api_key` argument on each tool call. Keys are persisted in the `agents` SQLite table (HMAC-SHA-256 hash + per-server pepper, never the plaintext) along with their bound profile, `created_at`, and `last_seen_at` timestamps; unused keys auto-expire after 48 hours and pending pairings expire after 24 hours.
+**Extension transport — installId is identity, not credential.** Each Chrome profile's extension mints a UUID `webpilot.installId` on first install and persists it in `chrome.storage.local`. On every WS upgrade the extension presents `?installId=<uuid>`; the server records the binding in the `extension_installs` table (`installId -> profileId`) and uses it for routing. Anyone who can reach the server's port can claim any installId — that's fine, because claiming an installId grants zero agent power. All real power is gated at the agent layer. Popup endpoints (`/api/popup/state`, `/api/popup/site-toggle`) auth via the `X-Install-Id` header — the server resolves it through the same `extension_installs` table; the popup operates in profile-context (global site rules apply; per-agent overrides do not). This replaces the legacy shared transport-key model (`server.json` apiKey + `?apiKey=` on the WS) — see `docs/SECURITY_AUDIT_2026-05-17.md` for the audit and the phased migration that landed as a hard cutover 2026-05-17.
+
+**MCP tool calls — paired API keys (unchanged).** Agent-layer keys are obtained through the **pairing handshake**. An AI agent without a key calls the `request_pairing` MCP tool with a memorable `agent_name`. The server creates a pending pairing entry, surfaces an approval URL through the desktop notification path, and returns a `pairing_id` to the agent. The human reviewer approves (or denies) the request in the local Web UI and chooses which Chrome profile the new key will be bound to. The agent then calls `check_pairing_status` with that `pairing_id` and — once the status flips to `approved` — receives the freshly minted `api_key`. The same key can be re-used across sessions; it is presented either as the `X-API-Key` HTTP header or as an `api_key` argument on each tool call. Keys are persisted in the `agents` SQLite table (HMAC-SHA-256 hash + per-server pepper, never the plaintext) along with their bound profile, `created_at`, and `last_seen_at` timestamps; unused keys auto-expire after 48 hours and pending pairings expire after 24 hours.
 
 Four tools are intentionally exempt from the auth gate: `request_pairing` and `check_pairing_status` (because they *are* the handshake — requiring a key would be circular), and `webpilot_get_formatter_info` plus `webpilot_dev_get_formatter_logs` (strictly read-only inspection of formatter metadata and the in-memory error ring buffer; nothing sensitive is exposed). Every other tool — `browser_*`, `webpilot_run_workflow`, `webpilot_reload_formatters`, `webpilot_dev_reload_extension`, `browser_request_chain` — requires a valid paired key. `webpilot_reload_formatters` reloads formatter code from disk and therefore mutates server state, so it is auth-gated like the other mutating tools.
 
-Every comparison of a caller-supplied API key against a stored key uses `crypto.timingSafeEqual` (wrapped in the `constantTimeEqual` helper in `src/paired-keys.js`). This applies to the MCP tool-call auth path (`pairedKeys.validateKey`), the extension WebSocket handshake (`?apiKey=...` query param), and every paired-keys lookup the Web UI admin endpoints perform (rename, re-bind, revoke, touch). A naive `===` short-circuits at the first differing byte and leaks position information; the constant-time compare prevents that.
+Every comparison of a caller-supplied API key against a stored key uses `crypto.timingSafeEqual` (wrapped in the `constantTimeEqual` helper in `src/paired-keys.js`). This applies to the MCP tool-call auth path (`pairedKeys.validateKey`) and every paired-keys lookup the Web UI admin endpoints perform (rename, re-bind, revoke, touch). A naive `===` short-circuits at the first differing byte and leaks position information; the constant-time compare prevents that. The extension WS upgrade no longer does a secret compare — installId is a non-secret identifier looked up by exact match in SQLite.
 
 The Web UI admin surface is **localhost-only**. The general `makeUiAuth` middleware rejects every `/api/ui/*` request whose remote address is not `127.0.0.1` or `::1` with HTTP 403, and the `/api/ui/events` WebSocket upgrade is gated identically. On top of that, the mutating endpoints (`POST /api/ui/agents`, `POST /api/ui/agents/:key/rename`, `PATCH /api/ui/agents/:key`, `DELETE /api/ui/agents/:key`, `POST /api/ui/profiles`, `POST /api/ui/settings/network-mode`) layer a second, narrower `mutatingUiAuth` localhost check as defense-in-depth — if the broader UI auth policy is ever relaxed to permit read-only network access, those mutating admin actions stay loopback-only. Read-only endpoints (`GET /api/ui/status`, the events WebSocket) do not use the extra gate, so they remain reachable if a future change exposes read-only views over the network.
 
@@ -277,8 +280,8 @@ The MCP/extension surfaces:
 | GET | `/sse` | API key (per-tool-call auth gate) | SSE stream for MCP communication |
 | POST | `/message?session_id=<id>` | API key (per-tool-call auth gate) | JSON-RPC message endpoint |
 | GET | `/health` | None | Server status (`extensionConnected`, `connectedProfiles`, `sessions` count) |
-| GET | `/connect` | None | Returns `{ apiKey, serverUrl, sseUrl, networkMode }` for extension auto-connect |
-| WS | `/` (upgrade) | `?apiKey=<key>` | Extension WebSocket connection (multi-extension support, keyed by `profileId`) |
+| GET | `/connect` | None | Returns `{ serverUrl, sseUrl, networkMode }` for extension auto-connect (no credentials — the extension's installId is its identity) |
+| WS | `/` (upgrade) | `?installId=<uuid>` | Extension WebSocket connection (multi-extension support, keyed by `profileId`). The installId is routing-only; agent-layer auth gates real power |
 
 The web UI / management surfaces (localhost-only — non-loopback rejected with HTTP 403):
 
@@ -308,14 +311,13 @@ Configuration is resolved in order of priority: config file, then environment va
 
 ### Config File
 
-The server reads `<dataDir>/config/server.json` if it exists. This file can specify `port` and `apiKey`. See [Data Directory](#data-directory) for the data directory location.
+The server reads `<dataDir>/config/server.json` if it exists. This file can specify `port`. (The legacy `apiKey` field is retained for read-compatibility but no longer consumed — the shared transport key was retired 2026-05-17.) See [Data Directory](#data-directory) for the data directory location.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port (overridden by config file if present) |
-| `API_KEY` | `dev-123-test` | API key for WebSocket authentication (overridden by config file if present) |
 | `NETWORK` | `0` | Set to `1` for network mode (overridden by SQLite `config.network_enabled` if present; legacy `<dataDir>/network.enabled` flag file is consulted only as a fallback before first-boot migration) |
 | `WEBPILOT_FOREGROUND` | unset | Set to `1` to run in foreground (used internally by daemon self-spawn) |
 

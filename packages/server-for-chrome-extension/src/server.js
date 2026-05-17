@@ -1426,7 +1426,7 @@ function mountWebUiRoutes(app, deps) {
   });
 }
 
-function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
+function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
   let host = initialHost;
   let publicHost = initialPublicHost;
   let pairingRequired = true; // default: pairing required
@@ -1451,7 +1451,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
 
   const server = http.createServer(app);
 
-  const extensionBridge = createExtensionBridge(apiKey);
+  const extensionBridge = createExtensionBridge();
   const chromeManager = createChromeManager({ userDataDir: null, log: console.log });
 
   // Web UI WebSocket clients (separate from extension WS — they receive UI events
@@ -1499,17 +1499,26 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       return;
     }
 
-    // Extension WebSocket (default path). Constant-time compare against the
-    // transport apiKey so a string-compare short-circuit on the first
-    // differing byte cannot be measured to recover the secret.
-    const clientApiKey = url.searchParams.get('apiKey');
-    if (!pairedKeys.constantTimeEqual(clientApiKey, apiKey)) {
+    // Extension WebSocket (default path). The legacy shared-secret transport
+    // key is retired (see docs/SECURITY_AUDIT_2026-05-17.md, phases A+B+D).
+    // The extension is now an *identity*, not a credential bearer: it
+    // self-identifies via `installId` on the URL. Claiming any installId
+    // grants zero agent power — agent-layer auth (paired keys, see
+    // `mcp-handler.js`) is the security boundary for tool calls. The
+    // extension_installs row binds (installId -> profileId), which the
+    // bridge uses for routing only.
+    const installId = url.searchParams.get('installId');
+    if (typeof installId !== 'string' || installId.length === 0) {
+      console.log('[extension-bridge] WS upgrade rejected — missing installId');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
 
     extensionWss.handleUpgrade(request, socket, head, (ws) => {
+      // Stamp the installId on the WS object so subsequent handlers (hello,
+      // command attribution) can read it without re-parsing the URL.
+      try { ws._installId = installId; } catch (_e) { /* ignore */ }
       extensionWss.emit('connection', ws, request);
     });
   });
@@ -1977,7 +1986,6 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
 
   const mcpHandler = createMcpHandler(
     extensionBridge,
-    apiKey,
     pairedKeys,
     formatterManager,
     () => pairingRequired,
@@ -1989,51 +1997,43 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
 
   // --- Extension popup state route ---
   //
-  // P2 phase 6. The minimal popup hits these two endpoints to render its
-  // four-component layout (connection dot, current-tab state, Block/Allow
-  // toggle, dashboard link). Auth uses the paired API key the extension
-  // already holds in chrome.storage; no separate token. Kept in a
-  // visually-distinct block so the parallel Sites-admin webapp routes
-  // (mounted inside mountWebUiRoutes above) do not collide here.
+  // P2 phase 6 (auth model updated 2026-05-17, see SECURITY_AUDIT_2026-05-17).
+  // The minimal popup hits these two endpoints to render its four-component
+  // layout (connection dot, current-tab state, Block/Allow toggle, dashboard
+  // link).
+  //
+  // Auth: the popup identifies itself with `X-Install-Id` — the same
+  // installId the extension sent on its WS upgrade. The server resolves
+  // installId -> profileId via the `extension_installs` table. No paired
+  // agent is required for popup operations; the popup is profile-scoped
+  // (global site policy + connection status), not agent-scoped.
   {
     const sitePolicyPopup = require('./site-policy');
 
-    // Extract an API key from the request and resolve it to either a paired
-    // agent OR the server-wide transport key. Supports X-API-Key header
-    // (preferred) or `apiKey` query param.
-    //
-    // Two valid auth shapes:
-    //   1. PAIRED-AGENT key — `entry` and `agentId` are populated; popup
-    //      shows per-agent overrides + the agent name.
-    //   2. SERVER TRANSPORT key — `entry: null`, `agentId: null`; popup is
-    //      authenticated for read-only state but has no agent context.
-    //      Lets the popup work on profiles where no agent has paired yet
-    //      (e.g. a fresh Chrome profile that's only running auto-connect).
-    //      The extension always has the transport key in chrome.storage
-    //      via /connect, even before any agent pairs.
-    //
-    // Returns the resolved shape or null on auth failure.
+    // Extract installId from the request and resolve it to a profileId.
+    // Returns { installId, profileId } on success, or null on failure.
+    // Supports X-Install-Id header (preferred) or `installId` query param.
     function _authPopup(req) {
-      const key =
-        req.headers['x-api-key'] ||
-        req.headers['X-API-Key'] ||
-        (req.query && req.query.apiKey) ||
+      const installId =
+        req.headers['x-install-id'] ||
+        req.headers['X-Install-Id'] ||
+        (req.query && req.query.installId) ||
         null;
-      if (!key || typeof key !== 'string') return null;
-      // Try paired-agent first — most callers will be on a paired profile.
-      const entry = pairedKeys.validateKey(key);
-      if (entry) {
-        const agentId = sitePolicyPopup.resolveAgentIdFromApiKey(key);
-        return { key, entry, agentId };
+      if (typeof installId !== 'string' || installId.length === 0) return null;
+      let profileId = null;
+      try {
+        profileId = extensionInstalls.getProfileForInstall(installId);
+      } catch (e) {
+        console.log(`[popup-auth] getProfileForInstall threw: ${e && e.message}`);
+        return null;
       }
-      // Fall back to the server transport key. Constant-time compare against
-      // the legacy server-wide apiKey so a profile without a paired agent
-      // still gets a functional popup (connection status, global site
-      // policy view, dashboard link).
-      if (pairedKeys.constantTimeEqual(key, apiKey)) {
-        return { key, entry: null, agentId: null };
+      if (!profileId) {
+        console.log(
+          `[popup-auth] rejecting — unknown installId="${installId.slice(0, 8)}..."`
+        );
+        return null;
       }
-      return null;
+      return { installId, profileId };
     }
 
     // Map (decision, source) into a single state-pill key consumed by the
@@ -2049,27 +2049,25 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     }
 
     // GET /api/popup/state?tabUrl=<url>
-    // Returns connection + agent + current-tab policy state + dashboard URL.
+    // Returns connection + current-tab policy state + dashboard URL.
+    // The popup operates in profile-context (no agent identity) — global
+    // site rules apply; per-agent overrides do not. `agent` is always null.
     app.get('/api/popup/state', (req, res) => {
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });
-      const { entry, agentId } = auth;
-      // entry may be null when we authenticated via the server transport key
-      // (no paired agent for this profile). In that case profileId is unknown
-      // to the server — best-effort: any connected profile counts as 'connected'
-      // for the indicator (the extension is connected via WS regardless of
-      // which profile if it has the transport key working).
-      const profileId = entry ? (entry.profileId || null) : null;
-      const connection = entry
-        ? (profileId && extensionBridge.isConnected(profileId) ? 'connected' : 'disconnected')
-        : (extensionBridge.getConnectedProfiles().length > 0 ? 'connected' : 'disconnected');
+      const { profileId } = auth;
+      const connection = extensionBridge.isConnected(profileId)
+        ? 'connected'
+        : 'disconnected';
 
       const tabUrlRaw = (req.query && req.query.tabUrl) || null;
       let currentTab = null;
       if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 0) {
         const domain = sitePolicyPopup.normalizeDomain(tabUrlRaw);
         if (domain) {
-          const policy = sitePolicyPopup.isAllowed(agentId, tabUrlRaw);
+          // No agent context — pass null so the policy resolves global-only
+          // (no agent_site_overrides applied).
+          const policy = sitePolicyPopup.isAllowed(null, tabUrlRaw);
           currentTab = {
             url: tabUrlRaw,
             domain,
@@ -2087,7 +2085,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       const body = {
         connection,
         profileId,
-        agent: agentId && entry ? { id: agentId, name: entry.agentName } : null,
+        agent: null,
         serverUrl,
       };
       if (currentTab) body.currentTab = currentTab;
@@ -2101,7 +2099,7 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
     app.post('/api/popup/site-toggle', express.json(), (req, res) => {
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });
-      const { agentId } = auth;
+      const { installId, profileId } = auth;
       const body = req.body || {};
       const action = body.action;
       const domainRaw = body.domain;
@@ -2117,9 +2115,14 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
-      // Compute new pill state for this agent + domain (a per-agent override
-      // could still win — same shape as /state above).
-      const policy = sitePolicyPopup.isAllowed(agentId, normalized);
+      // Audit attribution: log the originating installId + bound profileId
+      // (no agentId — popup is not in agent context).
+      console.log(
+        `[popup:site-toggle] domain="${normalized}" action="${action}" ` +
+          `installId="${installId.slice(0, 8)}..." profileId="${profileId}"`
+      );
+      // Compute new pill state (global-only, no agent override).
+      const policy = sitePolicyPopup.isAllowed(null, normalized);
       const newState = _statePillFromPolicy(policy);
       // Tell the webapp Sites page (and any other UI consumer) the rule list
       // changed. Same event name Phase 5's Sites admin routes emit.
@@ -2183,8 +2186,11 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   });
 
   app.get('/connect', (req, res) => {
+    // The transport key is retired (see SECURITY_AUDIT_2026-05-17 phase D).
+    // The extension's own `installId` (minted in extension storage on first
+    // install) is its identity. The server has nothing to hand out here —
+    // just the addresses the extension needs to dial.
     res.json({
-      apiKey,
       serverUrl: `ws://${publicHost}:${port}`,
       sseUrl: `http://${publicHost}:${port}/sse`,
       networkMode: host === '0.0.0.0'
