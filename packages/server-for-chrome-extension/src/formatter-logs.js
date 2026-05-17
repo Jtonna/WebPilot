@@ -22,6 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { EventEmitter } = require('events');
 
 const RING_CAPACITY = 50;
 const FLUSH_INTERVAL_MS = 60 * 1000;
@@ -30,8 +31,19 @@ const STACK_MAX = 1024;
 
 // formatterName -> { logs: [{ timestamp, phase, workflow?, message, stack, params?, tabId? }],
 //                    successCount, errorCount, lastSuccessAt, lastErrorAt,
-//                    recentOutcomes: ['ok'|'err', ...] (capacity 10) }
+//                    recentOutcomes: ['ok'|'err', ...] (capacity 10),
+//                    dismissedAt: string | null }
 const state = new Map();
+
+// EventEmitter that fires `'changed'` with `{ name, status }` after every
+// recordError / recordDismiss. server.js listens to this so it can broadcast
+// `formatter_status_changed` over the UI WebSocket. Picked EventEmitter over
+// a constructor-time callback because it lets multiple subscribers attach
+// without changing the module's surface (idiomatic Node).
+const emitter = new EventEmitter();
+// Avoid noisy "MaxListeners exceeded" warnings if anything ever attaches
+// per-formatter listeners — we expect just the one server.js subscriber.
+emitter.setMaxListeners(50);
 
 let flushTimer = null;
 let exitHandlersInstalled = false;
@@ -53,7 +65,8 @@ function ensureFormatter(name) {
       errorCount: 0,
       lastSuccessAt: null,
       lastErrorAt: null,
-      recentOutcomes: []
+      recentOutcomes: [],
+      dismissedAt: null
     };
     state.set(name, entry);
   }
@@ -97,6 +110,9 @@ function recordError(formatterName, info = {}) {
   entry.errorCount += 1;
   entry.lastErrorAt = new Date().toISOString();
   pushOutcome(entry, 'err');
+  // A fresh error supersedes any prior user dismissal — the formatter is
+  // re-surfaced as an action item.
+  entry.dismissedAt = null;
 
   const err = info.error || {};
   const log = {
@@ -110,10 +126,51 @@ function recordError(formatterName, info = {}) {
   };
   pushLog(entry, log);
   scheduleFlush();
+  try {
+    emitter.emit('changed', { name: formatterName, status: statusForEntry(entry) });
+  } catch (_e) { /* listener errors are not our problem */ }
+}
+
+/**
+ * Mark `formatterName` as user-dismissed. Does NOT clear historical log
+ * entries — the /ui/formatters/logs/?name=X view still shows them. Sets a
+ * `dismissedAt` timestamp; computeHealth() treats `dismissedAt > lastErrorAt`
+ * as healthy so the formatter drops out of the dashboard action-items list
+ * until the next error event arrives (which clears dismissedAt).
+ *
+ * Returns the new status payload (same shape as statusForEntry), or null if
+ * the formatter is unknown.
+ */
+function recordDismiss(formatterName) {
+  if (!formatterName) return null;
+  hydrateOnce();
+  const entry = state.get(formatterName);
+  if (!entry) return null;
+  entry.dismissedAt = new Date().toISOString();
+  scheduleFlush();
+  const status = statusForEntry(entry);
+  try {
+    emitter.emit('changed', { name: formatterName, status });
+  } catch (_e) { /* ignore */ }
+  return status;
+}
+
+function hasFormatter(formatterName) {
+  if (!formatterName) return false;
+  hydrateOnce();
+  return state.has(formatterName);
 }
 
 function computeHealth(entry) {
   if (!entry) return 'unknown';
+  // User-dismissed AFTER the last error → treat as healthy for dashboard
+  // surfacing. A subsequent recordError() clears dismissedAt, so the next
+  // failure re-surfaces the formatter automatically.
+  if (entry.dismissedAt && entry.lastErrorAt) {
+    const d = Date.parse(entry.dismissedAt);
+    const e = Date.parse(entry.lastErrorAt);
+    if (Number.isFinite(d) && Number.isFinite(e) && d >= e) return 'healthy';
+  }
   const total = entry.successCount + entry.errorCount;
   if (total < 3) return 'healthy';
   const hasRecentError = entry.recentOutcomes.some((o) => o === 'err');
@@ -128,19 +185,21 @@ function statusForEntry(entry) {
       lastSuccessAt: null,
       lastErrorAt: null,
       successCount: 0,
-      errorCount: 0
+      errorCount: 0,
+      dismissedAt: null
     };
   }
   const lastErrorLog = entry.logs.find((l) => l.phase === 'format' || l.phase === 'workflow') || null;
   return {
     health: computeHealth(entry),
     lastError: lastErrorLog
-      ? { timestamp: lastErrorLog.timestamp, message: lastErrorLog.message, phase: lastErrorLog.phase, workflow: lastErrorLog.workflow }
+      ? { timestamp: lastErrorLog.timestamp, message: lastErrorLog.message, phase: lastErrorLog.phase, workflow: lastErrorLog.workflow, stack: lastErrorLog.stack || '' }
       : null,
     lastSuccessAt: entry.lastSuccessAt,
     lastErrorAt: entry.lastErrorAt,
     successCount: entry.successCount,
-    errorCount: entry.errorCount
+    errorCount: entry.errorCount,
+    dismissedAt: entry.dismissedAt || null
   };
 }
 
@@ -181,6 +240,7 @@ function hydrateOnce() {
       entry.lastSuccessAt = snap.lastSuccessAt || null;
       entry.lastErrorAt = snap.lastErrorAt || null;
       entry.recentOutcomes = Array.isArray(snap.recentOutcomes) ? snap.recentOutcomes.slice(-10) : [];
+      entry.dismissedAt = typeof snap.dismissedAt === 'string' ? snap.dismissedAt : null;
       const logs = Array.isArray(snap.logs) ? snap.logs : [];
       entry.logs = logs.filter((l) => {
         if (!l || !l.timestamp) return false;
@@ -225,6 +285,7 @@ function flush() {
         lastSuccessAt: entry.lastSuccessAt,
         lastErrorAt: entry.lastErrorAt,
         recentOutcomes: entry.recentOutcomes,
+        dismissedAt: entry.dismissedAt || null,
         logs: entry.logs.filter((l) => {
           if (!l || !l.timestamp) return false;
           const t = Date.parse(l.timestamp);
@@ -262,9 +323,15 @@ function _resetForTests() {
 module.exports = {
   recordSuccess,
   recordError,
+  recordDismiss,
+  hasFormatter,
   getStatus,
   getLogs,
   listAll,
   flush,
+  // EventEmitter used by server.js to bridge log updates to the UI WebSocket.
+  // Emits `'changed'` with `{ name, status }` after every recordError /
+  // recordDismiss. See server.js mountWebUiRoutes for the subscriber.
+  events: emitter,
   _resetForTests
 };

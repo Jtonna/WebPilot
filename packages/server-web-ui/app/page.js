@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { GlobeAltIcon, SignalIcon, ServerIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from '../components/PairingPromptCard';
+import FormatterErrorCard from '../components/FormatterErrorCard';
 import ProfileStatusBadge from '../components/ProfileStatusBadge';
 import StatusRow from '../components/StatusRow';
 import Skeleton from '../components/Skeleton';
 import ErrorCard from '../components/ErrorCard';
 import { useToast } from '../components/ToastRegion';
-import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome } from '../lib/api';
+import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome, dismissFormatter } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 import { profileOptions } from '../lib/format';
 
@@ -63,6 +64,9 @@ export default function HomePage() {
       client.subscribe('agents_changed', () => !cancelled && refresh()),
       client.subscribe('extension_connected', () => !cancelled && refresh()),
       client.subscribe('extension_disconnected', () => !cancelled && refresh()),
+      // Formatter health flips — surface new errors and clear dismissed rows
+      // in realtime. See P1 #1.
+      client.subscribe('formatter_status_changed', () => !cancelled && refresh()),
     ];
     return () => {
       cancelled = true;
@@ -97,6 +101,19 @@ export default function HomePage() {
     }
   }
 
+  async function handleDismissFormatter(name) {
+    setBusy(true);
+    try {
+      await dismissFormatter(name);
+      toast.info(`Dismissed formatter "${name}".`);
+      await refresh();
+    } catch (e) {
+      toast.error(e.message || `Couldn’t dismiss formatter "${name}".`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleChromeAction() {
     setBusy(true);
     try {
@@ -126,6 +143,13 @@ export default function HomePage() {
   }
 
   const pendingPairings = status?.pendingPairings ?? [];
+  // New action-item variant: unhealthy formatters. The server discriminates
+  // these via `type: 'formatter_error'`; we filter defensively here so
+  // unknown future variants do not blow up the render. See P1 #1.
+  const formatterActionItems = (status?.actionItems ?? []).filter(
+    (it) => it && it.type === 'formatter_error'
+  );
+  const actionItemsCount = pendingPairings.length + formatterActionItems.length;
   const chrome = status?.chrome ?? {};
   const chromeRunning = !!chrome.running;
   const chromeHasFlag = !!chrome.hasFlag;
@@ -159,7 +183,11 @@ export default function HomePage() {
   // Truly-empty: no Chrome, no agents, no pending. Replace System status with
   // a single Welcome card.
   const trulyEmpty =
-    !loading && pendingPairings.length === 0 && pairedAgents.length === 0 && !chromeRunning;
+    !loading &&
+    pendingPairings.length === 0 &&
+    formatterActionItems.length === 0 &&
+    pairedAgents.length === 0 &&
+    !chromeRunning;
 
   // ---- Chrome row state ----
   let chromeState = 'unknown';
@@ -226,25 +254,34 @@ export default function HomePage() {
           <div className="wp-section-head">
             <h2 className="wp-section-title">Action items</h2>
             <span className="wp-section-aside">
-              {pendingPairings.length > 0
-                ? `${pendingPairings.length} pending`
+              {actionItemsCount > 0
+                ? `${actionItemsCount} pending`
                 : 'All clear'}
             </span>
           </div>
           <div className="wp-inset-group">
-            {pendingPairings.length === 0 ? (
+            {actionItemsCount === 0 ? (
               <div className="wp-empty">Nothing pending right now.</div>
             ) : (
-              pendingPairings.map((p) => (
-                <PairingPromptCard
-                  key={p.pairingId}
-                  pairing={p}
-                  profileOptions={profileOptionsList}
-                  onApprove={handleApprove}
-                  onDeny={handleDeny}
-                  disabled={busy}
-                />
-              ))
+              <>
+                {pendingPairings.map((p) => (
+                  <PairingPromptCard
+                    key={`pairing-${p.pairingId}`}
+                    pairing={p}
+                    profileOptions={profileOptionsList}
+                    onApprove={handleApprove}
+                    onDeny={handleDeny}
+                    disabled={busy}
+                  />
+                ))}
+                {formatterActionItems.map((f) => (
+                  <FormatterErrorCard
+                    key={`formatter-${f.name}`}
+                    formatter={f}
+                    onDismiss={handleDismissFormatter}
+                  />
+                ))}
+              </>
             )}
           </div>
         </section>

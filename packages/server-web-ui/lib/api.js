@@ -183,6 +183,17 @@ export function getFormatterLogs(name, limit = 50) {
   );
 }
 
+// Dismiss a formatter from the dashboard's action-items list (P1 #1). The
+// server marks it as user-dismissed; the formatter is re-surfaced on the
+// next error event. Historical log entries are NOT cleared — the
+// /ui/formatters/logs/?name=X view still shows them.
+export function dismissFormatter(name) {
+  return apiFetch(`/api/ui/formatters/${encodeURIComponent(name)}/dismiss`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
 // Race guard for pages that refresh from BOTH REST and WS events.
 //
 // Without this, a slow REST `refresh()` issued before a WS event lands can

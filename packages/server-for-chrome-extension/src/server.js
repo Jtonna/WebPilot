@@ -351,10 +351,39 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
   };
 }
 
+/**
+ * Defense-in-depth localhost gate for MUTATING Web UI endpoints
+ * (/api/ui/agents/*, /api/ui/profiles, /api/ui/settings/network-mode,
+ * /api/ui/server/restart, /api/ui/chrome/restart, /api/ui/pairings/:id/approve,
+ * /api/ui/pairings/:id/deny, etc.).
+ *
+ * The general `makeUiAuth` already rejects non-loopback callers, but mutating
+ * admin actions are sensitive enough to deserve a second, narrowly-scoped check
+ * that survives any future refactor of the broader UI auth policy. Read-only
+ * endpoints (GET /api/ui/status, /api/ui/events WS, etc.) intentionally do NOT
+ * use this — if we ever loosen UI auth to allow read-only network access, those
+ * endpoints stay reachable while mutating ones stay loopback-only.
+ */
+function makeMutatingUiAuth() {
+  return function mutatingUiAuth(req, res, next) {
+    const remote = (req.socket && req.socket.remoteAddress) || '';
+    const isLocal =
+      remote === '127.0.0.1' ||
+      remote === '::1' ||
+      remote === '::ffff:127.0.0.1';
+    if (isLocal) return next();
+    console.log(`[ui-auth] rejecting non-local mutating request to ${req.method} ${req.url} from ${remote}`);
+    return res.status(403).json({ error: 'Forbidden: mutating UI endpoints are localhost-only' });
+  };
+}
+
 function mountWebUiRoutes(app, deps) {
   const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port, broadcastUiEvent } = deps;
   // Web UI is localhost-only — no API key involved. See makeUiAuth().
   const auth = makeUiAuth();
+  // Extra localhost gate layered onto every mutating admin endpoint. See
+  // makeMutatingUiAuth() for the rationale.
+  const mutatingAuth = makeMutatingUiAuth();
 
   app.get('/api/ui/status', auth, async (req, res) => {
     try {
@@ -403,6 +432,41 @@ function mountWebUiRoutes(app, deps) {
           `${readyCount} ready, ${needsSetupCount} needs_setup`
       );
 
+      // Collect unhealthy formatters as dashboard action items. Each entry is
+      // tagged `type: 'formatter_error'` so the UI can discriminate it from
+      // pairing rows (which are surfaced via `pendingPairings` and rendered
+      // with PairingPromptCard). The UI consumes both lists in its Action
+      // Items section. See P1 #1.
+      let formatterActionItems = [];
+      try {
+        const statusMap = formatterLogs.listAll();
+        for (const [name, status] of statusMap.entries()) {
+          if (status && status.health === 'unhealthy') {
+            formatterActionItems.push({
+              type: 'formatter_error',
+              name,
+              health: status.health,
+              lastError: status.lastError,
+              lastErrorAt: status.lastErrorAt,
+              lastSuccessAt: status.lastSuccessAt,
+              errorCount: status.errorCount,
+              successCount: status.successCount,
+              dismissedAt: status.dismissedAt || null,
+            });
+          }
+        }
+        // Newest error first (matches the ring-buffer view ordering).
+        formatterActionItems.sort((a, b) => {
+          const ax = a.lastErrorAt || '';
+          const bx = b.lastErrorAt || '';
+          if (ax === bx) return 0;
+          return ax < bx ? 1 : -1;
+        });
+      } catch (e) {
+        console.log(`[ui-api:status] formatter action items collection failed: ${e.message}`);
+        formatterActionItems = [];
+      }
+
       res.json({
         // Exposed so the UI can render .mcp.json snippets with the live port
         // (no hardcoded default). See Wave 6 H6.
@@ -413,6 +477,9 @@ function mountWebUiRoutes(app, deps) {
         // per-profile `webPilotStatus` field on each entry in `profiles`.
         connectedProfiles,
         pendingPairings: pairedKeys.listPendingPairings(),
+        // New (P1 #1): formatter errors surface as discriminated action items
+        // alongside pending pairings on the dashboard.
+        actionItems: formatterActionItems,
         pairedAgents: pairedKeys.listKeys(),
         networkMode: (() => {
           try {
@@ -525,7 +592,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.post('/api/ui/profiles', auth, express.json(), (req, res) => {
+  app.post('/api/ui/profiles', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const rawName = req.body && req.body.name;
       const v = validateProfileName(rawName, chromeManager.userDataDir);
@@ -572,7 +639,7 @@ function mountWebUiRoutes(app, deps) {
   //
   // Returns 201 with { apiKey, agentName, profileId, createdAt }. Broadcasts
   // `agents_changed` so any open Agents/Pairings tabs refresh.
-  app.post('/api/ui/agents', auth, express.json(), (req, res) => {
+  app.post('/api/ui/agents', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const body = req.body || {};
       const rawName = body.agentName;
@@ -642,7 +709,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.post('/api/ui/agents/:key/rename', auth, express.json(), (req, res) => {
+  app.post('/api/ui/agents/:key/rename', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const key = req.params.key;
       const newName = req.body && req.body.newName;
@@ -664,7 +731,7 @@ function mountWebUiRoutes(app, deps) {
   // agent's profileId in mcp-handler.resolveTargetProfile.
   //
   // Body: { profileId: "<directoryName>" } — must match a known profile.
-  app.patch('/api/ui/agents/:key', auth, express.json(), (req, res) => {
+  app.patch('/api/ui/agents/:key', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const key = req.params.key;
       const body = req.body || {};
@@ -712,7 +779,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.delete('/api/ui/agents/:key', auth, (req, res) => {
+  app.delete('/api/ui/agents/:key', auth, mutatingAuth, (req, res) => {
     try {
       const key = req.params.key;
       const ok = pairedKeys.revokeKey(key);
@@ -820,6 +887,27 @@ function mountWebUiRoutes(app, deps) {
       res.json({ formatters: out });
     } catch (e) {
       console.error('[ui-api] GET /formatters failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ui/formatters/:name/dismiss
+  //
+  // Marks the formatter as user-dismissed so it stops appearing as a
+  // dashboard action item until a new error event arrives. Historical log
+  // entries are preserved on the /ui/formatters/logs/?name=X view. See
+  // formatter-logs.recordDismiss. P1 #1.
+  app.post('/api/ui/formatters/:name/dismiss', auth, express.json(), (req, res) => {
+    try {
+      const name = req.params.name;
+      if (!formatterLogs.hasFormatter(name)) {
+        return res.status(404).json({ error: 'formatter not found', name });
+      }
+      const status = formatterLogs.recordDismiss(name);
+      console.log(`[ui-api] dismiss formatter="${name}"`);
+      res.json({ ok: true, name, status });
+    } catch (e) {
+      console.error('[ui-api] dismiss formatter failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -942,7 +1030,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.post('/api/ui/settings/network-mode', auth, express.json(), (req, res) => {
+  app.post('/api/ui/settings/network-mode', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = !!(req.body && req.body.enabled);
       console.log(`[ui-api] settings/network-mode enabled=${enabled}`);
@@ -1011,9 +1099,11 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
       return;
     }
 
-    // Extension WebSocket (default path)
+    // Extension WebSocket (default path). Constant-time compare against the
+    // transport apiKey so a string-compare short-circuit on the first
+    // differing byte cannot be measured to recover the secret.
     const clientApiKey = url.searchParams.get('apiKey');
-    if (clientApiKey !== apiKey) {
+    if (!pairedKeys.constantTimeEqual(clientApiKey, apiKey)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -1297,6 +1387,29 @@ function createServer({ port, apiKey, host: initialHost = '127.0.0.1', publicHos
   });
 
   formatterManager.init();
+
+  // Bridge formatter-logs `changed` events to the UI WebSocket so the
+  // dashboard's Action Items list updates in realtime when an error is
+  // recorded or a user dismisses a formatter. See P1 #1; formatter-logs.js
+  // exports `events` (an EventEmitter) for this purpose — chose EventEmitter
+  // over a constructor-time callback because it lets the module stay
+  // stateless w.r.t. its subscribers.
+  try {
+    formatterLogs.events.on('changed', (payload) => {
+      try {
+        broadcastUiEvent({
+          type: 'formatter_status_changed',
+          name: payload && payload.name,
+          health: payload && payload.status && payload.status.health,
+          lastError: payload && payload.status && payload.status.lastError,
+        });
+      } catch (e) {
+        console.log(`[ui-ws] formatter_status_changed broadcast failed: ${e.message}`);
+      }
+    });
+  } catch (e) {
+    console.log(`[ui-ws] failed to attach formatter-logs listener: ${e.message}`);
+  }
 
   // Eagerly load notification preferences so the in-memory cache is warm
   // before the first pairing request notification fires.
