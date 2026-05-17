@@ -351,15 +351,19 @@ function validateProfileName(name, userDataDir) {
  * not reject. The mutating layer's policy is preserved in production where
  * it matters.
  */
+// Detection: `npm_lifecycle_event === 'dev'` is set by npm whenever you run
+// `npm run dev` (Node strips `--watch` from `process.execArgv` so the watch
+// flag itself isn't a reliable signal). `NODE_ENV === 'development'` and an
+// explicit `WEBPILOT_DEV=1` env var are also accepted for setups that
+// invoke the server directly without npm.
 const IS_DEV_MODE =
   process.env.WEBPILOT_DEV === '1' ||
-  process.execArgv.some((a) =>
-    a === '--watch' || a.startsWith('--watch=') || a.startsWith('--watch-path')
-  );
+  process.env.NODE_ENV === 'development' ||
+  process.env.npm_lifecycle_event === 'dev';
 
 if (IS_DEV_MODE) {
   console.log(
-    '[ui-auth] DEV MODE detected (node --watch or WEBPILOT_DEV=1) — localhost-only UI gates will pass-through with a warning log. Do NOT ship a production build in this mode.'
+    '[ui-auth] DEV MODE detected (npm run dev / NODE_ENV=development / WEBPILOT_DEV=1) — localhost-only UI gates will pass-through with a warning log. Do NOT ship a production build in this mode.'
   );
 }
 
