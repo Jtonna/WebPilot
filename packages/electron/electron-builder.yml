@@ -16,17 +16,21 @@ extraResources:
     to: server
   - from: ../chrome-extension-unpacked
     to: chrome-extension
+  - from: assets
+    to: assets
 
 win:
   target:
     - target: nsis
       arch: [x64]
+  icon: assets/icon.ico
   artifactName: ${productName}-${version}-windows.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: false
   perMachine: false
+  include: build/installer.nsh
 
 mac:
   target:
