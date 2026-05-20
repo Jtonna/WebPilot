@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 build/
+# electron-builder's NSIS installer hook lives here and must be tracked.
+!packages/electron/build/
+!packages/electron/build/**
 *.crx
 *.pem
 *.zip
