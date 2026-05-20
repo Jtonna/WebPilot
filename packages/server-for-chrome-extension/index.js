@@ -2,12 +2,31 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { createServer } = require('./src/server');
-const { getPort, getLogPath, getDataDir } = require('./src/service/paths');
+const {
+  getPort,
+  getLogPath,
+  getDataDir,
+  migrateLegacyInstallData,
+} = require('./src/service/paths');
 const { setupLogging } = require('./src/service/logger');
+
+// One-time upgrade migration: pkg builds <= 1.1.5 wrote user data to
+// `<install>\data\`, which electron-builder wipes on every upgrade. From
+// 1.1.6 onward the daemon uses %APPDATA%\WebPilot (or the platform
+// equivalent) — see src/service/paths.js. Run this BEFORE setupLogging
+// so the very first log line on the upgrade boot lands in the new
+// (preserved) location, not back in the doomed install dir.
+const _migration = migrateLegacyInstallData();
 
 const logPath = getLogPath();
 setupLogging(logPath);
 console.log(`log: ${logPath}`);
+
+if (_migration.ran) {
+  console.log(`[migration] copied legacy user data: ${_migration.copiedFrom} -> ${_migration.copiedTo}`);
+} else if (_migration.reason && _migration.reason !== 'no-legacy-dir' && _migration.reason !== 'flag-present') {
+  console.log(`[migration] skipped: ${_migration.reason}`);
+}
 
 // ---------------------------------------------------------------------------
 // Crash handlers — log fatal errors before the process dies

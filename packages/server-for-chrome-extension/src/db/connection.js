@@ -24,6 +24,40 @@ const fs = require('node:fs');
 
 const { getDataDir } = require('../service/paths');
 
+// ---------------------------------------------------------------------------
+// better-sqlite3 native-binding path resolution.
+//
+// @yao-pkg/pkg cannot bundle the native `.node` binding into its snapshot,
+// so the post-build step (scripts/copy-native-deps.js) drops
+// `better_sqlite3.node` next to the pkg-compiled `.exe`. In v12.x, the
+// loader's auto-discovery (`require('bindings')(...)`) walks the snapshot
+// filesystem and fails because the .node sits OUTSIDE the snapshot. The
+// `BETTER_SQLITE3_BINDING_PATH` env var we used in earlier attempts was
+// never read by better-sqlite3 — it only honours the `nativeBinding`
+// constructor option (see node_modules/better-sqlite3/lib/database.js,
+// commit 12.x). We therefore pass the resolved sibling path explicitly
+// when constructing the Database below.
+//
+// In dev (running under node.exe), `getBundledBindingPath()` returns null
+// and better-sqlite3 resolves the binding from node_modules normally.
+// ---------------------------------------------------------------------------
+function isPkgBinary() {
+  if (process.pkg) return true;
+  if (process.platform === 'win32') {
+    const exe = path.basename(process.execPath).toLowerCase();
+    return exe.endsWith('.exe') && exe !== 'node.exe';
+  }
+  return false;
+}
+
+function getBundledBindingPath() {
+  if (!isPkgBinary()) return null;
+  const candidate = path.join(path.dirname(process.execPath), 'better_sqlite3.node');
+  if (fs.existsSync(candidate)) return candidate;
+  console.error('[db] better_sqlite3.node not found next to exe at ' + candidate + '; bindings will fail');
+  return null;
+}
+
 let _db = null;
 let _initialized = false;
 
@@ -57,7 +91,14 @@ function init() {
   const existed = fs.existsSync(dbPath);
   console.log(`[db] opening ${dbPath} (existed=${existed})`);
 
-  _db = new Database(dbPath);
+  // In pkg-binary mode, the native .node binding sits as a loose file next
+  // to the exe (see getBundledBindingPath above). Pass it explicitly via
+  // the `nativeBinding` option — auto-discovery via `require('bindings')`
+  // searches the snapshot and fails. In dev mode the path is null and
+  // better-sqlite3 falls back to its normal node_modules resolution.
+  const nativeBinding = getBundledBindingPath();
+  const dbOptions = nativeBinding ? { nativeBinding } : undefined;
+  _db = dbOptions ? new Database(dbPath, dbOptions) : new Database(dbPath);
 
   // Recommended PRAGMAs for our workload: a single writer process, many
   // small synchronous reads, durability-over-perf is not required (the
