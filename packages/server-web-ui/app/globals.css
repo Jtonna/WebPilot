@@ -1018,6 +1018,19 @@ hr {
   color: var(--wp-fg-muted);
 }
 
+/* Native <option> elements inherit nothing reliably across themes. In dark
+   mode the popup was rendering light text on the OS-default white
+   background, which is unreadable. Anchor both colors to our tokens so the
+   popup follows the theme. The .wp-input--underline modifier sets the
+   select background to transparent (the trigger should blend into the
+   modal surface), but option backgrounds must be solid or the OS picks
+   white — so we set them on `option` directly. */
+.wp-select option,
+.wp-input option {
+  background-color: var(--wp-bg-card);
+  color: var(--wp-fg);
+}
+
 /* ---------------------------------------------------------------------------
  * Helpers / text utilities
  * ------------------------------------------------------------------------- */

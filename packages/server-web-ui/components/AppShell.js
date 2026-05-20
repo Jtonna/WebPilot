@@ -110,13 +110,24 @@ function normalizePath(p) {
 function useServerStatus() {
   const [serverOk, setServerOk] = useState(null);
   const [pendingPairings, setPendingPairings] = useState(0);
+  // hasEverConnected stays true once we've had at least one successful
+  // /api/ui/status response. Used to drive the boot-time splash gate in
+  // AppShell: while false, the UI renders <ConnectingSplash/> instead of
+  // page contents so a transient 500/network error during server boot
+  // never flashes the dashboard with a "Disconnected" banner.
+  const [hasEverConnected, setHasEverConnected] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    let timeoutId = null;
+
     async function tick() {
+      let success = false;
       try {
         const data = await getStatus();
         if (cancelled) return;
+        success = true;
         setServerOk(true);
+        setHasEverConnected(true);
         const n = (data && Array.isArray(data.pendingPairings))
           ? data.pendingPairings.length
           : 0;
@@ -125,15 +136,101 @@ function useServerStatus() {
         if (cancelled) return;
         setServerOk(false);
       }
+      if (cancelled) return;
+      // Poll fast (500ms) until we've had our first success — this is the
+      // server-boot window. After first success, fall back to the cheap
+      // 15s heartbeat used to drive the sidebar connected/disconnected dot.
+      const delay = success ? 15000 : 500;
+      timeoutId = setTimeout(tick, delay);
     }
+
     tick();
-    const id = setInterval(tick, 15000);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, []);
-  return { serverOk, pendingPairings };
+  return { serverOk, pendingPairings, hasEverConnected };
+}
+
+/**
+ * Full-window connecting splash. Mirrors the look of electron/splash.html
+ * (dark bg, pulsing dots, "Starting…" copy) so the visual transition from
+ * the OS splash window to the in-app splash is seamless.
+ *
+ * Rendered by AppShell whenever the renderer has not yet had a successful
+ * /api/ui/status response, regardless of the failure mode (network drop,
+ * 500, server still booting). Once the first success lands, AppShell
+ * swaps in the real shell + page content and never shows this splash
+ * again for the rest of the session.
+ */
+function ConnectingSplash({ message }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'var(--wp-bg, #0e0e10)',
+        color: 'var(--wp-fg, #f5f5f7)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 24,
+        zIndex: 9999,
+        userSelect: 'none',
+      }}
+    >
+      <h1
+        style={{
+          margin: 0,
+          fontSize: 28,
+          fontWeight: 500,
+          letterSpacing: '-0.02em',
+        }}
+      >
+        WebPilot
+      </h1>
+      <div
+        style={{
+          fontSize: 14,
+          color: 'var(--wp-fg-muted, #8b8b94)',
+          letterSpacing: '0.01em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          minHeight: 20,
+        }}
+      >
+        <span>{message}</span>
+        <span
+          aria-hidden="true"
+          style={{ display: 'inline-flex', gap: 3 }}
+        >
+          <span className="wp-splash-dot" />
+          <span className="wp-splash-dot" />
+          <span className="wp-splash-dot" />
+        </span>
+      </div>
+      <style>{`
+        .wp-splash-dot {
+          width: 4px;
+          height: 4px;
+          border-radius: 50%;
+          background: var(--wp-fg-muted, #8b8b94);
+          animation: wp-splash-pulse 1.2s ease-in-out infinite;
+        }
+        .wp-splash-dot:nth-child(2) { animation-delay: 0.15s; }
+        .wp-splash-dot:nth-child(3) { animation-delay: 0.30s; }
+        @keyframes wp-splash-pulse {
+          0%, 100% { opacity: 0.25; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.3); }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 function SidebarGroup({ title, items, pathname, query, onItemClick, counts }) {
@@ -226,7 +323,7 @@ function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClic
 export default function AppShell({ children }) {
   const rawPath = usePathname() || '/ui/';
   const pathname = normalizePath(rawPath);
-  const { serverOk, pendingPairings } = useServerStatus();
+  const { serverOk, pendingPairings, hasEverConnected } = useServerStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -268,6 +365,17 @@ export default function AppShell({ children }) {
 
   const statusState = serverOk === null ? '' : serverOk ? 'ok' : 'down';
   const onNavClick = () => setDrawerOpen(false);
+
+  // Boot-time gate: until our first successful /api/ui/status response, hold
+  // on a full-window splash that mirrors electron/splash.html. This prevents
+  // the dashboard from flashing in with a "Disconnected" banner during the
+  // server-boot window (the renderer typically loads ~100ms after the
+  // server's /health goes green, but the DB-backed /api/ui/status takes
+  // another beat to finish initializing). See Problem B in the v1.1.4 fix.
+  if (!hasEverConnected) {
+    const message = serverOk === false ? 'Starting server' : 'Connecting';
+    return <ConnectingSplash message={message} />;
+  }
 
   return (
     <div className="wp-shell">
