@@ -1,59 +1,235 @@
-name: Build & Release
+name: Release
+
+# Three trigger paths:
+#
+#   1. push to main         -- a PR was just merged. Read its release:* label;
+#                              if release:{major,minor,patch}, bump the version,
+#                              tag it, build all three platforms, publish.
+#                              If release:none, do nothing.
+#
+#   2. push of a v* tag     -- an out-of-band manual release (user pushed a tag
+#                              locally). Build all three platforms and publish.
+#                              No bump.
+#
+#   3. workflow_dispatch    -- manual "Run workflow" from the Actions tab.
+#                              Builds all three platforms; only publishes a
+#                              release if dry_run=false.
+#
+# The GITHUB_TOKEN used for the auto-bump commit + tag push does NOT trigger
+# further workflow runs (that is the documented GITHUB_TOKEN behavior). So
+# path 1 and path 2 cannot accidentally cascade.
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build only, do not publish a GitHub Release.'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-          - os: macos-latest
-            platform: mac
-          - os: ubuntu-latest
-            platform: linux
-
-    runs-on: ${{ matrix.os }}
-
+  decide:
+    name: Decide version + action
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      should_bump: ${{ steps.plan.outputs.should_bump }}
+      should_release: ${{ steps.plan.outputs.should_release }}
+      pr_number: ${{ steps.plan.outputs.pr_number }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: plan
+        uses: actions/github-script@v7
+        env:
+          DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+        with:
+          script: |
+            const fs = require('fs');
+            const ref = context.ref;
+            const event = context.eventName;
+            const isTagPush = event === 'push' && ref.startsWith('refs/tags/v');
+            const isMainPush = event === 'push' && ref === 'refs/heads/main';
+            const isDispatch = event === 'workflow_dispatch';
+
+            function readVersion() {
+              return JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+            }
+
+            function emit({version, tag, shouldBump, shouldRelease, prNumber}) {
+              core.setOutput('version', version || '');
+              core.setOutput('tag', tag || '');
+              core.setOutput('should_bump', shouldBump ? 'true' : 'false');
+              core.setOutput('should_release', shouldRelease ? 'true' : 'false');
+              core.setOutput('pr_number', prNumber != null ? String(prNumber) : '');
+            }
+
+            // ---- Tag push: build + release the tagged version, no bump ----
+            if (isTagPush) {
+              const tag = ref.replace('refs/tags/', '');
+              const version = tag.replace(/^v/, '');
+              core.info('Tag push: ' + tag + ' -> build + release');
+              return emit({version, tag, shouldBump: false, shouldRelease: true});
+            }
+
+            // ---- workflow_dispatch: dry-run build, optionally release ----
+            if (isDispatch) {
+              const dryRun = process.env.DISPATCH_DRY_RUN !== 'false';
+              const version = readVersion();
+              core.info('Manual dispatch: version=' + version + ' dry_run=' + dryRun);
+              return emit({
+                version,
+                tag: 'v' + version,
+                shouldBump: false,
+                shouldRelease: !dryRun
+              });
+            }
+
+            // ---- Main push: must be a merged PR with a release:* label ----
+            if (isMainPush) {
+              const msg = (context.payload.head_commit && context.payload.head_commit.message) || '';
+              if (msg.startsWith('chore(release):')) {
+                core.info('Bot bump commit -- skipping.');
+                return emit({shouldBump: false, shouldRelease: false});
+              }
+
+              const {data: prs} = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+              const pr = prs.find(p => p.merged_at) || prs[0];
+              if (!pr) {
+                core.info('No PR associated with this commit -- skipping.');
+                return emit({shouldBump: false, shouldRelease: false});
+              }
+
+              const labels = pr.labels.map(l => l.name);
+              const releaseLabel = labels.find(l => l.startsWith('release:'));
+              if (!releaseLabel) {
+                core.setFailed('Merged PR #' + pr.number + ' has no release:* label.');
+                return;
+              }
+              if (releaseLabel === 'release:none') {
+                core.info('release:none on PR #' + pr.number + ' -- nothing to do.');
+                return emit({shouldBump: false, shouldRelease: false, prNumber: pr.number});
+              }
+
+              const current = readVersion();
+              const parts = current.split('.').map(Number);
+              if (parts.length !== 3 || parts.some(n => Number.isNaN(n))) {
+                core.setFailed('Cannot parse current version: ' + current);
+                return;
+              }
+              const [maj, min, pat] = parts;
+              let next;
+              if (releaseLabel === 'release:major') next = (maj + 1) + '.0.0';
+              else if (releaseLabel === 'release:minor') next = maj + '.' + (min + 1) + '.0';
+              else if (releaseLabel === 'release:patch') next = maj + '.' + min + '.' + (pat + 1);
+              else {
+                core.setFailed('Unknown release label: ' + releaseLabel);
+                return;
+              }
+
+              core.info('PR #' + pr.number + ' (' + releaseLabel + '): ' + current + ' -> ' + next);
+              return emit({
+                version: next,
+                tag: 'v' + next,
+                shouldBump: true,
+                shouldRelease: true,
+                prNumber: pr.number,
+              });
+            }
+
+            core.info('Unsupported event -- nothing to do.');
+            return emit({shouldBump: false, shouldRelease: false});
+
+  bump:
+    name: Bump + tag
+    needs: decide
+    if: needs.decide.outputs.should_bump == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bump version across monorepo
+        run: node scripts/bump-version.js ${{ needs.decide.outputs.version }}
+
+      - name: Commit + tag + push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "chore(release): ${{ needs.decide.outputs.tag }} (#${{ needs.decide.outputs.pr_number }})"
+          git tag ${{ needs.decide.outputs.tag }}
+          git push origin HEAD:main
+          git push origin ${{ needs.decide.outputs.tag }}
+
+  build:
+    name: Build (windows)
+    needs: [decide, bump]
+    # Mac + Linux build legs are intentionally disabled until those platforms
+    # are functionally verified. Tracked in issues #48 (macOS) and #49 (Linux).
+    # bump may be skipped (tag push or workflow_dispatch); always() ignores
+    # the skipped-needs check, then we re-evaluate the actual conditions.
+    if: |
+      always() &&
+      needs.decide.result == 'success' &&
+      needs.decide.outputs.should_release == 'true' &&
+      (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        # If we just bumped, we need the bump commit. Pull main; otherwise
+        # we'd build the pre-bump tree and ship the wrong version string.
+        with:
+          ref: ${{ needs.bump.result == 'success' && 'main' || github.ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            packages/*/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build & package
-        run: npm run dist:${{ matrix.platform }}
+        run: npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: webpilot-${{ matrix.platform }}
-          path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.AppImage
-          if-no-files-found: warn
+          name: webpilot-win
+          path: dist/*.exe
+          if-no-files-found: error
 
   release:
-    needs: build
+    name: Publish GitHub Release
+    needs: [decide, build]
+    if: needs.decide.outputs.should_release == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
-
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -61,20 +237,20 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create release
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.decide.outputs.tag }}
+          name: ${{ needs.decide.outputs.tag }}
           files: artifacts/**/*
           body: |
             ## Downloads
 
             | Platform | Installer |
             |----------|-----------|
-            | Windows | `WebPilot-${{ github.ref_name }}-windows.exe` |
-            | macOS (Intel + Apple Silicon) | `WebPilot-${{ github.ref_name }}-mac.dmg` |
-            | Linux | `WebPilot-${{ github.ref_name }}-linux.AppImage` |
+            | Windows  | `WebPilot-${{ needs.decide.outputs.version }}-windows.exe` |
+
+            macOS and Linux builds are not yet shipping — tracked in [#48](https://github.com/Jtonna/WebPilot/issues/48) and [#49](https://github.com/Jtonna/WebPilot/issues/49).
 
             ### Installation
             **Windows** — Run the `.exe` installer. SmartScreen warning expected (unsigned).
-            **macOS** — Drag to Applications, right-click and "Open" to bypass Gatekeeper.
-            **Linux** — `chmod +x *.AppImage && ./AppImage`
