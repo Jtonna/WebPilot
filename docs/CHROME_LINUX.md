@@ -168,10 +168,10 @@ Tick each of these by hand on first run.
 - [ ] Trigger a pairing request and confirm the notification
       appears with title, body, and URL on a second line.
 - [ ] Click-to-open from notification is **explicitly deferred** on
-      Linux (OPEN_ITEMS.md P3). The `notify-send -u critical`
-      notification will display, but clicking it will not open the
-      pairing URL. Workaround: copy the URL from the notification
-      body manually, or visit `http://localhost:<port>/ui/pairings`.
+      Linux. The `notify-send -u critical` notification will display,
+      but clicking it will not open the pairing URL. Workaround: copy
+      the URL from the notification body manually, or visit
+      `http://localhost:<port>/ui/pairings`.
 
 ### Launch flag wiring
 
@@ -219,17 +219,16 @@ Every TODO/scaffold marker in the Linux code paths:
   — running scaffold` log.
 - `notifications/linux.js:10` — scaffold note in module header.
 - `notifications/linux.js:25` — TODO log on every notification.
-- `OPEN_ITEMS.md` line 20 — `Linux detector / launcher / closer /
-  notifications. Same as above for Linux.`
-- `OPEN_ITEMS.md` line 84 (P3) — click-to-open for Linux
-  notifications is deferred.
+
+Linux detector / launcher / closer / notifications were scaffolded per
+spec but have not been smoke-tested on real Linux hardware. Click-to-
+open from notifications is explicitly deferred.
 
 No FIXME comments found.
 
 ## 5. How to send feedback
 
-- File issues against `OPEN_ITEMS.md`'s P1 Linux bullet, or open a
-  GitHub issue on the WebPilot repo with the prefix `[Linux]`.
+- Open a GitHub issue on the WebPilot repo with the prefix `[Linux]`.
 - Include: distro + version (`/etc/os-release`), desktop environment
   (`echo $XDG_CURRENT_DESKTOP`), Chrome/Chromium channel + version,
   packaging (apt/dnf/pacman/snap/flatpak), the relevant section
@@ -253,4 +252,3 @@ No FIXME comments found.
 - macOS equivalents: `CHROME_MAC.md`.
 - Broader server architecture: `MCP_SERVER.md`.
 - Extension side: `CHROME_EXTENSION.md`.
-- Outstanding work tracker: `../OPEN_ITEMS.md` (P1 Linux bullet).

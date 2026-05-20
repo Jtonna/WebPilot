@@ -243,8 +243,7 @@ async function loadAndRender() {
   // Pull installId + server URL from chrome.storage. These keys are written
   // by background.js' auto-connect flow — and we are explicitly READ-ONLY
   // here. The installId is the extension's per-profile identity (used as
-  // `X-Install-Id` for popup endpoint auth). See server's
-  // SECURITY_AUDIT_2026-05-17 doc for the auth model.
+  // `X-Install-Id` for popup endpoint auth).
   const stored = await readStorage(['webpilot.installId', 'serverUrl']);
   state.installId = stored['webpilot.installId'] || null;
   state.serverUrl = stored.serverUrl || null;

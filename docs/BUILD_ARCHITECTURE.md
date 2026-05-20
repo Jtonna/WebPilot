@@ -216,7 +216,7 @@ Server configuration is stored at `<dataDir>/config/server.json`:
 |-------|-----------------|---------|
 | `port` | `PORT` | `3456` |
 
-The server reads from the config file first, then falls back to environment variables, then to the hardcoded defaults. See `paths.js` for the resolution logic. A legacy `apiKey` field is silently ignored — the shared transport key was retired in `f7f2bb8` (2026-05-17); see `docs/SECURITY_AUDIT_2026-05-17.md`.
+The server reads from the config file first, then falls back to environment variables, then to the hardcoded defaults. See `paths.js` for the resolution logic. A legacy `apiKey` field is silently ignored — the shared transport key has been retired.
 
 ### Daemon Logging
 

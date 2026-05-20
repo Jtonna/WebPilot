@@ -142,8 +142,8 @@ Tick each of these by hand on first run.
       `asEscape()` — but URLs containing other characters
       (`'`, `&`, `\\`) have not been smoke-tested.
 - [ ] Click-to-open from notification is **explicitly deferred** for
-      macOS (OPEN_ITEMS.md P3). Clicking the notification will not
-      open the URL; that's a known v1 limitation.
+      macOS. Clicking the notification will not open the URL; that's a
+      known v1 limitation.
 
 ### Launch flag wiring
 
@@ -181,20 +181,19 @@ Every TODO/scaffold marker in the macOS code paths:
   — running scaffold` log.
 - `notifications/macos.js:9` — scaffold note in module header.
 - `notifications/macos.js:37` — TODO log on every notification.
-- `OPEN_ITEMS.md` line 19 — `macOS detector / launcher / closer /
-  notifications. Scaffolded honestly per spec, never tested on real
-  macOS hardware. Will surface real issues on first non-Windows user.`
-- `OPEN_ITEMS.md` line 84 (P3) — `Click-to-open from macOS / Linux
-  notifications. Windows shipped activationType=protocol; the other two
-  need helper apps.`
+
+macOS detector / launcher / closer / notifications were scaffolded per
+spec but have not been smoke-tested on real macOS hardware; expect
+issues on first non-Windows use. Click-to-open from notifications is
+explicitly deferred (Windows shipped `activationType=protocol`; macOS
+and Linux need helper apps).
 
 No FIXME comments found; no `not yet tested` markers beyond the ones
 listed.
 
 ## 5. How to send feedback
 
-- File issues against `OPEN_ITEMS.md`'s P1 macOS bullet, or open a
-  GitHub issue on the WebPilot repo with the prefix `[macOS]`.
+- Open a GitHub issue on the WebPilot repo with the prefix `[macOS]`.
 - Include: macOS version, Chrome channel + version, the relevant
   section heading from this doc, the actual log output from
   `~/Library/Application Support/WebPilot/logs/server.log`, and what
@@ -212,4 +211,3 @@ listed.
 - Linux equivalents: `CHROME_LINUX.md`.
 - Broader server architecture: `MCP_SERVER.md`.
 - Extension side: `CHROME_EXTENSION.md`.
-- Outstanding work tracker: `../OPEN_ITEMS.md` (P1 macOS bullet).

@@ -1500,10 +1500,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }
 
     // Extension WebSocket (default path). The legacy shared-secret transport
-    // key is retired (see docs/SECURITY_AUDIT_2026-05-17.md, phases A+B+D).
-    // The extension is now an *identity*, not a credential bearer: it
-    // self-identifies via `installId` on the URL. Claiming any installId
-    // grants zero agent power — agent-layer auth (paired keys, see
+    // key has been retired. The extension is now an *identity*, not a
+    // credential bearer: it self-identifies via `installId` on the URL.
+    // Claiming any installId grants zero agent power — agent-layer auth
+    // (paired keys, see
     // `mcp-handler.js`) is the security boundary for tool calls. The
     // extension_installs row binds (installId -> profileId), which the
     // bridge uses for routing only.
@@ -1997,10 +1997,9 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
   // --- Extension popup state route ---
   //
-  // P2 phase 6 (auth model updated 2026-05-17, see SECURITY_AUDIT_2026-05-17).
   // The minimal popup hits these two endpoints to render its four-component
   // layout (connection dot, current-tab state, Block/Allow toggle, dashboard
-  // link).
+  // link). Auth is installId-based (X-Install-Id header).
   //
   // Auth: the popup identifies itself with `X-Install-Id` — the same
   // installId the extension sent on its WS upgrade. The server resolves
@@ -2186,10 +2185,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   });
 
   app.get('/connect', (req, res) => {
-    // The transport key is retired (see SECURITY_AUDIT_2026-05-17 phase D).
-    // The extension's own `installId` (minted in extension storage on first
-    // install) is its identity. The server has nothing to hand out here —
-    // just the addresses the extension needs to dial.
+    // The transport key has been retired. The extension's own `installId`
+    // (minted in extension storage on first install) is its identity. The
+    // server has nothing to hand out here — just the addresses the
+    // extension needs to dial.
     res.json({
       serverUrl: `ws://${publicHost}:${port}`,
       sseUrl: `http://${publicHost}:${port}/sse`,

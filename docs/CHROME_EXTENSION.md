@@ -222,7 +222,7 @@ The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (
 - `GET  /api/popup/state?tabUrl=<url>` — connection + current-tab pill.
 - `POST /api/popup/site-toggle` — flip the global rule.
 
-The legacy `X-API-Key` header (and the `apiKey` storage key) were retired 2026-05-17 along with the shared server transport key — see `docs/SECURITY_AUDIT_2026-05-17.md`.
+The legacy `X-API-Key` header (and the `apiKey` storage key) have been retired along with the shared server transport key. Auth is now installId-based end-to-end.
 
 It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 

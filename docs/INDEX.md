@@ -11,8 +11,6 @@ WebPilot documentation covering system architecture, development guides, and API
 - [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
 - [CHROME_LINUX.md](CHROME_LINUX.md) -- Linux-side Chrome integration notes (same scope as the macOS doc).
 - [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: status dashboard, onboarding placeholder text, preload IPC bridge, and build scripts. For developers working on the installer and management UI.
-- [EXTENSION_REDESIGN_AND_POLICY.md](EXTENSION_REDESIGN_AND_POLICY.md) -- Design doc for the P2 redesign (SQLite migration + site policy + minimal popup). Now shipped; retained as the architectural record with per-phase commit hashes.
-- [SECURITY_AUDIT_2026-05-17.md](SECURITY_AUDIT_2026-05-17.md) -- Auth & authorization model audit and the phased transport-key retirement. Phases A + B + D shipped as a hard cutover on 2026-05-17 (`f7f2bb8`); Phase C was intentionally dropped.
 
 ## Guides
 
@@ -26,8 +24,4 @@ WebPilot documentation covering system architecture, development guides, and API
 ## Design
 
 - `design/UX.md`, `design/ELEGANCE.md`, `design/PALETTE.md`, and `design/research/{APPLE,LUXURY,SIMPLE}.md` -- Web UI design system, palette, and design-research briefs. These describe the look-and-feel of the server-hosted web UI at `/ui`.
-
-## Project planning (temporary)
-
-- [`../OPEN_ITEMS.md`](../OPEN_ITEMS.md) -- Open items (P0/P1/P2/P3) and intentional non-goals before this branch's v1 ships. Kept at the repo root until v1 of `QOL-Features` ships; delete once the PR description absorbs the relevant items.
 

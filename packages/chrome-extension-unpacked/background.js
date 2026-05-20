@@ -116,12 +116,12 @@ function ensureInstallId() {
 }
 
 function loadConfig() {
-  // Read identity + server addresses. `apiKey` is intentionally NOT read here:
-  // the legacy shared transport key was retired (see server-side
-  // SECURITY_AUDIT_2026-05-17). The extension identifies itself via
-  // `webpilot.installId`; the server resolves it to a profileId. Any stale
-  // `apiKey` in storage from a pre-1.2.0 build is cleaned up below as a
-  // one-time migration so it doesn't sit around forever.
+  // Read identity + server addresses. `apiKey` is intentionally NOT read
+  // here: the legacy shared transport key has been retired. The extension
+  // identifies itself via `webpilot.installId`; the server resolves it to a
+  // profileId. Any stale `apiKey` in storage from a pre-1.2.0 build is
+  // cleaned up below as a one-time migration so it doesn't sit around
+  // forever.
   chrome.storage.local.get(
     ['enabled', 'serverUrl', 'manuallyDisconnected', 'webpilot.installId', 'apiKey'],
     (result) => {
