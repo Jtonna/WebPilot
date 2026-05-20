@@ -2,12 +2,31 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { createServer } = require('./src/server');
-const { getPort, getApiKey, getLogPath, getDataDir } = require('./src/service/paths');
+const {
+  getPort,
+  getLogPath,
+  getDataDir,
+  migrateLegacyInstallData,
+} = require('./src/service/paths');
 const { setupLogging } = require('./src/service/logger');
+
+// One-time upgrade migration: pkg builds <= 1.1.5 wrote user data to
+// `<install>\data\`, which electron-builder wipes on every upgrade. From
+// 1.1.6 onward the daemon uses %APPDATA%\WebPilot (or the platform
+// equivalent) — see src/service/paths.js. Run this BEFORE setupLogging
+// so the very first log line on the upgrade boot lands in the new
+// (preserved) location, not back in the doomed install dir.
+const _migration = migrateLegacyInstallData();
 
 const logPath = getLogPath();
 setupLogging(logPath);
 console.log(`log: ${logPath}`);
+
+if (_migration.ran) {
+  console.log(`[migration] copied legacy user data: ${_migration.copiedFrom} -> ${_migration.copiedTo}`);
+} else if (_migration.reason && _migration.reason !== 'no-legacy-dir' && _migration.reason !== 'flag-present') {
+  console.log(`[migration] skipped: ${_migration.reason}`);
+}
 
 // ---------------------------------------------------------------------------
 // Crash handlers — log fatal errors before the process dies
@@ -46,13 +65,46 @@ setInterval(() => {
 }, 30000).unref();
 
 const PORT = getPort();
-const API_KEY = getApiKey();
 let NETWORK = process.argv.includes('--network') || process.env.NETWORK === '1';
+// Network-mode preference resolution (P2 phase 7):
+//   1. Prefer the SQLite `config.network_enabled` row (DB is the new source of
+//      truth post-migration).
+//   2. Fall back to the legacy `<dataDir>/network.enabled` flag file. This
+//      branch fires only on the very first boot of the new version — once
+//      `runImportFromJsonStores()` archives the flag to `.imported.<TS>` the
+//      DB row takes over and this fallback never matches again.
+//   3. Otherwise, use the CLI flag / env-var default that was just resolved.
+//
+// We initialize the DB here in index.js (before createServer wires the rest of
+// the server) so the read happens against the same connection createServer
+// will reuse — better-sqlite3 caches the handle in the connection module.
 try {
-  const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
-  NETWORK = val === '1';
+  require('./src/db/connection').init();
+  const db = require('./src/db/connection').getDb();
+  const row = db
+    .prepare('SELECT value FROM config WHERE key = ?')
+    .get('network_enabled');
+  if (row && typeof row.value === 'string') {
+    NETWORK = row.value === 'true' || row.value === '1';
+  } else {
+    // No DB row yet — fall back to the legacy flag file (first-boot path).
+    try {
+      const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
+      NETWORK = val === '1';
+    } catch (_e) {
+      // No flag file either; keep CLI/env default.
+    }
+  }
 } catch (e) {
-  // No config file, use CLI flag default
+  // DB init failure — fall back to the legacy flag file so the daemon still
+  // boots in a useful mode. This branch should not fire in normal use.
+  console.error('[boot] network-mode DB lookup failed, falling back to flag file:', e && e.message);
+  try {
+    const val = fs.readFileSync(path.join(getDataDir(), 'network.enabled'), 'utf8').trim();
+    NETWORK = val === '1';
+  } catch (_e) {
+    // No flag file either; keep CLI/env default.
+  }
 }
 
 function getLocalIP() {
@@ -70,4 +122,4 @@ function getLocalIP() {
 const host = NETWORK ? '0.0.0.0' : '127.0.0.1';
 const publicHost = NETWORK ? getLocalIP() : 'localhost';
 
-createServer({ port: PORT, apiKey: API_KEY, host, publicHost });
+createServer({ port: PORT, host, publicHost });

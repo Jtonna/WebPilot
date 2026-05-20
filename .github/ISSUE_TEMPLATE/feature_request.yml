@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+title: "[feat] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! Help us understand the problem before the solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem you're trying to solve?
+      description: Describe the use case — what are you trying to accomplish that WebPilot doesn't currently support well?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: What would the ideal behavior look like? Be specific about UI, API surface, or tool signatures if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried, other tools that solve this, or different approaches you considered.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which part of WebPilot does this affect?
+      multiple: true
+      options:
+        - MCP server / tool surface
+        - Chrome extension
+        - Web UI / dashboard
+        - Electron installer
+        - Site formatters
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Screenshots, mockups, links to similar features in other tools, etc.

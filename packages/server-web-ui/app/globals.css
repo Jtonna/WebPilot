@@ -1,0 +1,1961 @@
+/* ===========================================================================
+ * WebPilot — structural redesign, warm-monochrome palette.
+ *
+ * Theme (toggleable via [data-theme] on <html>):
+ *   - light (default), dark, or unset (= system via prefers-color-scheme).
+ *
+ * Single palette: warm ivory / anthracite neutrals with a deep-slate accent
+ * (bone in dark mode). Tokens live on :root, with the dark variant under
+ * [data-theme="dark"] or the system @media block.
+ * Structural classes (sidebar source-list, inset groups, hairline rows, etc.)
+ * sit below the token block and pull only from semantic vars.
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------------------
+ * Static (palette-independent) tokens — typography, spacing, radii, motion,
+ * layout. Only color tokens are palette-specific.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  /* Fonts */
+  --wp-font-sans: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", system-ui, sans-serif;
+  --wp-font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  /* Type scale */
+  --fs-display: 2rem;        /* 32px */
+  --fs-section: 1.25rem;     /* 20px */
+  --fs-subsection: 1rem;     /* 16px */
+  --fs-body: 0.9375rem;      /* 15px */
+  --fs-small: 0.8125rem;     /* 13px */
+  --fs-micro: 0.75rem;       /* 12px */
+  --fs-nano: 0.6875rem;      /* 11px — group-header micro caps */
+  --fs-mono: 0.875rem;       /* 14px */
+  --fs-mono-small: 0.8125rem; /* 13px */
+
+  /* Spacing */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Shadows (kept for popovers/modals — resting cards are flat) */
+  --elev-0: none;
+  --elev-1:
+    0 1px 1px rgba(15, 17, 21, 0.04),
+    0 2px 6px rgba(15, 17, 21, 0.05);
+  --elev-2:
+    0 1px 2px rgba(15, 17, 21, 0.06),
+    0 8px 24px rgba(15, 17, 21, 0.08);
+  --elev-3:
+    0 2px 4px rgba(15, 17, 21, 0.08),
+    0 16px 40px rgba(15, 17, 21, 0.12);
+
+  /* Motion */
+  --dur-instant: 80ms;
+  --dur-quick: 180ms;
+  --dur-normal: 240ms;
+  --dur-slow: 400ms;
+  --ease-quart-out: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-quart-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-spring-soft: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* Focus ring */
+  --wp-focus-width: 2px;
+  --wp-focus-offset: 2px;
+
+  /* Layout */
+  --wp-sidebar-w: 240px;
+  --wp-content-max: 1120px;
+  --wp-gutter: var(--s-4);
+  --wp-mobile-topbar-h: 56px;
+}
+
+/* ===========================================================================
+ * Mono palette — warm ivory / anthracite, deep-slate accent.
+ *
+ * Promoted to the base :root so no [data-palette] attribute is needed.
+ * ========================================================================= */
+
+:root {
+  --wp-bg: #FBFAF7;
+  --wp-bg-card: #FFFFFF;
+  --wp-bg-elevated: #F4F2EE;
+
+  --wp-fg: #1A1815;
+  --wp-fg-secondary: rgba(26, 24, 21, 0.62);
+  --wp-fg-muted: rgba(26, 24, 21, 0.36);
+
+  --wp-separator: rgba(26, 24, 21, 0.08);
+  --wp-separator-strong: rgba(26, 24, 21, 0.14);
+
+  --wp-accent: #3F4147;
+  --wp-accent-hover: #2A2C30;
+  --wp-accent-active: #1A1815;
+  --wp-accent-focus: rgba(63, 65, 71, 0.35);
+  --wp-accent-tint: rgba(63, 65, 71, 0.08);
+  --wp-on-accent: #FBFAF7;
+
+  --wp-success: #5A7A4A;
+  --wp-success-tint: rgba(90, 122, 74, 0.12);
+  --wp-warning: #B47A33;
+  --wp-warning-tint: rgba(180, 122, 51, 0.12);
+  --wp-danger: #9A3D3D;
+  --wp-danger-tint: rgba(154, 61, 61, 0.10);
+  --wp-info: #3F4147;
+  --wp-info-tint: rgba(63, 65, 71, 0.08);
+}
+
+/* Explicit dark theme. */
+:root[data-theme="dark"] {
+  --wp-bg: #161412;
+  --wp-bg-card: #1F1D1A;
+  --wp-bg-elevated: #2A2724;
+
+  --wp-fg: #F0EDE8;
+  --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+  --wp-fg-muted: rgba(240, 237, 232, 0.36);
+
+  --wp-separator: rgba(240, 237, 232, 0.10);
+  --wp-separator-strong: rgba(240, 237, 232, 0.16);
+
+  --wp-accent: #BFB7A8;
+  --wp-accent-hover: #D5CDBE;
+  --wp-accent-active: #A89E8F;
+  --wp-accent-focus: rgba(191, 183, 168, 0.4);
+  --wp-accent-tint: rgba(191, 183, 168, 0.12);
+  /* Dark-mode bone button: near-black text on bone fill. */
+  --wp-on-accent: #161412;
+
+  --wp-success: #8FAA7F;
+  --wp-success-tint: rgba(143, 170, 127, 0.14);
+  --wp-warning: #D4A663;
+  --wp-warning-tint: rgba(212, 166, 99, 0.14);
+  --wp-danger: #C97373;
+  --wp-danger-tint: rgba(201, 115, 115, 0.14);
+  --wp-info: #BFB7A8;
+  --wp-info-tint: rgba(191, 183, 168, 0.14);
+
+  --wp-focus-width: 2.5px;
+
+  --elev-1:
+    0 1px 1px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.25);
+  --elev-2:
+    0 2px 4px rgba(0, 0, 0, 0.5),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+  --elev-3:
+    0 4px 8px rgba(0, 0, 0, 0.55),
+    0 16px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* System dark — applies when no explicit theme is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --wp-bg: #161412;
+    --wp-bg-card: #1F1D1A;
+    --wp-bg-elevated: #2A2724;
+
+    --wp-fg: #F0EDE8;
+    --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+    --wp-fg-muted: rgba(240, 237, 232, 0.36);
+
+    --wp-separator: rgba(240, 237, 232, 0.10);
+    --wp-separator-strong: rgba(240, 237, 232, 0.16);
+
+    --wp-accent: #BFB7A8;
+    --wp-accent-hover: #D5CDBE;
+    --wp-accent-active: #A89E8F;
+    --wp-accent-focus: rgba(191, 183, 168, 0.4);
+    --wp-accent-tint: rgba(191, 183, 168, 0.12);
+    --wp-on-accent: #161412;
+
+    --wp-success: #8FAA7F;
+    --wp-success-tint: rgba(143, 170, 127, 0.14);
+    --wp-warning: #D4A663;
+    --wp-warning-tint: rgba(212, 166, 99, 0.14);
+    --wp-danger: #C97373;
+    --wp-danger-tint: rgba(201, 115, 115, 0.14);
+    --wp-info: #BFB7A8;
+    --wp-info-tint: rgba(191, 183, 168, 0.14);
+
+    --wp-focus-width: 2.5px;
+
+    --elev-1:
+      0 1px 1px rgba(0, 0, 0, 0.4),
+      0 2px 4px rgba(0, 0, 0, 0.25);
+    --elev-2:
+      0 2px 4px rgba(0, 0, 0, 0.5),
+      0 8px 20px rgba(0, 0, 0, 0.35);
+    --elev-3:
+      0 4px 8px rgba(0, 0, 0, 0.55),
+      0 16px 32px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Base elements
+ * ------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--wp-bg);
+  color: var(--wp-fg);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  font-weight: 400;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss01', 'cv11', 'tnum';
+  transition:
+    background-color var(--dur-quick) var(--ease-quart-out),
+    color var(--dur-quick) var(--ease-quart-out);
+}
+
+a {
+  color: var(--wp-accent);
+  text-decoration: none;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+a:hover {
+  color: var(--wp-accent-hover);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+code,
+kbd {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  background: var(--wp-separator);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+}
+
+::selection {
+  background: var(--wp-accent-tint);
+  color: var(--wp-fg);
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: var(--wp-focus-offset);
+  border-radius: inherit;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--wp-separator);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Application shell
+ * ------------------------------------------------------------------------- */
+
+.wp-shell {
+  position: relative;
+  min-height: 100vh;
+}
+
+/* Mobile topbar */
+.wp-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--wp-mobile-topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--s-4);
+  background: var(--wp-bg);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-topbar-brand {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--wp-fg);
+  letter-spacing: -0.01em;
+}
+
+.wp-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.wp-topbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-topbar-dot[data-state="ok"]   { background: var(--wp-success); }
+.wp-topbar-dot[data-state="down"] { background: var(--wp-danger); }
+
+.wp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: var(--wp-fg);
+  border: none;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-icon-btn:hover {
+  background: var(--wp-bg-elevated);
+}
+
+/* ---------------------------------------------------------------------------
+ * Sidebar — Mail/Reminders source-list pattern.
+ *
+ * Layout: brand header → hairline → groups (sections), each with an uppercase
+ * micro-caps header and a stack of nav items. Active state: neutral fill +
+ * 2px left-edge hairline in accent color, primary-fg text, solid icon variant.
+ * ------------------------------------------------------------------------- */
+
+.wp-sidebar {
+  width: var(--wp-sidebar-w);
+  padding: var(--s-6) var(--s-4) var(--s-5);
+  display: flex;
+  flex-direction: column;
+  background: var(--wp-bg);
+}
+
+.wp-sidebar-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Brand block — wordmark + accent hairline. */
+.wp-sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 0 var(--s-3);
+  margin-bottom: var(--s-5);
+}
+
+.wp-brand {
+  display: block;
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--wp-fg);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+
+.wp-brand:hover { color: var(--wp-fg); }
+
+.wp-sidebar-brand-rule {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: var(--wp-accent);
+  border: none;
+  margin: 0;
+}
+
+/* Groups */
+.wp-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--s-3);
+}
+
+.wp-sidebar-group:first-of-type {
+  padding-top: 0;
+}
+
+.wp-sidebar-group-title {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  padding: 0 var(--s-3);
+  margin: 0 0 var(--s-2);
+  line-height: 1.2;
+}
+
+.wp-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wp-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--wp-fg-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  letter-spacing: -0.005em;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-nav-item:hover {
+  background-color: var(--wp-bg-elevated);
+  color: var(--wp-fg);
+}
+
+/* Active: neutral elevated fill, primary-fg text, 3px neutral-fg left edge,
+   600-weight label. Three value-only strengtheners stacked — no hue change
+   per docs/design/research/SIMPLE.md ("warm-monochrome restraint, dot-only
+   color, hairline-everything"). Solid Heroicons variant comes from JS.
+   The left edge is a pseudo-element so it sits flush at the row's left
+   side regardless of padding. */
+.wp-nav-item.is-active {
+  background-color: var(--wp-bg-elevated);
+  color: var(--wp-fg);
+  font-weight: 600;
+}
+
+.wp-nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  background: var(--wp-fg);
+  border-radius: 2px;
+}
+
+.wp-nav-item.is-active:hover {
+  color: var(--wp-fg);
+  background-color: var(--wp-bg-elevated);
+}
+
+.wp-nav-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-nav-item.is-active .wp-nav-icon {
+  color: var(--wp-fg);
+}
+
+.wp-nav-item-grow { flex: 1; min-width: 0; }
+
+/* Typeset numeral count to the right (no badge bg) — Geist Mono 13px. */
+.wp-nav-count {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: var(--s-2);
+}
+
+.wp-sidebar-footer {
+  margin-top: auto;
+  padding: var(--s-3);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  color: var(--wp-fg-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.wp-sidebar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  flex-shrink: 0;
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-sidebar-status-dot[data-state="ok"]   { background: var(--wp-success); }
+.wp-sidebar-status-dot[data-state="down"] { background: var(--wp-danger); }
+
+/* Mobile drawer */
+.wp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 18, 32, 0.4);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-normal) var(--ease-quart-out);
+}
+
+.wp-drawer-backdrop.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.wp-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 80vw;
+  max-width: 320px;
+  background: var(--wp-bg);
+  border-right: 1px solid var(--wp-separator);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-12px);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dur-normal) var(--ease-quart-out),
+    opacity var(--dur-normal) var(--ease-quart-out);
+  box-shadow: var(--elev-2);
+}
+
+.wp-drawer.is-open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Body layouts */
+.wp-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.wp-body > .wp-sidebar {
+  display: none;
+}
+
+.wp-main {
+  flex: 1;
+  width: 100%;
+  max-width: calc(var(--wp-content-max) + (var(--wp-gutter) * 2));
+  margin: 0 auto;
+  padding: var(--s-6) var(--wp-gutter) var(--s-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-7);
+}
+
+/* ---------------------------------------------------------------------------
+ * Page head — bare title (no trailing period) + subtitle.
+ * ------------------------------------------------------------------------- */
+
+.wp-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.wp-page-title {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-display);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--wp-fg);
+  margin: 0;
+}
+
+.wp-page-sub {
+  margin: 0;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-subsection);
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--wp-fg-secondary);
+  max-width: 62ch;
+}
+
+/* ---------------------------------------------------------------------------
+ * Section — title (optional) + body.
+ *
+ * Section title is Apple's grouped-list group header: uppercase 11px mono,
+ * tertiary color, letter-spaced. The card / row block sits below it.
+ * ------------------------------------------------------------------------- */
+
+.wp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.wp-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: 0 var(--s-4);
+}
+
+.wp-section-title {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.wp-section-aside {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+ * Cards — flat, hairline-bordered, no resting shadow.
+ *
+ * Cards lift via the bg tone-step (canvas vs card surface) + a 1px hairline.
+ * Shadows are reserved for popovers/modals.
+ * ------------------------------------------------------------------------- */
+
+.wp-card {
+  background-color: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  padding: var(--s-5);
+  box-shadow: none;
+  transition:
+    background-color var(--dur-quick) var(--ease-quart-out),
+    border-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-card-lg {
+  background-color: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-lg);
+  padding: var(--s-6);
+  box-shadow: none;
+}
+
+/* Inset group — Apple grouped-list pattern: a single card containing a
+   stack of hairline-separated rows. Rows handle their own internal padding
+   so the card has no inset padding of its own. */
+.wp-inset-group {
+  background-color: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.wp-inset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+  background: transparent;
+}
+
+.wp-inset-row:last-child {
+  border-bottom: none;
+}
+
+.wp-inset-row-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.wp-inset-row-title {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-inset-row-sub {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  color: var(--wp-fg-secondary);
+  margin-top: var(--s-1);
+  letter-spacing: 0.005em;
+}
+
+/* Optional section footnote (Apple grouped-list footnote pattern). */
+.wp-section-footnote {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-muted);
+  padding: var(--s-2) var(--s-4) 0;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+
+/* ---------------------------------------------------------------------------
+ * Rows (hairline-row list, used outside cards for tabular data)
+ * ------------------------------------------------------------------------- */
+
+.wp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+  border-radius: 0;
+  transition: background-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-row:last-child {
+  border-bottom: none;
+}
+
+.wp-row:hover {
+  background-color: var(--wp-bg-elevated);
+}
+
+.wp-row-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.wp-row-title {
+  font-family: var(--wp-font-sans);
+  font-weight: 500;
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-row-sub {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  color: var(--wp-fg-secondary);
+  margin-top: var(--s-1);
+  letter-spacing: 0.005em;
+}
+
+.wp-row-sub .wp-mono {
+  color: var(--wp-fg-secondary);
+}
+
+.wp-row-sep {
+  color: var(--wp-fg-muted);
+  margin: 0 var(--s-2);
+}
+
+/* Hairline-row list wrapper — vertical stack of rows with a top + bottom
+   hairline (Linear/Stripe-Docs table pattern). */
+.wp-row-list {
+  border-top: 1px solid var(--wp-separator);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+/* Row variant: behaves as a link. Removes default underline, inherits row
+   colors, and uses the elevated bg as the hover state so the click target
+   reads clearly. Apply to <a class="wp-row wp-row-link">. */
+.wp-row-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.wp-row-link:hover {
+  background-color: var(--wp-bg-hover, var(--wp-bg-elevated));
+  color: inherit;
+}
+
+/* ---------------------------------------------------------------------------
+ * Key-value pairs
+ * ------------------------------------------------------------------------- */
+
+.wp-kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--s-3) var(--s-5);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+}
+
+.wp-kv-label {
+  color: var(--wp-fg-secondary);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  align-self: center;
+}
+
+.wp-kv-value {
+  color: var(--wp-fg);
+  font-weight: 500;
+  word-break: break-word;
+  font-size: var(--fs-body);
+  letter-spacing: -0.005em;
+}
+
+/* ---------------------------------------------------------------------------
+ * Pills — Linear-style: transparent bg, hairline border, mono caps label,
+ * colored dot. Only the dot carries state color.
+ * ------------------------------------------------------------------------- */
+
+.wp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-nano);
+  font-weight: 500;
+  color: var(--wp-fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.wp-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  flex-shrink: 0;
+}
+
+.wp-pill-label {
+  display: inline-block;
+}
+
+.wp-pill[data-state="active"]      .wp-pill-dot { background: var(--wp-success); }
+.wp-pill[data-state="ready"]       .wp-pill-dot { background: var(--wp-accent); }
+.wp-pill[data-state="needs_setup"] .wp-pill-dot { background: var(--wp-warning); }
+.wp-pill[data-state="warn"]        .wp-pill-dot { background: var(--wp-warning); }
+.wp-pill[data-state="danger"]      .wp-pill-dot { background: var(--wp-danger); }
+.wp-pill[data-state="info"]        .wp-pill-dot { background: var(--wp-info); }
+.wp-pill[data-state="unknown"]     .wp-pill-dot { background: var(--wp-fg-muted); }
+
+/* ---------------------------------------------------------------------------
+ * Buttons
+ * ------------------------------------------------------------------------- */
+
+.wp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 32px;
+  padding: 0 var(--s-3);
+  background: transparent;
+  color: var(--wp-fg);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out),
+    opacity var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-btn:hover:not(:disabled) {
+  background: var(--wp-accent-tint);
+}
+
+.wp-btn:active:not(:disabled) {
+  opacity: 0.85;
+}
+
+.wp-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wp-btn-primary {
+  background: var(--wp-accent);
+  color: var(--wp-on-accent);
+  border-color: transparent;
+}
+
+.wp-btn-primary:hover:not(:disabled) {
+  background: var(--wp-accent-hover);
+  color: var(--wp-on-accent);
+}
+
+.wp-btn-primary:active:not(:disabled) {
+  background: var(--wp-accent-active);
+  opacity: 1;
+}
+
+.wp-btn-danger {
+  color: var(--wp-danger);
+  background: var(--wp-danger-tint);
+}
+
+.wp-btn-danger:hover:not(:disabled) {
+  background: var(--wp-danger-tint);
+  color: var(--wp-danger);
+  filter: brightness(0.97);
+}
+
+.wp-btn-compact {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-micro);
+}
+
+.wp-btn-cta {
+  height: 40px;
+  padding: 0 var(--s-4);
+  font-size: var(--fs-body);
+}
+
+/* ---------------------------------------------------------------------------
+ * Inputs
+ * ------------------------------------------------------------------------- */
+
+.wp-input,
+.wp-select {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--s-3);
+  background: var(--wp-bg-card);
+  color: var(--wp-fg);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: 1.4;
+  outline: none;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    border-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-input:hover,
+.wp-select:hover {
+  border-color: var(--wp-fg-muted);
+}
+
+.wp-input:focus-visible,
+.wp-select:focus-visible {
+  border-color: var(--wp-accent);
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 0;
+}
+
+.wp-input::placeholder {
+  color: var(--wp-fg-muted);
+}
+
+/* Native <option> elements inherit nothing reliably across themes. In dark
+   mode the popup was rendering light text on the OS-default white
+   background, which is unreadable. Anchor both colors to our tokens so the
+   popup follows the theme. The .wp-input--underline modifier sets the
+   select background to transparent (the trigger should blend into the
+   modal surface), but option backgrounds must be solid or the OS picks
+   white — so we set them on `option` directly. */
+.wp-select option,
+.wp-input option {
+  background-color: var(--wp-bg-card);
+  color: var(--wp-fg);
+}
+
+/* ---------------------------------------------------------------------------
+ * Helpers / text utilities
+ * ------------------------------------------------------------------------- */
+
+.wp-mono {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.wp-secondary { color: var(--wp-fg-secondary); }
+
+.wp-muted {
+  color: var(--wp-fg-muted);
+  font-size: var(--fs-small);
+}
+
+.wp-empty {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--wp-fg-muted);
+  padding: var(--s-4);
+}
+
+/* ---------------------------------------------------------------------------
+ * Status row — Dashboard System status card.
+ * ------------------------------------------------------------------------- */
+
+.wp-status-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-status-row:last-child  { border-bottom: none; }
+
+.wp-status-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-status-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.wp-status-row-label {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-status-row-action {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--wp-accent);
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-status-row-action:hover { color: var(--wp-accent-hover); }
+
+.wp-status-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.wp-status-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wp-fg-muted);
+  flex-shrink: 0;
+}
+
+.wp-status-row[data-state="ok"]      .wp-status-row-dot { background: var(--wp-success); }
+.wp-status-row[data-state="warn"]    .wp-status-row-dot { background: var(--wp-warning); }
+.wp-status-row[data-state="danger"]  .wp-status-row-dot { background: var(--wp-danger); }
+.wp-status-row[data-state="unknown"] .wp-status-row-dot { background: var(--wp-fg-muted); }
+
+/* ---------------------------------------------------------------------------
+ * Modal
+ * ------------------------------------------------------------------------- */
+
+.wp-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+  background: rgba(0, 0, 0, 0.45);
+  animation: wp-backdrop-in var(--dur-normal) var(--ease-quart-out) both;
+}
+
+:root[data-theme="dark"] .wp-modal-backdrop { background: rgba(0, 0, 0, 0.65); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .wp-modal-backdrop { background: rgba(0, 0, 0, 0.65); }
+}
+
+.wp-modal-backdrop.is-closing {
+  animation: wp-backdrop-out var(--dur-normal) var(--ease-quart-out) both;
+}
+
+@keyframes wp-backdrop-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes wp-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+
+.wp-modal {
+  width: 480px;
+  max-width: min(92vw, 720px);
+  max-height: calc(100vh - var(--s-7));
+  overflow: auto;
+  background: var(--wp-bg-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-3);
+  padding: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  animation: wp-modal-in var(--dur-slow) var(--ease-spring-soft) both;
+}
+
+.wp-modal-lg { width: 640px; }
+
+.wp-modal-backdrop.is-closing .wp-modal {
+  animation: wp-modal-out var(--dur-normal) var(--ease-quart-out) both;
+}
+
+@keyframes wp-modal-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes wp-modal-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.wp-modal-title {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-section);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--wp-fg);
+  margin: 0;
+}
+
+.wp-modal-body {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg-secondary);
+  line-height: 1.55;
+}
+
+.wp-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Stepper
+ * ------------------------------------------------------------------------- */
+
+.wp-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.wp-step {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: var(--s-3);
+  align-items: start;
+}
+
+.wp-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--wp-accent-tint);
+  color: var(--wp-accent);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+.wp-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  line-height: 1.55;
+  min-width: 0;
+}
+
+.wp-step-sub {
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * Code blocks
+ * ------------------------------------------------------------------------- */
+
+.wp-code-wrap {
+  position: relative;
+  display: block;
+}
+
+.wp-code {
+  display: block;
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  background: var(--wp-separator);
+  color: var(--wp-fg);
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Legacy overlay-copy variant — kept for any callsite still using
+   `.wp-code-wrap > .wp-code-copy`. When the variant is in use, restore the
+   right-padding so the overlay button doesn't sit on top of text. */
+.wp-code-wrap > .wp-code { padding-right: 72px; }
+
+.wp-code-copy {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+}
+
+.wp-mono-path {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  background: var(--wp-separator);
+  border-radius: var(--radius-xs);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg);
+}
+
+/* ---------------------------------------------------------------------------
+ * Segmented control
+ * ------------------------------------------------------------------------- */
+
+.wp-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--wp-separator);
+  border-radius: var(--radius-sm);
+}
+
+.wp-segmented-btn {
+  height: 28px;
+  padding: 0 var(--s-3);
+  background: transparent;
+  color: var(--wp-fg-secondary);
+  border: none;
+  border-radius: var(--radius-xs);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  transition:
+    background-color var(--dur-instant) var(--ease-quart-out),
+    color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-segmented-btn:hover { color: var(--wp-fg); }
+
+.wp-segmented-btn.is-active {
+  background: var(--wp-bg-card);
+  color: var(--wp-fg);
+}
+
+/* ---------------------------------------------------------------------------
+ * Switch
+ * ------------------------------------------------------------------------- */
+
+.wp-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.wp-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.wp-switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--wp-bg-card);
+  border-radius: 50%;
+  box-shadow: var(--elev-1);
+  transition: transform var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-switch input:checked ~ .wp-switch-track { background: var(--wp-accent); }
+.wp-switch input:checked ~ .wp-switch-thumb { transform: translateX(14px); }
+.wp-switch input:disabled ~ .wp-switch-track { opacity: 0.5; }
+.wp-switch input:focus-visible ~ .wp-switch-track {
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Toggle — mono-palette switch. Value-over-hue: off is hairline-only, on
+ * fills with --wp-fg. Knob slides via transform. Use this for new UI;
+ * .wp-switch above stays for legacy accent-tinted callsites.
+ * ------------------------------------------------------------------------- */
+
+.wp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--wp-fg);
+  line-height: 1.4;
+}
+
+.wp-toggle.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.wp-toggle-label {
+  /* Text leads, switch trails. */
+}
+
+.wp-toggle-track {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  background: transparent;
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color var(--dur-quick) var(--ease-quart-out),
+              border-color var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-toggle-track.is-on {
+  background: var(--wp-fg);
+  border-color: var(--wp-fg);
+}
+
+.wp-toggle-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: inherit;
+  z-index: 1;
+}
+
+.wp-toggle-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  background: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: 50%;
+  transform: translateX(0);
+  transition: transform var(--dur-quick) var(--ease-quart-out),
+              border-color var(--dur-quick) var(--ease-quart-out);
+  pointer-events: none;
+}
+
+.wp-toggle-track.is-on .wp-toggle-knob {
+  transform: translateX(16px);
+  border-color: var(--wp-fg);
+}
+
+.wp-toggle-input:focus-visible ~ .wp-toggle-knob,
+.wp-toggle-input:focus-visible + .wp-toggle-knob {
+  /* fallback — focus styling handled on track via :has() below where supported */
+}
+
+.wp-toggle-track:has(.wp-toggle-input:focus-visible) {
+  outline: var(--wp-focus-width) solid var(--wp-accent-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-toggle-track,
+  .wp-toggle-knob {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Input — underline variant. Hairline bottom only, no surrounding box.
+ * Used inside dense forms where the boxed --wp-input would feel heavy.
+ * ------------------------------------------------------------------------- */
+
+.wp-input--underline,
+.wp-select.wp-input--underline {
+  height: 32px;
+  padding: 0 0 2px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--wp-separator-strong);
+  border-radius: 0;
+  transition: border-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-input--underline:hover,
+.wp-select.wp-input--underline:hover {
+  border-bottom-color: var(--wp-fg-muted);
+}
+
+.wp-input--underline:focus-visible,
+.wp-select.wp-input--underline:focus-visible {
+  border-bottom-color: var(--wp-fg);
+  outline: none;
+  /* Reading-surface focus: thicker bottom line instead of an accent ring,
+     to match the mono palette's value-only treatment. */
+  box-shadow: inset 0 -1px 0 0 var(--wp-fg);
+}
+
+.wp-input--underline:disabled,
+.wp-select.wp-input--underline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+ * Pair-agent modal — collapsible inputs region and action row anchored to
+ * the code block.
+ * ------------------------------------------------------------------------- */
+
+.wp-pair-fields {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  transition: grid-template-rows var(--dur-normal) var(--ease-quart-out),
+              opacity var(--dur-normal) var(--ease-quart-out),
+              margin-bottom var(--dur-normal) var(--ease-quart-out);
+  opacity: 1;
+  margin-bottom: var(--s-4);
+}
+
+.wp-pair-fields > .wp-pair-fields-inner {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.wp-pair-fields.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+
+.wp-pair-field-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.wp-pair-field-row > .wp-pair-field-label {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  font-weight: 400;
+}
+
+.wp-pair-field-error {
+  grid-column: 2 / 3;
+  margin: 0;
+  color: var(--wp-danger);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+
+.wp-pair-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+
+.wp-pair-actions > .wp-pair-actions-spacer { flex: 1 1 auto; }
+
+@media (max-width: 599px) {
+  .wp-pair-field-row {
+    grid-template-columns: 1fr;
+    gap: var(--s-1);
+  }
+  .wp-pair-field-error { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-pair-fields { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Toast region
+ * ------------------------------------------------------------------------- */
+
+.wp-toast-region {
+  position: fixed;
+  bottom: var(--s-6);
+  right: var(--s-6);
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  pointer-events: none;
+  max-width: calc(100vw - var(--s-7));
+}
+
+@media (max-width: 599px) {
+  .wp-toast-region {
+    right: var(--s-4);
+    left: var(--s-4);
+    bottom: var(--s-4);
+    align-items: stretch;
+    max-width: none;
+  }
+  .wp-toast {
+    width: 100%;
+  }
+}
+
+.wp-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: start;
+  gap: var(--s-3);
+  width: 320px;
+  max-width: 100%;
+  padding: var(--s-3) var(--s-4);
+  background: var(--wp-bg-card);
+  border: 1px solid var(--wp-separator);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-2);
+  animation: wp-toast-in var(--dur-normal) var(--ease-quart-out) both;
+  transition: opacity var(--dur-quick) var(--ease-quart-out),
+              transform var(--dur-quick) var(--ease-quart-out);
+}
+
+.wp-toast.is-leaving {
+  opacity: 0;
+  transform: translateX(8px);
+}
+
+@keyframes wp-toast-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.wp-toast-icon {
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.wp-toast[data-flavor="success"] .wp-toast-icon { color: var(--wp-success); }
+.wp-toast[data-flavor="info"]    .wp-toast-icon { color: var(--wp-info); }
+.wp-toast[data-flavor="error"]   .wp-toast-icon { color: var(--wp-danger); }
+
+.wp-toast-body {
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+  line-height: 1.4;
+  min-width: 0;
+  word-wrap: break-word;
+}
+
+.wp-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  color: var(--wp-fg-muted);
+  border: none;
+  border-radius: var(--radius-xs);
+  transition: color var(--dur-instant) var(--ease-quart-out),
+              background-color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-toast-close:hover {
+  color: var(--wp-fg);
+  background: var(--wp-separator);
+}
+
+/* ---------------------------------------------------------------------------
+ * Page entrance cascade
+ * ------------------------------------------------------------------------- */
+
+@keyframes wp-page-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wp-main > * {
+  animation: wp-page-fade-up var(--dur-normal) var(--ease-quart-out) both;
+}
+
+.wp-main > *:nth-child(1) { animation-delay: 0ms; }
+.wp-main > *:nth-child(2) { animation-delay: 40ms; }
+.wp-main > *:nth-child(3) { animation-delay: 80ms; }
+.wp-main > *:nth-child(4) { animation-delay: 120ms; }
+.wp-main > *:nth-child(5) { animation-delay: 160ms; }
+.wp-main > *:nth-child(6) { animation-delay: 200ms; }
+.wp-main > *:nth-child(7) { animation-delay: 240ms; }
+.wp-main > *:nth-child(8) { animation-delay: 280ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-main > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Misc — link, helpers.
+ * ------------------------------------------------------------------------- */
+
+.wp-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--wp-font-sans);
+  font-size: inherit;
+  color: var(--wp-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.wp-link:hover { color: var(--wp-accent-hover); }
+
+/* Contextual back-link rendered above the page head on filtered/deep-linked
+   pages (e.g. /agents?profile=). Secondary-fg at rest, primary-fg on hover. */
+.wp-back-link {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: var(--s-3);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  text-decoration: none;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-back-link:hover { color: var(--wp-fg); }
+
+/* Quiet rebind affordance on agent rows. Reads as static text at rest; the
+   small pencil icon next to it hints at edit-ability. Clicking flips into a
+   <select> inline. */
+.wp-row-rebind {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  transition: color var(--dur-instant) var(--ease-quart-out);
+}
+
+.wp-row-rebind:hover:not(:disabled) {
+  color: var(--wp-fg);
+}
+
+.wp-row-rebind:disabled {
+  cursor: default;
+}
+
+.wp-input-compact {
+  height: 28px;
+  padding: 0 var(--s-2);
+  font-size: var(--fs-small);
+}
+
+.wp-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
+
+.wp-card-pad-md { padding: var(--s-5); }
+
+.wp-row-inline-hint {
+  margin-top: var(--s-2);
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  max-width: 52ch;
+  line-height: 1.55;
+}
+
+.wp-card-section {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--wp-separator);
+}
+.wp-card-section:first-child { padding-top: 0; }
+.wp-card-section:last-child  { padding-bottom: 0; border-bottom: none; }
+
+/* ---------------------------------------------------------------------------
+ * Skeleton
+ * ------------------------------------------------------------------------- */
+
+.wp-skeleton {
+  background-color: var(--wp-bg-elevated);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wp-separator) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  background-position: 100% 0;
+  animation: wp-shimmer 1.4s linear infinite;
+}
+
+@keyframes wp-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-skeleton {
+    animation: none;
+    background-image: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Long-path display
+ * ------------------------------------------------------------------------- */
+
+.wp-path {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg-secondary);
+  word-break: break-all;
+  line-height: 1.5;
+  padding: var(--s-2) var(--s-3);
+  background: var(--wp-bg-elevated);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reveal-on-scroll
+ * ------------------------------------------------------------------------- */
+
+.wp-reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity var(--dur-normal) var(--ease-quart-out),
+    transform var(--dur-normal) var(--ease-quart-out);
+}
+
+.wp-reveal-on-scroll.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-reveal-on-scroll {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Responsive
+ * ------------------------------------------------------------------------- */
+
+@media (min-width: 600px) {
+  :root {
+    --wp-gutter: var(--s-5);
+  }
+}
+
+@media (min-width: 900px) {
+  :root {
+    --wp-gutter: var(--s-6);
+  }
+
+  .wp-topbar {
+    display: none;
+  }
+
+  .wp-body {
+    display: grid;
+    grid-template-columns: var(--wp-sidebar-w) 1fr;
+    align-items: stretch;
+  }
+
+  .wp-body > .wp-sidebar {
+    display: flex;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    border-right: 1px solid var(--wp-separator);
+  }
+
+  .wp-main {
+    padding-top: var(--s-8);
+    padding-bottom: var(--s-9);
+  }
+
+  .wp-drawer,
+  .wp-drawer-backdrop {
+    display: none;
+  }
+}
+
+@media (min-width: 1200px) {
+  .wp-main {
+    padding-left: var(--s-6);
+    padding-right: var(--s-6);
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --wp-sidebar-w: 280px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion
+ * ------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+  .wp-drawer {
+    transform: none !important;
+  }
+}

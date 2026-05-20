@@ -60,7 +60,7 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
 }
 ```
 
-**Note:** All tools except `request_pairing` and `webpilot_get_formatter_info` must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header.
+**Note:** All tools except the auth-exempt set (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header. The auth-exempt set is enforced in `processMessage` in `mcp-handler.js` — if you add a new auth-exempt tool, update that check too.
 
 **Add case to `handleToolCall` switch:**
 
@@ -75,7 +75,7 @@ Note: `handleToolCall` wraps the extension's response in the MCP protocol format
 
 ### Step 2: Add Permissions (If Needed)
 
-Edit `packages/chrome-extension-unpacked/manifest.json`. The manifest already includes these base permissions: `storage`, `activeTab`, `tabs`, `tabGroups`, `debugger`, `scripting`, `webNavigation`, and `"host_permissions": ["<all_urls>"]`.
+Edit `packages/chrome-extension-unpacked/manifest.json`. The manifest already includes these base permissions: `storage`, `activeTab`, `tabs`, `tabGroups`, `debugger`, `scripting`, `webNavigation`, `windows`, `identity`, `identity.email`, and `"host_permissions": ["<all_urls>"]`.
 
 If your tool needs additional permissions (e.g., `downloads`, `history`, `bookmarks`), add them to the `permissions` array. See: https://developer.chrome.com/docs/extensions/reference/permissions-list
 

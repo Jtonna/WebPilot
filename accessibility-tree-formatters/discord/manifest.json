@@ -1,0 +1,23 @@
+{
+  "name": "discord",
+  "version": "1.1.2",
+  "match": "discord.com",
+  "source": "remote",
+  "description": "Discord chat — exposes channels, members, message stream, and the composer for DMs and server channels.",
+  "notes": "Routes by URL: discord.com/channels/@me is the DM list, /@me/<id> is a DM conversation, /<serverId>/<channelId> is a server channel. DM conversation header renders as `Discord | <DisplayName> (@<username>) (DM)` when both are available (e.g. `Discord | Jtonna (@notboosted) (DM)`), so agents can recognize that the display name and account handle refer to the same person; the response also exposes `recipientUsername` and `recipientDisplayName` as separate fields. The composer renders as `[eN] Message @<recipient> textbox` for DMs or `[eN] Message #<channel> textbox` for server channels, preserving the discriminating prefix so workflows can tell composers apart from the formatted tree alone. Boolean ARIA properties (checked/selected/expanded) are normalized from CDP's stringy 'true'/'false' values into real booleans so consumers can use === true safely.",
+  "errorHandling": {
+    "fallbackToRawTree": true
+  },
+  "workflows": [
+    {
+      "name": "send_message",
+      "description": "Compose a message in the active Discord channel and send it.",
+      "parameters": {
+        "text": {
+          "type": "string",
+          "description": "The message text to send."
+        }
+      }
+    }
+  ]
+}

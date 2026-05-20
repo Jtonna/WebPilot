@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 build/
+# electron-builder's NSIS installer hook lives here and must be tracked.
+!packages/electron/build/
+!packages/electron/build/**
 *.crx
 *.pem
 *.zip
@@ -31,6 +34,9 @@ Desktop.ini
 logs/
 *.log
 npm-debug.log*
+# Web-UI route directory accidentally caught by `logs/` above — un-ignore.
+!packages/server-web-ui/app/formatters/logs/
+!packages/server-web-ui/app/formatters/logs/**
 
 # Coverage and testing
 coverage/
@@ -66,3 +72,4 @@ config.local.json
 !.github/**
 !CLAUDE.md
 !.gitattributes
+.mcp.json

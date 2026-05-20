@@ -1,733 +1,332 @@
-document.addEventListener('DOMContentLoaded', () => {
-  // Set version from manifest
-  const manifest = chrome.runtime.getManifest();
-  document.getElementById('versionDisplay').textContent = `v${manifest.version}`;
+/* WebPilot popup — minimal four-component layout.
+ *
+ * P2 phase 6. The popup is a status-and-escape-hatch panel:
+ *   1. Connection dot + label
+ *   2. Current tab domain + state pill
+ *   3. Block/Allow toggle (global rule for the domain)
+ *   4. Open dashboard link
+ *
+ * All admin lives in the webapp (`/ui/`). The popup reads the paired API
+ * key + server URL from chrome.storage (written by the existing pairing
+ * flow in background.js) and hits two server endpoints:
+ *
+ *   GET  /api/popup/state?tabUrl=<url>      — connection + current tab pill
+ *   POST /api/popup/site-toggle             — flip the global rule
+ *
+ * Defensive rendering rule: we NEVER show a partially-bound row. Either we
+ * have everything we need to draw the pill + toggle button (`currentTab`
+ * with a known `state` and a `decision`), or the entire tab section stays
+ * hidden and the skip surface carries a human-readable reason. No dashes,
+ * no ellipses, no half-bound buttons.
+ */
 
-  const connectedView = document.getElementById('connectedView');
-  const connectingView = document.getElementById('connectingView');
-  const disconnectedView = document.getElementById('disconnectedView');
-  const disconnectBtn = document.getElementById('disconnectBtn');
-  const retryBtn = document.getElementById('retryBtn');
-  const connectingError = document.getElementById('connectingError');
-  const serverUrlDisplay = document.getElementById('serverUrlDisplay');
-  const connectingUrlDisplay = document.getElementById('connectingUrlDisplay');
-  const disconnectedUrlDisplay = document.getElementById('disconnectedUrlDisplay');
-  const wsUrlDisplay = document.getElementById('wsUrlDisplay');
-  const sseUrlDisplay = document.getElementById('sseUrlDisplay');
-  const networkModeDisplay = document.getElementById('networkModeDisplay');
-  const focusNewTabsToggle = document.getElementById('focusNewTabs');
-  const tabModeSelect = document.getElementById('tabMode');
-  const networkModeToggle = document.getElementById('networkModeToggle');
-  const restrictedModeToggle = document.getElementById('restrictedMode');
-  const whitelistPanel = document.getElementById('whitelistPanel');
-  const whitelistCurrentBtn = document.getElementById('whitelistCurrentBtn');
-  const domainInput = document.getElementById('domainInput');
-  const addDomainBtn = document.getElementById('addDomainBtn');
-  const domainList = document.getElementById('domainList');
-  const pairingRequestsSection = document.getElementById('pairingRequestsSection');
-  const pairingRequestsList = document.getElementById('pairingRequestsList');
-  const pairedAgentsSection = document.getElementById('pairedAgentsSection');
-  const pairedAgentsList = document.getElementById('pairedAgentsList');
-  const noAgentsMessage = document.getElementById('noAgentsMessage');
-  const pairingRequiredToggle = document.getElementById('pairingRequiredToggle');
-  const checkFormatterUpdatesBtn = document.getElementById('checkFormatterUpdates');
-  const formatterUpdateStatus = document.getElementById('formatterUpdateStatus');
+'use strict';
 
-  // Tab switching
-  const tabBtns = document.querySelectorAll('.tab-btn');
-  const tabContents = document.querySelectorAll('.tab-content');
+// ────────────────────────── Helpers ──────────────────────────
 
-  tabBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      switchTab(btn.dataset.tab);
-    });
-  });
+function $(id) { return document.getElementById(id); }
 
-  function switchTab(tabName) {
-    tabBtns.forEach((btn) => {
-      if (btn.dataset.tab === tabName) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-      }
-    });
+// Server-side _statePillFromPolicy emits exactly these five keys. Anything
+// else triggers the fallback path (skip section, no pill).
+const STATE_LABEL = {
+  allowed: 'Allowed',
+  blocked_baseline: 'Blocked (baseline)',
+  blocked_user: 'Blocked (user)',
+  allowed_override: 'Override · Allowed',
+  blocked_override: 'Override · Blocked',
+};
 
-    tabContents.forEach((content) => {
-      if (content.id === `tab-${tabName}`) {
-        content.classList.add('active');
-      } else {
-        content.classList.remove('active');
-      }
-    });
+const CONN_LABEL = {
+  connected: 'Connected',
+  reconnecting: 'Reconnecting',
+  disconnected: 'Disconnected',
+};
 
-    // Load pairing data when switching to pairing tab
-    if (tabName === 'pairing') {
-      loadPairingData();
-    }
-
-    // Load settings when switching to settings tab
-    if (tabName === 'settings') {
-      loadSettings();
-    }
-  }
-
-  loadStateAndShow();
-
-  disconnectBtn.addEventListener('click', handleDisconnect);
-  retryBtn.addEventListener('click', handleRetry);
-  checkFormatterUpdatesBtn.addEventListener('click', handleCheckFormatterUpdates);
-
-  focusNewTabsToggle.addEventListener('change', () => {
-    chrome.storage.local.set({ focusNewTabs: focusNewTabsToggle.checked });
-  });
-
-  tabModeSelect.addEventListener('change', () => {
-    chrome.storage.local.set({ tabMode: tabModeSelect.value });
-  });
-
-  networkModeToggle.addEventListener('change', () => {
-    const enabled = networkModeToggle.checked;
-    chrome.runtime.sendMessage({ type: 'SET_NETWORK_MODE', enabled }, (response) => {
-      if (response && response.success) {
-        chrome.storage.local.set({ networkMode: enabled });
-      } else {
-        // Revert toggle on failure
-        networkModeToggle.checked = !enabled;
-      }
-    });
-  });
-
-  pairingRequiredToggle.addEventListener('change', () => {
-    const enabled = pairingRequiredToggle.checked;
-    chrome.storage.local.set({ pairingRequired: enabled });
-    chrome.runtime.sendMessage({ type: 'SET_PAIRING_REQUIRED', enabled });
-  });
-
-  restrictedModeToggle.addEventListener('change', () => {
-    const enabled = restrictedModeToggle.checked;
-    chrome.storage.local.set({ restrictedModeEnabled: enabled });
-    if (enabled) {
-      whitelistPanel.classList.remove('hidden');
-      updateWhitelistUI();
-    } else {
-      whitelistPanel.classList.add('hidden');
+// Read chrome.storage.local as a promise. Used for apiKey, serverUrl, etc.
+function readStorage(keys) {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(keys, (data) => resolve(data || {}));
+    } catch (e) {
+      resolve({});
     }
   });
+}
 
-  whitelistCurrentBtn.addEventListener('click', handleWhitelistCurrentSite);
-  addDomainBtn.addEventListener('click', handleAddDomain);
-  domainInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-      handleAddDomain();
-    }
-  });
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'CONNECTION_STATUS_CHANGED') {
-      handleConnectionStatusChange(msg.status, msg.errorType, msg.error);
-    } else if (msg.type === 'PAIRING_REQUEST') {
-      addPairingRequest({ commandId: msg.commandId, agentName: msg.agentName });
-    } else if (msg.type === 'PAIRED_AGENTS_UPDATED') {
-      renderPairedAgents(msg.agents || []);
-    }
-  });
-
-  // React to storage changes from background (e.g. refreshConnectionMetadata after reconnect)
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local') {
-      if (changes.networkMode || changes.serverUrl || changes.sseUrl) {
-        updateEndpointDisplay();
-        if (changes.networkMode) {
-          networkModeToggle.checked = changes.networkMode.newValue === true;
-        }
-      }
-    }
-  });
-
-  function updateEndpointDisplay() {
-    chrome.storage.local.get(['serverUrl', 'sseUrl', 'networkMode'], (result) => {
-      const wsUrl = result.serverUrl || 'ws://localhost:3456';
-      const sseUrl = result.sseUrl || wsUrl.replace('ws://', 'http://').replace('wss://', 'https://') + '/sse';
-      wsUrlDisplay.textContent = wsUrl;
-      sseUrlDisplay.textContent = sseUrl;
-      networkModeDisplay.textContent = result.networkMode ? 'Network (LAN)' : 'Local only';
-      if (result.networkMode) {
-        networkModeDisplay.classList.add('network-enabled');
-      } else {
-        networkModeDisplay.classList.remove('network-enabled');
-      }
-    });
-  }
-
-  function loadStateAndShow() {
-    chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
-      if (response && response.connectionStatus === 'connected') {
-        showView('connected');
-        chrome.storage.local.get(['serverUrl'], (result) => {
-          serverUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
-        });
-        updateEndpointDisplay();
-        loadPairingData();
-        loadRestrictedModeSettings();
-      } else if (response && (response.connectionStatus === 'connecting' || response.connectionStatus === 'error')) {
-        showView('connecting');
-        chrome.storage.local.get(['serverUrl'], (result) => {
-          connectingUrlDisplay.textContent = result.serverUrl || 'ws://localhost:3456';
-        });
-        if (response.connectionError) {
-          showError(connectingError, response.connectionError);
-        }
-      } else {
-        // disconnected — show connecting since auto-connect is always trying
-        showView('connecting');
-        connectingUrlDisplay.textContent = 'ws://localhost:3456';
-      }
-    });
-  }
-
-  function handleDisconnect() {
-    chrome.runtime.sendMessage({ type: 'DISCONNECT' }, () => {
-      chrome.storage.local.get(['serverUrl'], (result) => {
-        showView('disconnected');
-        disconnectedUrlDisplay.textContent = result.serverUrl || 'unknown';
-      });
-    });
-  }
-
-  function handleReconnect() {
-    reconnectBtn.disabled = true;
-    reconnectBtn.textContent = 'Connecting...';
-
-    chrome.storage.local.get(['serverUrl'], (result) => {
-      showView('connecting');
-      connectingUrlDisplay.textContent = result.serverUrl || 'unknown';
-    });
-
-    chrome.runtime.sendMessage({ type: 'RECONNECT' }, (response) => {
-      reconnectBtn.disabled = false;
-      reconnectBtn.textContent = 'Reconnect';
-
-      if (!response || !response.success) {
-        showView('disconnected');
-        showError(setupError, response?.error || 'Failed to reconnect');
-      }
-    });
-  }
-
-  function handleForget() {
-    chrome.runtime.sendMessage({ type: 'FORGET_CONFIG' }, () => {
-      showView('connecting');
-      connectingUrlDisplay.textContent = 'ws://localhost:3456';
-      hideError(connectingError);
-    });
-  }
-
-  function handleRetry() {
-    retryBtn.disabled = true;
-    retryBtn.textContent = 'Retrying...';
-
-    showView('connecting');
-    connectingUrlDisplay.textContent = 'ws://localhost:3456';
-    hideError(connectingError);
-
-    chrome.runtime.sendMessage({ type: 'RETRY_AUTO_CONNECT' }, () => {
-      retryBtn.disabled = false;
-      retryBtn.textContent = 'Retry';
-    });
-  }
-
-  function handleCheckFormatterUpdates() {
-    const btn = checkFormatterUpdatesBtn;
-    const status = formatterUpdateStatus;
-
-    btn.disabled = true;
-    btn.textContent = 'Checking...';
-    status.style.display = 'none';
-
-    chrome.runtime.sendMessage({ type: 'CHECK_FORMATTER_UPDATES' }, (response) => {
-      btn.disabled = false;
-      btn.textContent = 'Check for formatter updates';
-      status.style.display = 'block';
-
-      if (response && response.updated) {
-        status.textContent = `Updated to version ${response.toVersion}`;
-        status.style.color = '#4CAF50';
-      } else if (response && !response.error) {
-        status.textContent = `Already up to date (version ${response.currentVersion})`;
-        status.style.color = '#666';
-      } else {
-        status.textContent = 'Update check failed';
-        status.style.color = '#f44336';
-      }
-
-      // Auto-hide after 5 seconds
-      setTimeout(() => { status.style.display = 'none'; }, 5000);
-    });
-  }
-
-  function handleConnectionStatusChange(status, errorType, errorMsg) {
-    chrome.storage.local.get(['serverUrl'], (result) => {
-      const serverUrl = result.serverUrl || 'ws://localhost:3456';
-
-      if (status === 'connected') {
-        showView('connected');
-        serverUrlDisplay.textContent = serverUrl;
-        hideError(connectingError);
-        updateEndpointDisplay();
-        loadPairingData();
-        loadRestrictedModeSettings();
-      } else if (status === 'connecting') {
-        showView('connecting');
-        connectingUrlDisplay.textContent = serverUrl;
-        hideError(connectingError);
-      } else if (status === 'error') {
-        if (errorType === 'server_unreachable') {
-          showView('connecting');
-          connectingUrlDisplay.textContent = serverUrl;
-          showError(connectingError, errorMsg || `Server not reachable at ${serverUrl}`);
-        } else if (errorType === 'auth_failed') {
-          showView('connecting');
-          connectingUrlDisplay.textContent = serverUrl;
-          showError(connectingError, errorMsg || 'Authentication failed - reconnecting...');
-        } else {
-          showView('connecting');
-          connectingUrlDisplay.textContent = serverUrl;
-          showError(connectingError, errorMsg || 'Connection failed');
-        }
-      } else {
-        // disconnected
-        showView('disconnected');
-        disconnectedUrlDisplay.textContent = serverUrl;
-      }
-    });
-  }
-
-  function loadSettings() {
-    chrome.storage.local.get(['focusNewTabs', 'tabMode', 'networkMode'], (result) => {
-      focusNewTabsToggle.checked = result.focusNewTabs === true; // default false
-      tabModeSelect.value = result.tabMode || 'group'; // default 'group'
-      networkModeToggle.checked = result.networkMode === true;
-    });
-  }
-
-  function loadRestrictedModeSettings() {
-    chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
-      // Default restrictedModeEnabled to true if undefined
-      const restrictedEnabled = result.restrictedModeEnabled !== undefined ? result.restrictedModeEnabled : true;
-      restrictedModeToggle.checked = restrictedEnabled;
-
-      if (restrictedEnabled) {
-        whitelistPanel.classList.remove('hidden');
-        updateWhitelistUI();
-      } else {
-        whitelistPanel.classList.add('hidden');
-      }
-    });
-  }
-
-  function normalizeDomain(input) {
-    let domain = input.trim().toLowerCase();
-    // Strip protocol
-    domain = domain.replace(/^https?:\/\//, '');
-    // Strip www.
-    domain = domain.replace(/^www\./, '');
-    // Strip path/query/hash
-    domain = domain.split('/')[0].split('?')[0].split('#')[0];
-    return domain;
-  }
-
-  async function getCurrentTabDomain() {
-    return new Promise((resolve) => {
+// Query the currently-active tab. Returns the tab object or null.
+function getActiveTab() {
+  return new Promise((resolve) => {
+    try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs[0] && tabs[0].url) {
-          try {
-            const url = new URL(tabs[0].url);
-            const domain = normalizeDomain(url.hostname);
-            resolve(domain);
-          } catch (e) {
-            resolve(null);
-          }
-        } else {
-          resolve(null);
-        }
+        resolve(tabs && tabs[0] ? tabs[0] : null);
       });
-    });
-  }
-
-  async function handleWhitelistCurrentSite() {
-    const domain = await getCurrentTabDomain();
-    if (!domain) {
-      return;
-    }
-
-    chrome.storage.local.get(['whitelistedDomains'], (result) => {
-      let domains = result.whitelistedDomains || [];
-      const index = domains.indexOf(domain);
-
-      if (index >= 0) {
-        // Remove domain
-        domains.splice(index, 1);
-      } else {
-        // Add domain
-        domains.push(domain);
-      }
-
-      chrome.storage.local.set({ whitelistedDomains: domains }, () => {
-        updateWhitelistUI();
-      });
-    });
-  }
-
-  function handleAddDomain() {
-    const input = domainInput.value.trim();
-    if (!input) {
-      return;
-    }
-
-    const domain = normalizeDomain(input);
-    if (!domain) {
-      return;
-    }
-
-    chrome.storage.local.get(['whitelistedDomains'], (result) => {
-      let domains = result.whitelistedDomains || [];
-
-      // Reject duplicates silently
-      if (domains.includes(domain)) {
-        domainInput.value = '';
-        return;
-      }
-
-      domains.push(domain);
-      chrome.storage.local.set({ whitelistedDomains: domains }, () => {
-        domainInput.value = '';
-        updateWhitelistUI();
-      });
-    });
-  }
-
-  function removeDomain(domain) {
-    chrome.storage.local.get(['whitelistedDomains'], (result) => {
-      let domains = result.whitelistedDomains || [];
-      const index = domains.indexOf(domain);
-
-      if (index >= 0) {
-        domains.splice(index, 1);
-        chrome.storage.local.set({ whitelistedDomains: domains }, () => {
-          updateWhitelistUI();
-        });
-      }
-    });
-  }
-
-  async function updateWhitelistUI() {
-    const currentDomain = await getCurrentTabDomain();
-
-    chrome.storage.local.get(['whitelistedDomains'], (result) => {
-      const domains = result.whitelistedDomains || [];
-
-      // Update current site button
-      if (currentDomain) {
-        const isWhitelisted = domains.includes(currentDomain);
-        whitelistCurrentBtn.textContent = isWhitelisted ? 'Remove this site' : 'Whitelist this site';
-        if (isWhitelisted) {
-          whitelistCurrentBtn.classList.add('remove');
-        } else {
-          whitelistCurrentBtn.classList.remove('remove');
-        }
-        whitelistCurrentBtn.style.display = 'block';
-      } else {
-        whitelistCurrentBtn.style.display = 'none';
-      }
-
-      // Render domain list
-      domainList.innerHTML = '';
-      domains.forEach((domain) => {
-        const item = document.createElement('div');
-        item.className = 'domain-item';
-
-        const name = document.createElement('span');
-        name.className = 'domain-name';
-        name.textContent = domain;
-
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'remove-domain-btn';
-        removeBtn.textContent = '\u00d7';
-        removeBtn.addEventListener('click', () => removeDomain(domain));
-
-        item.appendChild(name);
-        item.appendChild(removeBtn);
-        domainList.appendChild(item);
-      });
-    });
-  }
-
-  function loadPairingData() {
-    chrome.storage.local.get('pairingRequired', (result) => {
-      pairingRequiredToggle.checked = result.pairingRequired !== false; // default true
-    });
-    chrome.runtime.sendMessage({ type: 'GET_PENDING_PAIRING' }, (response) => {
-      renderPairingRequests(response?.requests || []);
-    });
-    chrome.runtime.sendMessage({ type: 'GET_PAIRED_AGENTS' }, (response) => {
-      renderPairedAgents(response?.agents || []);
-    });
-  }
-
-  function renderPairingRequests(requests) {
-    pairingRequestsList.innerHTML = '';
-
-    if (requests.length === 0) {
-      pairingRequestsSection.style.display = 'none';
-      updatePairingBadge();
-      return;
-    }
-
-    pairingRequestsSection.style.display = 'block';
-
-    requests.forEach((request) => {
-      const card = createPairingRequestCard(request);
-      pairingRequestsList.appendChild(card);
-    });
-    updatePairingBadge();
-  }
-
-  function updatePairingBadge() {
-    const pairingTabBtn = document.querySelector('.tab-btn[data-tab="pairing"]');
-    const count = pairingRequestsList.children.length;
-    if (count > 0) {
-      pairingTabBtn.textContent = `Pairing (${count})`;
-      pairingTabBtn.classList.add('has-badge');
-    } else {
-      pairingTabBtn.textContent = 'Pairing';
-      pairingTabBtn.classList.remove('has-badge');
-    }
-  }
-
-  function addPairingRequest(request) {
-    if (!request) return;
-    pairingRequestsSection.style.display = 'block';
-    const card = createPairingRequestCard(request);
-    pairingRequestsList.appendChild(card);
-    updatePairingBadge();
-  }
-
-  function createPairingRequestCard(request) {
-    const card = document.createElement('div');
-    card.className = 'pairing-request-card';
-    card.dataset.commandId = request.commandId;
-
-    const info = document.createElement('div');
-    info.className = 'pairing-request-info';
-
-    const name = document.createElement('span');
-    name.className = 'pairing-request-name';
-    name.textContent = request.agentName || 'Unknown Agent';
-
-    const desc = document.createElement('span');
-    desc.className = 'pairing-request-desc';
-    desc.textContent = 'wants to connect';
-
-    info.appendChild(name);
-    info.appendChild(desc);
-
-    const actions = document.createElement('div');
-    actions.className = 'pairing-request-actions';
-
-    const approveBtn = document.createElement('button');
-    approveBtn.className = 'approve-btn';
-    approveBtn.textContent = 'Approve';
-    approveBtn.addEventListener('click', () => {
-      chrome.runtime.sendMessage({
-        type: 'PAIRING_RESPONSE',
-        commandId: request.commandId,
-        approved: true
-      });
-      card.remove();
-      if (pairingRequestsList.children.length === 0) {
-        pairingRequestsSection.style.display = 'none';
-      }
-      updatePairingBadge();
-    });
-
-    const denyBtn = document.createElement('button');
-    denyBtn.className = 'deny-btn';
-    denyBtn.textContent = 'Deny';
-    denyBtn.addEventListener('click', () => {
-      chrome.runtime.sendMessage({
-        type: 'PAIRING_RESPONSE',
-        commandId: request.commandId,
-        approved: false
-      });
-      card.remove();
-      if (pairingRequestsList.children.length === 0) {
-        pairingRequestsSection.style.display = 'none';
-      }
-      updatePairingBadge();
-    });
-
-    actions.appendChild(approveBtn);
-    actions.appendChild(denyBtn);
-
-    card.appendChild(info);
-    card.appendChild(actions);
-
-    return card;
-  }
-
-  function renderPairedAgents(agents) {
-    pairedAgentsList.innerHTML = '';
-
-    if (agents.length === 0) {
-      noAgentsMessage.style.display = 'block';
-      return;
-    }
-
-    noAgentsMessage.style.display = 'none';
-
-    agents.forEach((agent) => {
-      const item = document.createElement('div');
-      item.className = 'paired-agent-item';
-
-      const info = document.createElement('div');
-      info.className = 'paired-agent-info';
-
-      // Name row with rename support
-      const nameRow = document.createElement('div');
-      nameRow.className = 'paired-agent-name-row';
-
-      const name = document.createElement('span');
-      name.className = 'paired-agent-name';
-      name.textContent = agent.agentName || 'Unknown Agent';
-
-      const renameBtn = document.createElement('button');
-      renameBtn.className = 'rename-btn';
-      renameBtn.textContent = 'Rename';
-
-      renameBtn.addEventListener('click', () => {
-        // Switch to edit mode
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'rename-input';
-        input.value = agent.agentName || '';
-
-        function commitRename() {
-          const newName = input.value.trim();
-          if (newName && newName !== agent.agentName) {
-            chrome.runtime.sendMessage({
-              type: 'RENAME_AGENT',
-              apiKey: agent.key,
-              newName: newName
-            });
-          }
-          // Switch back to display mode
-          name.textContent = newName || agent.agentName || 'Unknown Agent';
-          nameRow.replaceChild(name, input);
-          renameBtn.textContent = 'Rename';
-        }
-
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commitRename();
-          } else if (e.key === 'Escape') {
-            nameRow.replaceChild(name, input);
-            renameBtn.textContent = 'Rename';
-          }
-        });
-        input.addEventListener('blur', commitRename);
-
-        nameRow.replaceChild(input, name);
-        renameBtn.textContent = 'Save';
-        input.focus();
-        input.select();
-      });
-
-      nameRow.appendChild(name);
-      nameRow.appendChild(renameBtn);
-
-      const date = document.createElement('span');
-      date.className = 'paired-agent-date';
-      date.textContent = agent.createdAt ? formatDate(agent.createdAt) : '';
-
-      info.appendChild(nameRow);
-      info.appendChild(date);
-
-      if (agent.lastAccessed) {
-        const lastActive = document.createElement('span');
-        lastActive.className = 'paired-agent-last-accessed';
-        lastActive.textContent = 'Last active: ' + timeAgo(agent.lastAccessed);
-        info.appendChild(lastActive);
-      }
-
-      const revokeBtn = document.createElement('button');
-      revokeBtn.className = 'revoke-btn';
-      revokeBtn.textContent = 'Revoke';
-      revokeBtn.onclick = function() {
-        console.log('[WebPilot Popup] Revoke clicked for agent:', agent.agentName, 'key:', agent.key);
-        chrome.runtime.sendMessage({ type: 'REVOKE_KEY', apiKey: agent.key }, function(response) {
-          console.log('[WebPilot Popup] Revoke response:', response);
-          item.remove();
-          if (pairedAgentsList.children.length === 0) {
-            noAgentsMessage.style.display = 'block';
-          }
-        });
-      };
-
-      item.appendChild(info);
-      item.appendChild(revokeBtn);
-      pairedAgentsList.appendChild(item);
-    });
-  }
-
-  function formatDate(dateStr) {
-    try {
-      const date = new Date(dateStr);
-      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     } catch (e) {
-      return dateStr;
+      resolve(null);
     }
-  }
+  });
+}
 
-  function timeAgo(dateStr) {
-    if (!dateStr) return '';
-    try {
-      const now = Date.now();
-      const then = new Date(dateStr).getTime();
-      const seconds = Math.floor((now - then) / 1000);
-      if (seconds < 60) return 'just now';
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) return minutes + 'm ago';
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return hours + 'h ago';
-      const days = Math.floor(hours / 24);
-      return days + 'd ago';
-    } catch (e) {
-      return '';
+// True if a URL is a normal http/https page we can have policy on. We skip
+// chrome://, file://, about:, etc. Loopback hosts (localhost, 127.0.0.1) are
+// also skipped — the agent can never be asked to drive the dashboard itself,
+// so showing a policy pill there is misleading.
+function isPolicyManagedUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) return false;
+  if (!/^https?:\/\//i.test(url)) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+      return false;
     }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Derive an HTTP base URL from whatever the extension has stored as serverUrl
+// (which may be ws://… from the WebSocket connect flow).
+function deriveHttpBase(serverUrl) {
+  if (typeof serverUrl !== 'string' || serverUrl.length === 0) {
+    return 'http://localhost:3456';
+  }
+  return serverUrl
+    .replace(/^ws:\/\//i, 'http://')
+    .replace(/^wss:\/\//i, 'https://')
+    .replace(/\/+$/, '');
+}
+
+// True if currentTab from the server is fully-formed: it has a known state
+// label and a decision we can invert into the toggle action. Anything less
+// than that, we treat as missing and hide the row entirely.
+function isRenderableTab(currentTab) {
+  if (!currentTab || typeof currentTab !== 'object') return false;
+  if (typeof currentTab.domain !== 'string' || !currentTab.domain) return false;
+  if (typeof currentTab.state !== 'string' || !(currentTab.state in STATE_LABEL)) {
+    return false;
+  }
+  if (currentTab.decision !== 'allow' && currentTab.decision !== 'block') {
+    return false;
+  }
+  return true;
+}
+
+// ────────────────────────── State + render ──────────────────────────
+
+const state = {
+  installId: null,
+  serverUrl: null,
+  httpBase: null,
+  activeTabUrl: null,
+  // Last server response.
+  lastState: null,
+};
+
+function setConnection(connection, profileId) {
+  const dot = $('conn-dot');
+  const label = $('conn-label');
+  const meta = $('conn-meta');
+  const c = (connection in CONN_LABEL) ? connection : 'disconnected';
+  dot.setAttribute('data-state', c);
+  label.textContent = CONN_LABEL[c];
+  // Secondary line: profile name only. Server URL is intentionally NOT shown
+  // here — it would crowd the 320px popup and adds no actionable info; the
+  // dashboard link in the footer is the canonical "where is this server?".
+  if (typeof profileId === 'string' && profileId.length > 0) {
+    meta.textContent = profileId;
+    meta.hidden = false;
+  } else {
+    meta.hidden = true;
+    meta.textContent = '';
+  }
+}
+
+function showSkip(text) {
+  $('tab-section').hidden = true;
+  $('tab-skip').hidden = false;
+  $('tab-skip-text').textContent = text;
+}
+
+function hideSkip() {
+  $('tab-skip').hidden = true;
+  $('tab-skip-text').textContent = '';
+}
+
+function renderTab(currentTab, agent) {
+  hideSkip();
+  $('tab-section').hidden = false;
+
+  $('tab-domain').textContent = currentTab.domain;
+  $('tab-domain').title = currentTab.url || currentTab.domain;
+
+  const pill = $('tab-state-pill');
+  const pillLabel = $('tab-state-label');
+  pill.setAttribute('data-state', currentTab.state);
+  pillLabel.textContent = STATE_LABEL[currentTab.state];
+
+  const agentLine = $('tab-agent-line');
+  if (agent && agent.name) {
+    agentLine.textContent = 'Agent: ' + agent.name;
+    agentLine.hidden = false;
+  } else {
+    agentLine.hidden = true;
+    agentLine.textContent = '';
   }
 
-  function showView(viewName) {
-    connectedView.classList.add('hidden');
-    connectingView.classList.add('hidden');
-    disconnectedView.classList.add('hidden');
+  // Button label: inverse of the current decision. Per the design doc, the
+  // popup toggle ALWAYS sets a global user rule — per-agent overrides live
+  // in the webapp.
+  const btn = $('toggle-btn');
+  const btnLabel = $('toggle-btn-label');
+  const isAllowed = currentTab.decision === 'allow';
+  btnLabel.textContent = isAllowed
+    ? 'Block on this site (all agents)'
+    : 'Allow on this site (all agents)';
+  btn.dataset.nextAction = isAllowed ? 'block' : 'allow';
+  btn.dataset.domain = currentTab.domain;
+  btn.hidden = false;
+  btn.disabled = false;
+  setTabError(null);
+}
 
-    if (viewName === 'connected') {
-      connectedView.classList.remove('hidden');
-    } else if (viewName === 'connecting') {
-      connectingView.classList.remove('hidden');
-    } else if (viewName === 'disconnected') {
-      disconnectedView.classList.remove('hidden');
-    }
+function setTabError(msg) {
+  const el = $('tab-error');
+  if (!msg) {
+    el.hidden = true;
+    el.textContent = '';
+  } else {
+    el.hidden = false;
+    el.textContent = msg;
+  }
+}
+
+// ────────────────────────── Fetch wrappers ──────────────────────────
+
+async function fetchPopupState() {
+  if (!state.installId || !state.httpBase) {
+    throw new Error('Extension has no installId yet — reload the extension.');
+  }
+  const url =
+    state.httpBase +
+    '/api/popup/state' +
+    (state.activeTabUrl
+      ? '?tabUrl=' + encodeURIComponent(state.activeTabUrl)
+      : '');
+  const resp = await fetch(url, {
+    method: 'GET',
+    headers: { 'X-Install-Id': state.installId },
+  });
+  if (resp.status === 401) throw new Error('Install ID not recognized by server.');
+  if (!resp.ok) throw new Error('Server error ' + resp.status);
+  return resp.json();
+}
+
+async function postSiteToggle(domain, action) {
+  const resp = await fetch(state.httpBase + '/api/popup/site-toggle', {
+    method: 'POST',
+    headers: {
+      'X-Install-Id': state.installId,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ domain, action }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.error || 'Toggle failed (' + resp.status + ')');
+  }
+  return resp.json();
+}
+
+// ────────────────────────── Top-level flow ──────────────────────────
+
+async function loadAndRender() {
+  // Pull installId + server URL from chrome.storage. These keys are written
+  // by background.js' auto-connect flow — and we are explicitly READ-ONLY
+  // here. The installId is the extension's per-profile identity (used as
+  // `X-Install-Id` for popup endpoint auth).
+  const stored = await readStorage(['webpilot.installId', 'serverUrl']);
+  state.installId = stored['webpilot.installId'] || null;
+  state.serverUrl = stored.serverUrl || null;
+  state.httpBase = deriveHttpBase(state.serverUrl);
+
+  // Wire the dashboard link as soon as we know the base URL.
+  $('dashboard-link').href = state.httpBase + '/ui/';
+
+  // No installId → the popup can't talk to the server. Show a disconnected
+  // dot and point the user at the dashboard.
+  if (!state.installId) {
+    setConnection('disconnected', null);
+    showSkip('Extension has no installId. Reload the extension in chrome://extensions/.');
+    return;
   }
 
-  function showError(element, message) {
-    element.textContent = message;
-    element.classList.add('visible');
+  // Resolve the current tab URL. If it's not http(s) or it's a loopback
+  // host, we won't ask the server for a per-tab policy.
+  const tab = await getActiveTab();
+  if (tab && tab.url && isPolicyManagedUrl(tab.url)) {
+    state.activeTabUrl = tab.url;
+  } else {
+    state.activeTabUrl = null;
   }
 
-  function hideError(element) {
-    element.classList.remove('visible');
-    element.textContent = '';
+  let data;
+  try {
+    data = await fetchPopupState();
+  } catch (e) {
+    setConnection('disconnected', null);
+    showSkip(e.message || 'Could not reach the WebPilot server.');
+    return;
   }
+
+  state.lastState = data;
+  setConnection(data.connection, data.profileId);
+
+  if (!state.activeTabUrl) {
+    // Tab is unsupported (chrome://, file://, localhost, etc.). Explain
+    // briefly so the user knows it's expected, not broken.
+    showSkip(
+      tab && typeof tab.url === 'string' && tab.url.length > 0
+        ? 'Site policy doesn’t apply to this page.'
+        : 'No active tab.'
+    );
+    return;
+  }
+
+  if (!isRenderableTab(data.currentTab)) {
+    // Server didn't return a usable currentTab (no agent paired, unknown
+    // state value, malformed payload). Fall back to a clean skip surface
+    // rather than rendering a half-bound button.
+    showSkip('No policy data for this page yet.');
+    return;
+  }
+
+  renderTab(data.currentTab, data.agent);
+}
+
+async function onToggleClick() {
+  const btn = $('toggle-btn');
+  const domain = btn.dataset.domain;
+  const action = btn.dataset.nextAction;
+  if (!domain || !action) return;
+  btn.disabled = true;
+  const prevLabel = $('toggle-btn-label').textContent;
+  $('toggle-btn-label').textContent = 'Saving';
+  setTabError(null);
+  try {
+    await postSiteToggle(domain, action);
+    await loadAndRender();
+  } catch (e) {
+    setTabError(e.message || 'Toggle failed');
+    $('toggle-btn-label').textContent = prevLabel;
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('toggle-btn').addEventListener('click', onToggleClick);
+  // Initial render. Errors inside loadAndRender are surfaced inline.
+  loadAndRender().catch((e) => {
+    setConnection('disconnected', null);
+    setTabError(e && e.message ? e.message : String(e));
+  });
 });

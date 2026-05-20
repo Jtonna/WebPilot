@@ -1,0 +1,443 @@
+'use client';
+
+import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import {
+  HomeIcon as HomeOutline,
+  KeyIcon as KeyOutline,
+  UserCircleIcon as UserCircleOutline,
+  CpuChipIcon as CpuChipOutline,
+  CommandLineIcon as CommandLineOutline,
+  Cog6ToothIcon as Cog6ToothOutline,
+  GlobeAltIcon as GlobeAltOutline,
+  Bars3Icon,
+} from '@heroicons/react/24/outline';
+import {
+  HomeIcon as HomeSolid,
+  KeyIcon as KeySolid,
+  UserCircleIcon as UserCircleSolid,
+  CpuChipIcon as CpuChipSolid,
+  CommandLineIcon as CommandLineSolid,
+  Cog6ToothIcon as Cog6ToothSolid,
+  GlobeAltIcon as GlobeAltSolid,
+} from '@heroicons/react/24/solid';
+import { getStatus } from '../lib/api';
+
+/**
+ * AppShell — structural redesign chrome.
+ *
+ * Sidebar is a two-section source list (Apple Mail / Reminders pattern):
+ *
+ *   WebPilot
+ *   ─── (accent hairline)
+ *
+ *   WORKSPACE                       <- group header (mono nano caps)
+ *     Dashboard
+ *     Pairings           2          <- typeset count, no badge
+ *     Profiles
+ *     Agents
+ *
+ *   SYSTEM
+ *     Settings
+ *
+ *   ● Connected                     <- footer (existing dot + label)
+ *
+ * Active state: neutral elevated fill + 2px accent left-edge hairline + solid
+ * Heroicons variant + primary-fg text. No accent-tinted bg.
+ */
+
+const NAV_WORKSPACE = [
+  {
+    href: '/ui/',
+    label: 'Dashboard',
+    match: (p) => p === '/ui' || p === '/ui/',
+    IconOutline: HomeOutline,
+    IconSolid: HomeSolid,
+  },
+  {
+    href: '/ui/profiles/',
+    label: 'Profiles',
+    match: (p) => p.startsWith('/ui/profiles'),
+    IconOutline: UserCircleOutline,
+    IconSolid: UserCircleSolid,
+  },
+  {
+    href: '/ui/agents/',
+    label: 'Agents',
+    match: (p) => p.startsWith('/ui/agents'),
+    IconOutline: CpuChipOutline,
+    IconSolid: CpuChipSolid,
+  },
+  {
+    href: '/ui/sites/',
+    label: 'Sites',
+    match: (p) => p.startsWith('/ui/sites'),
+    IconOutline: GlobeAltOutline,
+    IconSolid: GlobeAltSolid,
+  },
+  {
+    href: '/ui/formatters/',
+    label: 'Formatters',
+    match: (p) => p.startsWith('/ui/formatters'),
+    IconOutline: CommandLineOutline,
+    IconSolid: CommandLineSolid,
+  },
+  {
+    href: '/ui/pairings/',
+    label: 'Pairings',
+    match: (p) => p.startsWith('/ui/pairings'),
+    IconOutline: KeyOutline,
+    IconSolid: KeySolid,
+    showCount: true,
+  },
+];
+
+const NAV_SYSTEM = [
+  {
+    href: '/ui/settings/',
+    label: 'Settings',
+    match: (p) => p.startsWith('/ui/settings'),
+    IconOutline: Cog6ToothOutline,
+    IconSolid: Cog6ToothSolid,
+  },
+];
+
+function normalizePath(p) {
+  if (!p) return '/ui/';
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
+}
+
+function useServerStatus() {
+  const [serverOk, setServerOk] = useState(null);
+  const [pendingPairings, setPendingPairings] = useState(0);
+  // hasEverConnected stays true once we've had at least one successful
+  // /api/ui/status response. Used to drive the boot-time splash gate in
+  // AppShell: while false, the UI renders <ConnectingSplash/> instead of
+  // page contents so a transient 500/network error during server boot
+  // never flashes the dashboard with a "Disconnected" banner.
+  const [hasEverConnected, setHasEverConnected] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId = null;
+
+    async function tick() {
+      let success = false;
+      try {
+        const data = await getStatus();
+        if (cancelled) return;
+        success = true;
+        setServerOk(true);
+        setHasEverConnected(true);
+        const n = (data && Array.isArray(data.pendingPairings))
+          ? data.pendingPairings.length
+          : 0;
+        setPendingPairings(n);
+      } catch (_e) {
+        if (cancelled) return;
+        setServerOk(false);
+      }
+      if (cancelled) return;
+      // Poll fast (500ms) until we've had our first success — this is the
+      // server-boot window. After first success, fall back to the cheap
+      // 15s heartbeat used to drive the sidebar connected/disconnected dot.
+      const delay = success ? 15000 : 500;
+      timeoutId = setTimeout(tick, delay);
+    }
+
+    tick();
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
+  return { serverOk, pendingPairings, hasEverConnected };
+}
+
+/**
+ * Full-window connecting splash. Mirrors the look of electron/splash.html
+ * (dark bg, pulsing dots, "Starting…" copy) so the visual transition from
+ * the OS splash window to the in-app splash is seamless.
+ *
+ * Rendered by AppShell whenever the renderer has not yet had a successful
+ * /api/ui/status response, regardless of the failure mode (network drop,
+ * 500, server still booting). Once the first success lands, AppShell
+ * swaps in the real shell + page content and never shows this splash
+ * again for the rest of the session.
+ */
+function ConnectingSplash({ message }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'var(--wp-bg, #0e0e10)',
+        color: 'var(--wp-fg, #f5f5f7)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 24,
+        zIndex: 9999,
+        userSelect: 'none',
+      }}
+    >
+      <h1
+        style={{
+          margin: 0,
+          fontSize: 28,
+          fontWeight: 500,
+          letterSpacing: '-0.02em',
+        }}
+      >
+        WebPilot
+      </h1>
+      <div
+        style={{
+          fontSize: 14,
+          color: 'var(--wp-fg-muted, #8b8b94)',
+          letterSpacing: '0.01em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          minHeight: 20,
+        }}
+      >
+        <span>{message}</span>
+        <span
+          aria-hidden="true"
+          style={{ display: 'inline-flex', gap: 3 }}
+        >
+          <span className="wp-splash-dot" />
+          <span className="wp-splash-dot" />
+          <span className="wp-splash-dot" />
+        </span>
+      </div>
+      <style>{`
+        .wp-splash-dot {
+          width: 4px;
+          height: 4px;
+          border-radius: 50%;
+          background: var(--wp-fg-muted, #8b8b94);
+          animation: wp-splash-pulse 1.2s ease-in-out infinite;
+        }
+        .wp-splash-dot:nth-child(2) { animation-delay: 0.15s; }
+        .wp-splash-dot:nth-child(3) { animation-delay: 0.30s; }
+        @keyframes wp-splash-pulse {
+          0%, 100% { opacity: 0.25; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.3); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function SidebarGroup({ title, items, pathname, query, onItemClick, counts }) {
+  return (
+    <div className="wp-sidebar-group">
+      {title ? <div className="wp-sidebar-group-title">{title}</div> : null}
+      <nav className="wp-nav" aria-label={title || 'Primary'}>
+        {items.map((item) => {
+          const active = item.match(pathname, query);
+          const Icon = active ? item.IconSolid : item.IconOutline;
+          const count =
+            item.showCount && counts && counts[item.label]
+              ? counts[item.label]
+              : null;
+          return (
+            <a
+              key={item.href}
+              href={item.href}
+              className={`wp-nav-item${active ? ' is-active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+              onClick={onItemClick}
+            >
+              <span className="wp-nav-icon" aria-hidden="true">
+                <Icon style={{ width: 20, height: 20 }} />
+              </span>
+              <span className="wp-nav-item-grow">{item.label}</span>
+              {count ? (
+                <span className="wp-nav-count" aria-label={`${count} pending`}>
+                  {count}
+                </span>
+              ) : null}
+            </a>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+function SidebarFooter({ serverOk }) {
+  const statusState = serverOk === null ? '' : serverOk ? 'ok' : 'down';
+  const statusLabel =
+    serverOk === null ? 'Connecting…' : serverOk ? 'Connected' : 'Disconnected';
+  return (
+    <div className="wp-sidebar-footer" aria-live="polite">
+      <span
+        className="wp-sidebar-status-dot"
+        data-state={statusState}
+        aria-hidden="true"
+      />
+      <span>{statusLabel}</span>
+    </div>
+  );
+}
+
+function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClick }) {
+  const counts = { Pairings: pendingPairings || 0 };
+  return (
+    <>
+      <div className="wp-sidebar-scroll">
+        <div className="wp-sidebar-brand">
+          <a href="/ui/" className="wp-brand" onClick={onNavClick}>
+            WebPilot
+          </a>
+          <span className="wp-sidebar-brand-rule" aria-hidden="true" />
+        </div>
+
+        <SidebarGroup
+          items={NAV_WORKSPACE}
+          title="Workspace"
+          pathname={pathname}
+          query={query}
+          counts={counts}
+          onItemClick={onNavClick}
+        />
+        <SidebarGroup
+          items={NAV_SYSTEM}
+          title="System"
+          pathname={pathname}
+          query={query}
+          counts={counts}
+          onItemClick={onNavClick}
+        />
+      </div>
+      <SidebarFooter serverOk={serverOk} />
+    </>
+  );
+}
+
+export default function AppShell({ children }) {
+  const rawPath = usePathname() || '/ui/';
+  const pathname = normalizePath(rawPath);
+  const { serverOk, pendingPairings, hasEverConnected } = useServerStatus();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  // Read the ?filter=… query param client-side so Activity items can match.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function readQuery() {
+      try {
+        const u = new URL(window.location.href);
+        setQuery(u.searchParams.get('filter') || '');
+      } catch (_e) {
+        setQuery('');
+      }
+    }
+    readQuery();
+    window.addEventListener('popstate', readQuery);
+    return () => window.removeEventListener('popstate', readQuery);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const prev = document.body.style.overflow;
+    if (drawerOpen) {
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [drawerOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    function onKey(e) {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+
+  const statusState = serverOk === null ? '' : serverOk ? 'ok' : 'down';
+  const onNavClick = () => setDrawerOpen(false);
+
+  // Boot-time gate: until our first successful /api/ui/status response, hold
+  // on a full-window splash that mirrors electron/splash.html. This prevents
+  // the dashboard from flashing in with a "Disconnected" banner during the
+  // server-boot window (the renderer typically loads ~100ms after the
+  // server's /health goes green, but the DB-backed /api/ui/status takes
+  // another beat to finish initializing). See Problem B in the v1.1.4 fix.
+  if (!hasEverConnected) {
+    const message = serverOk === false ? 'Starting server' : 'Connecting';
+    return <ConnectingSplash message={message} />;
+  }
+
+  return (
+    <div className="wp-shell">
+      <header className="wp-topbar" role="banner">
+        <a href="/ui/" className="wp-topbar-brand">WebPilot</a>
+        <div className="wp-topbar-right">
+          <span
+            className="wp-topbar-dot"
+            data-state={statusState}
+            aria-label={
+              serverOk === null
+                ? 'Connecting'
+                : serverOk
+                  ? 'Connected'
+                  : 'Disconnected'
+            }
+          />
+          <button
+            type="button"
+            className="wp-icon-btn"
+            aria-label="Open navigation"
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen((v) => !v)}
+          >
+            <Bars3Icon style={{ width: 24, height: 24 }} />
+          </button>
+        </div>
+      </header>
+
+      <div
+        className={`wp-drawer-backdrop${drawerOpen ? ' is-open' : ''}`}
+        onClick={() => setDrawerOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        className={`wp-drawer${drawerOpen ? ' is-open' : ''}`}
+        aria-label="Primary navigation"
+        aria-hidden={!drawerOpen}
+      >
+        <div className="wp-sidebar" style={{ width: '100%', height: '100%' }}>
+          <SidebarContents
+            pathname={pathname}
+            query={query}
+            serverOk={serverOk}
+            pendingPairings={pendingPairings}
+            onNavClick={onNavClick}
+          />
+        </div>
+      </aside>
+
+      <div className="wp-body">
+        <aside className="wp-sidebar" aria-label="Primary">
+          <SidebarContents
+            pathname={pathname}
+            query={query}
+            serverOk={serverOk}
+            pendingPairings={pendingPairings}
+          />
+        </aside>
+
+        <main className="wp-main">{children}</main>
+      </div>
+    </div>
+  );
+}

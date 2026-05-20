@@ -1,49 +1,97 @@
 # WebPilot
 
-AI-powered browser automation through Chrome extension and MCP server.
+[![Build & Release](https://github.com/Jtonna/WebPilot/actions/workflows/release.yml/badge.svg)](https://github.com/Jtonna/WebPilot/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-WebPilot lets AI agents control a real Chrome browser through the Model Context Protocol (MCP). A Chrome extension handles browser actions (clicking, scrolling, typing, reading page content) while a Node.js server bridges the extension to any MCP-compatible AI agent. The server compiles to standalone binaries and runs as a background service.
+**WebPilot lets AI agents drive your real Chrome browser** — your tabs, your logged-in sessions, your bookmarks — instead of an isolated headless instance. It runs as a local background service, ships with a Chrome extension as the on-page bridge, and gates every agent through an explicit human pairing handshake.
 
-## Project Structure
+If you've ever wanted Claude (or any MCP-capable agent) to read what's in your Gmail tab, fill out a form on a site you're already signed into, or do research while preserving the page state you can see — that's the thing.
+
+---
+
+## Install
+
+Download the latest installer from the [Releases page](https://github.com/Jtonna/WebPilot/releases/latest):
+
+| Platform | File |
+|----------|------|
+| Windows  | `WebPilot-<version>-windows.exe` |
+
+macOS and Linux builds are not yet shipping. Both platforms have scaffolded code paths that need verification on real hardware before they can be released — tracked in [#48 (macOS)](https://github.com/Jtonna/WebPilot/issues/48) and [#49 (Linux)](https://github.com/Jtonna/WebPilot/issues/49).
+
+The installer is currently **unsigned**. SmartScreen will warn on first run — click "More info" → "Run anyway".
+
+The WebPilot service starts automatically on login. The Chrome extension is auto-deployed to your user data directory, and you **sideload it once per Chrome profile** — open `chrome://extensions`, enable Developer Mode, "Load unpacked", and point at the deployed extension path. See [`docs/WHY_DEPLOY_VIA_SIDELOADING.md`](docs/WHY_DEPLOY_VIA_SIDELOADING.md) for why this isn't on the Chrome Web Store.
+
+## Quick start: pair your first agent
+
+1. Open the dashboard at <http://localhost:3456/ui/>.
+2. Add WebPilot to your MCP client (e.g. Claude Code `.mcp.json`):
+   ```json
+   {
+     "mcpServers": {
+       "webpilot": { "url": "http://localhost:3456/sse" }
+     }
+   }
+   ```
+3. From the agent, call the `request_pairing` tool with a memorable `agent_name`. The tool returns a `pairing_id` and `status: 'pending'`.
+4. A desktop notification fires and the dashboard's **Action items** section shows the pending request.
+5. Pick the Chrome profile the agent should drive, hit **Approve**, and the agent's next call to `check_pairing_status` returns its API key.
+6. Persist the key as the `X-API-Key` header in your MCP client config (or pass it as `api_key` on each tool call).
+
+If your agent already has an API key (e.g. a subagent inheriting its parent's `.mcp.json`), `request_pairing` short-circuits and returns the existing identity — no re-pairing needed.
+
+For the full tool reference (14 MCP tools: nine `browser_*` + pairing + formatter inspection + workflow orchestration), see [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md).
+
+## Architecture
 
 ```
 packages/
-  chrome-extension-unpacked/  Chrome extension (Manifest V3) — browser automation
-  server-for-chrome-extension/ Node.js MCP server — bridges AI agents to the extension
-  electron/                   Electron app (Phase 2) — installer and status dashboard
+  chrome-extension-unpacked/   Chrome MV3 extension — browser automation bridge
+  server-for-chrome-extension/ Node.js MCP server — agents-to-extension bridge,
+                               hosts the web UI, manages Chrome (detect/restart),
+                               routes per-agent tool calls to bound profiles
+  server-web-ui/               Next.js dashboard served at /ui
+  electron/                    Installer + tray app (deploys server + extension)
 ```
 
-## Documentation
+**Security model:** extension = identity (via per-profile `installId`), server = security boundary, agents = power (gated by paired API keys + explicit human approval). The extension does not hold any shared secret — every Chrome profile has a distinct identity and every agent has a distinct key. See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) §Authentication & authorization.
 
-See [Documentation Index](docs/INDEX.md) for system architecture, development guides, and API reference.
+**Per-agent profile routing:** each paired agent is bound to one Chrome profile. Tool calls route to that profile via the agent's API key. The Agents page can re-bind an agent in-place — no socket teardown.
 
-## Quick Start
+**Site-specific formatters** live in [`accessibility-tree-formatters/`](accessibility-tree-formatters/). Each is a small JS module with a `manifest.json` that transforms a site's a11y tree into something agent-friendly. Bundled: `discord`, `threads`, `zillow`. The server pulls fresh copies from GitHub on startup; custom formatters go in `<dataDir>/custom-formatters/` and survive auto-updates. Some formatters expose composite operations as **workflows** — server-side multi-step actions invoked via `webpilot_run_workflow` (e.g. Discord's `send_message` does fetch-tree + locate + click + type + Enter in one call).
 
-Start the MCP server:
+Full architecture index: [`docs/INDEX.md`](docs/INDEX.md).
+
+## Development
+
+Requires Node 20+ and a local Chrome install.
 
 ```bash
-cd packages/server-for-chrome-extension
+git clone https://github.com/Jtonna/WebPilot.git
+cd WebPilot
 npm install
-npm start
+npm run dev
 ```
 
-Load the Chrome extension:
+This runs the server (hot-reload via `node --watch`) and the Next.js web UI concurrently. The server detects `WEBPILOT_DEV=1` and proxies `/ui/*` to `http://localhost:3100`. The dashboard is at <http://localhost:3456/ui/>.
 
-1. Open `chrome://extensions` in Chrome
-2. Enable **Developer mode**
-3. Click **Load unpacked** and select `packages/chrome-extension-unpacked/`
-4. The extension automatically connects to the MCP server on startup — no connection string needed
+`npm run start` builds the Next.js static export and runs the server in production mode (serving `/ui/*` from `packages/server-web-ui/out/`). Build details in [`docs/BUILD_ARCHITECTURE.md`](docs/BUILD_ARCHITECTURE.md).
 
-Add to your MCP client (e.g., Claude Code `.mcp.json`):
+Local installer build:
 
-```json
-{
-  "mcpServers": {
-    "webpilot": {
-      "url": "http://localhost:3456/sse"
-    }
-  }
-}
+```bash
+npm run dist:win    # or :mac / :linux
 ```
 
-**Pairing on first use:** MCP access is authenticated via per-agent API keys. The first time an agent connects, it must call the `request_pairing` tool. A pairing request will appear in the Chrome extension popup (Pairing tab) -- click **Approve** to grant access. The agent receives an API key to include as an `api_key` parameter in tool calls or to persist as the `X-API-Key` header in MCP client configuration.
+## Contributing
+
+Issues and PRs welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first — every PR needs a `release:*` label so the auto-release pipeline knows whether to bump the version.
+
+Found a security issue? Please follow [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
+
+By participating in this project you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE) © Jacob Tonna

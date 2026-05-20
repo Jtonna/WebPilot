@@ -28,8 +28,15 @@ let manuallyDisconnected = false;
 let keepaliveInterval = null;
 let autoConnectInterval = null;
 const KEEPALIVE_INTERVAL_MS = 15000;
+// Tracks whether the current WebSocket has completed the hello handshake.
+// Reset to false on every (re)connect; flipped true on `hello_ack`. Used to
+// gate the popup "Connected" affordance so the user sees "Identifying..."
+// during the brief window between TCP open and server-side profile bind.
+let helloAcked = false;
+const HELLO_TIMEOUT_MS = 8000;
+let helloTimeoutTimer = null;
 let config = {
-  apiKey: null,
+  installId: null,
   serverUrl: null
 };
 
@@ -50,13 +57,11 @@ let _whitelistReady = new Promise((resolve) => {
   });
 });
 
-// Pairing required cache
-let pairingRequiredCache = true; // default: pairing required
-
-// Load pairing required state from storage on startup
-chrome.storage.local.get(['pairingRequired'], (result) => {
-  pairingRequiredCache = result.pairingRequired !== false; // default true
-});
+// NOTE: `pairingRequiredCache` and the related SET/GET_PAIRING_REQUIRED
+// messaging used to live here. With pairing config owned by the web UI it
+// became a zombie — the extension was sending `set_pairing_required` on
+// every reconnect from a stale local cache (the popup no longer has any UI
+// to mutate it). Removed entirely. See QOL review extension/C1.
 
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
@@ -67,29 +72,91 @@ chrome.runtime.onInstalled.addListener(() => {
       chrome.storage.local.set({ restrictedModeEnabled: true });
     }
   });
+  // Mint a persistent installId on first install so the server can map this
+  // extension install to a Chrome profileId independently of
+  // extension-storage state. Idempotent — only set if not already present.
+  ensureInstallId();
   loadConfig();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  // Migration path: an extension installed before installIds shipped will
+  // not have one. If we already know a profileId (i.e. the user has paired
+  // before) backfill an installId now so subsequent connects benefit from
+  // the new resolution path without forcing the user through the picker.
+  ensureInstallId();
   loadConfig();
 });
 
-function loadConfig() {
-  chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl'], (result) => {
-    isEnabled = result.enabled || false;
-    config.apiKey = result.apiKey || null;
-    config.serverUrl = result.serverUrl || null;
-
-    if (isEnabled && config.apiKey && config.serverUrl) {
-      // Already have config, reconnect
-      console.log('Auto-reconnecting on service worker startup...');
-      connectWebSocket();
-    } else {
-      // No config stored — attempt auto-connect to local server
-      console.log('No config found, attempting auto-connect...');
-      attemptAutoConnect();
+/**
+ * Ensure chrome.storage.local has a `webpilot.installId`. Generates one with
+ * crypto.randomUUID() (available globally in MV3 service workers) if missing.
+ * Safe to call repeatedly — the write is gated on absence.
+ */
+function ensureInstallId() {
+  chrome.storage.local.get(['webpilot.installId', 'webpilot.profileId'], (data) => {
+    if (data && typeof data['webpilot.installId'] === 'string' && data['webpilot.installId'].length > 0) {
+      return;
     }
+    let installId;
+    try {
+      installId = crypto.randomUUID();
+    } catch (e) {
+      console.log('[hello] crypto.randomUUID() failed: ' + (e && e.message));
+      return;
+    }
+    chrome.storage.local.set({ 'webpilot.installId': installId }, () => {
+      const hadProfile = !!(data && data['webpilot.profileId']);
+      console.log(
+        '[hello] minted installId=' + installId.slice(0, 8) + '... ' +
+        (hadProfile ? '(backfilled for pre-existing install)' : '(fresh install)')
+      );
+    });
   });
+}
+
+function loadConfig() {
+  // Read identity + server addresses. `apiKey` is intentionally NOT read
+  // here: the legacy shared transport key has been retired. The extension
+  // identifies itself via `webpilot.installId`; the server resolves it to a
+  // profileId. Any stale `apiKey` in storage from a pre-1.2.0 build is
+  // cleaned up below as a one-time migration so it doesn't sit around
+  // forever.
+  chrome.storage.local.get(
+    ['enabled', 'serverUrl', 'manuallyDisconnected', 'webpilot.installId', 'apiKey'],
+    (result) => {
+      isEnabled = result.enabled || false;
+      config.installId = result['webpilot.installId'] || null;
+      config.serverUrl = result.serverUrl || null;
+      manuallyDisconnected = result.manuallyDisconnected === true;
+
+      // One-time cleanup of the legacy transport key. Safe to call repeatedly
+      // (remove() is idempotent once the key is gone).
+      if (typeof result.apiKey !== 'undefined') {
+        chrome.storage.local.remove(['apiKey'], () => {
+          console.log('[migration] removed legacy chrome.storage.apiKey (transport key retired)');
+        });
+      }
+
+      if (manuallyDisconnected) {
+        // User explicitly disconnected before Chrome closed. Stay disconnected
+        // until they click Retry/Reconnect in the popup.
+        console.log('Skipping auto-connect: user manually disconnected.');
+        updateConnectionStatus('disconnected', null, null);
+        return;
+      }
+
+      if (isEnabled && config.installId && config.serverUrl) {
+        // Already have config, reconnect
+        console.log('Auto-reconnecting on service worker startup...');
+        connectWebSocket();
+      } else {
+        // No config stored — attempt auto-connect to local server
+        console.log('No config found, attempting auto-connect...');
+        attemptAutoConnect();
+      }
+    }
+  );
 }
 
 function attemptAutoConnect() {
@@ -115,14 +182,34 @@ async function doAutoConnectFetch() {
     if (!response.ok) return false;
 
     const data = await response.json();
-    if (!data.apiKey || !data.serverUrl) return false;
+    // Post-1.2.0 the server no longer returns `apiKey` from /connect — the
+    // extension's installId is its identity. We only need the addresses.
+    if (!data.serverUrl) return false;
 
-    config.apiKey = data.apiKey;
+    // Make sure we have an installId before we attempt to connect; mint one
+    // if missing (defensive — `ensureInstallId` already ran in onInstalled /
+    // onStartup, but this covers any edge case where storage was cleared
+    // between events).
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get(['webpilot.installId'], (d) => resolve(d || {}));
+    });
+    let installId = stored['webpilot.installId'] || null;
+    if (!installId) {
+      try {
+        installId = crypto.randomUUID();
+        await chrome.storage.local.set({ 'webpilot.installId': installId });
+        console.log('[hello] minted installId on /connect path: ' + installId.slice(0, 8) + '...');
+      } catch (e) {
+        console.log('[hello] failed to mint installId in /connect: ' + (e && e.message));
+        return false;
+      }
+    }
+
+    config.installId = installId;
     config.serverUrl = data.serverUrl;
     isEnabled = true;
 
     await chrome.storage.local.set({
-      apiKey: data.apiKey,
       serverUrl: data.serverUrl,
       sseUrl: data.sseUrl || `http://localhost:3456/sse`,
       networkMode: data.networkMode || false,
@@ -156,27 +243,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleConfigUpdate(message.config);
       break;
 
-    case 'GET_STATUS':
-      chrome.storage.local.get(['enabled', 'apiKey', 'serverUrl'], (result) => {
-        sendResponse({
-          enabled: result.enabled || false,
-          connected: connectionStatus === 'connected',
-          connectionStatus: connectionStatus,
-          connectionError: connectionError,
-          errorType: connectionErrorType,
-          manuallyDisconnected: manuallyDisconnected,
-          config: {
-            hasApiKey: !!result.apiKey,
-            serverUrl: result.serverUrl
-          }
-        });
-      });
-      break;
+    // GET_STATUS removed in P2 phase 7: the new minimal popup polls the
+    // server's REST surface directly for connection state; it no longer asks
+    // the service worker for it. No remaining caller in the extension.
 
     case 'CONNECT_REQUEST':
-      chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
-        if (result.apiKey && result.serverUrl) {
-          config.apiKey = result.apiKey;
+      chrome.storage.local.get(['webpilot.installId', 'serverUrl'], (result) => {
+        const installId = result['webpilot.installId'];
+        if (installId && result.serverUrl) {
+          config.installId = installId;
           config.serverUrl = result.serverUrl;
           isEnabled = true;
           chrome.storage.local.set({ enabled: true });
@@ -188,16 +263,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
-    case 'DISCONNECT':
-      manuallyDisconnected = true;
-      disconnectWebSocket();
-      sendResponse({ success: true });
-      break;
+    // DISCONNECT removed in P2 phase 7: the new minimal popup has no
+    // disconnect affordance. The old popup's user-initiated disconnect path
+    // is gone — connection lifecycle is automatic from the user's POV.
 
     case 'RECONNECT':
       manuallyDisconnected = false;
       isEnabled = true;
-      chrome.storage.local.set({ enabled: true });
+      chrome.storage.local.set({ enabled: true, manuallyDisconnected: false });
       connectWebSocket();
       sendResponse({ success: true });
       break;
@@ -205,8 +278,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'FORGET_CONFIG':
       manuallyDisconnected = false;
       disconnectWebSocket();
-      chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
-      config.apiKey = null;
+      // Also clear the stored profile identification so the user is forced
+      // back through the identify flow on next connect. See QOL extension C2/C3.
+      // NOTE: `webpilot.installId` is intentionally NOT cleared — it is bound
+      // to the extension installation, not the pairing config, and persists
+      // across config resets so the server's installId->profileId mapping
+      // can still re-identify this install automatically.
+      // `apiKey` is also included for one-time cleanup of pre-1.2.0 storage.
+      chrome.storage.local.remove([
+        'apiKey',
+        'serverUrl',
+        'enabled',
+        'manuallyDisconnected',
+        'webpilot.profileId',
+        'webpilot.knownProfiles'
+      ]);
+      config.installId = null;
       config.serverUrl = null;
       isEnabled = false;
       // Restart auto-connect to pick up server again
@@ -214,123 +301,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    case 'RETRY_AUTO_CONNECT':
-      attemptAutoConnect();
-      sendResponse({ success: true });
-      break;
-
-    case 'PAIRING_RESPONSE':
-      sendResult(message.commandId, true, { approved: message.approved });
-      chrome.storage.local.get('pendingPairingRequests', (result) => {
-        const pending = (result.pendingPairingRequests || []).filter(
-          r => r.commandId !== message.commandId
-        );
-        chrome.storage.local.set({ pendingPairingRequests: pending });
-      });
-      sendResponse({ success: true });
-      break;
-
-    case 'RENAME_AGENT':
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify({ type: 'rename_agent', apiKey: message.apiKey, newName: message.newName }));
-        sendResponse({ success: true });
-      } else {
-        sendResponse({ success: false, error: 'Not connected to server' });
-      }
-      break;
-
-    case 'REVOKE_KEY':
-      console.log('REVOKE_KEY received, apiKey:', message.apiKey, 'wsConnected:', wsConnection && wsConnection.readyState === WebSocket.OPEN);
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify({ type: 'revoke_key', apiKey: message.apiKey }));
-        sendResponse({ success: true });
-      } else {
-        sendResponse({ success: false, error: 'Not connected to server' });
-      }
-      break;
-
-    case 'GET_PAIRED_AGENTS':
-      chrome.storage.local.get('pairedAgents', (data) => {
-        sendResponse({ agents: data.pairedAgents || [] });
-      });
-      break;
-
-    case 'GET_PENDING_PAIRING':
-      chrome.storage.local.get('pendingPairingRequests', (data) => {
-        sendResponse({ requests: data.pendingPairingRequests || [] });
-      });
-      break;
-
-    case 'SET_NETWORK_MODE':
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify({
-          type: 'set_network_mode',
-          enabled: message.enabled
-        }));
-        sendResponse({ success: true });
-      } else {
-        sendResponse({ success: false, error: 'Not connected' });
-      }
-      break;
-
-    case 'SET_PAIRING_REQUIRED': {
-      const enabled = message.enabled !== false;
-      pairingRequiredCache = enabled;
-      chrome.storage.local.set({ pairingRequired: enabled });
-      // Notify server via WebSocket
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled }));
-      }
-      sendResponse({ success: true });
-      return true;
-    }
-
-    case 'GET_PAIRING_REQUIRED': {
-      sendResponse({ enabled: pairingRequiredCache });
-      return true;
-    }
-
-    case 'CHECK_FORMATTER_UPDATES':
-      if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-        const updateCheckRequestId = `update-check-${Date.now()}`;
-        let responseReceived = false;
-
-        // Set up a timeout for the response
-        const timeout = setTimeout(() => {
-          if (!responseReceived) {
-            responseReceived = true;
-            sendResponse({ error: 'Request timeout' });
-          }
-        }, 10000);
-
-        // Temporarily store the response handler
-        const originalOnMessage = wsConnection.onmessage;
-        const tempHandler = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'formatter_update_result') {
-              if (!responseReceived) {
-                responseReceived = true;
-                clearTimeout(timeout);
-                wsConnection.onmessage = originalOnMessage;
-                sendResponse(message);
-              }
-            }
-          } catch (e) {
-            console.error('Failed to parse formatter update response:', e);
-          }
-        };
-
-        wsConnection.onmessage = tempHandler;
-
-        // Send the check formatter updates request
-        wsConnection.send(JSON.stringify({
-          type: 'check_formatter_updates'
-        }));
-      } else {
-        sendResponse({ error: 'Not connected to server' });
-      }
-      break;
+    // The following handlers were removed in P2 phase 7. The new minimal
+    // popup (Phase 6) does not send any of these messages — profile re-bind
+    // happens in the webapp, the formatter-update check moved to the
+    // server-side hourly auto-updater + UI button, and there is no popup UI
+    // for retry-auto-connect anymore (the worker handles reconnect itself):
+    //   - RESET_PROFILE_ID
+    //   - RETRY_AUTO_CONNECT
+    //   - GET_PROFILE_IDENTITY
+    //   - SET_PROFILE_ID
+    //   - CHECK_FORMATTER_UPDATES
+    // SET_PAIRING_REQUIRED / GET_PAIRING_REQUIRED were removed earlier (web
+    // UI owns this) — see QOL review extension/C1.
   }
   return true;
 });
@@ -339,9 +321,10 @@ function handleServiceStatusChange(enabled) {
   isEnabled = enabled;
 
   if (enabled) {
-    chrome.storage.local.get(['apiKey', 'serverUrl'], (result) => {
-      if (result.apiKey && result.serverUrl) {
-        config.apiKey = result.apiKey;
+    chrome.storage.local.get(['webpilot.installId', 'serverUrl'], (result) => {
+      const installId = result['webpilot.installId'];
+      if (installId && result.serverUrl) {
+        config.installId = installId;
         config.serverUrl = result.serverUrl;
         connectWebSocket();
       }
@@ -352,10 +335,15 @@ function handleServiceStatusChange(enabled) {
 }
 
 function handleConfigUpdate(newConfig) {
-  config.apiKey = newConfig.apiKey;
+  // `newConfig.installId` is preferred; fall back to legacy `apiKey` shape
+  // if a caller is still sending the old payload (will be removed when no
+  // such caller remains).
+  if (newConfig && typeof newConfig.installId === 'string') {
+    config.installId = newConfig.installId;
+  }
   config.serverUrl = newConfig.serverUrl;
 
-  if (isEnabled && config.apiKey && config.serverUrl) {
+  if (isEnabled && config.installId && config.serverUrl) {
     disconnectWebSocket();
     connectWebSocket();
   }
@@ -378,16 +366,43 @@ function connectWebSocket() {
 
   try {
     const wsUrl = new URL(config.serverUrl);
-    wsUrl.searchParams.set('apiKey', config.apiKey || '');
+    // Identify this install to the server. The server records (installId ->
+    // profileId) in `extension_installs` and uses it purely for routing. The
+    // server's auth boundary is at the agent layer (paired keys); the
+    // installId carries no agent power.
+    wsUrl.searchParams.set('installId', config.installId || '');
 
     wsConnection = new WebSocket(wsUrl.toString());
 
     wsConnection.onopen = () => {
-      console.log('WebSocket connected');
-      updateConnectionStatus('connected', null, null);
+      console.log('[ws:open] WebSocket TCP/WS handshake complete — sending hello FIRST');
+      // Per server protocol, the server gates ALL non-hello messages until
+      // identification completes. The very first frame on this WS MUST be
+      // `hello`. Any state-pushes (pairing config, etc.) belong AFTER
+      // `hello_ack` arrives. The popup connection-status stays in an
+      // "identifying" sub-state until then so users do not see a misleading
+      // green "Connected" during a hello that may still fail/timeout.
+      helloAcked = false;
+      if (helloTimeoutTimer) {
+        clearTimeout(helloTimeoutTimer);
+        helloTimeoutTimer = null;
+      }
+      updateConnectionStatus('connecting', 'Identifying...', null);
       startKeepalive();
       refreshConnectionMetadata();
-      wsConnection.send(JSON.stringify({ type: 'set_pairing_required', enabled: pairingRequiredCache }));
+      // Fire-and-forget — sendHelloHandshake handles its own send failure.
+      sendHelloHandshake().catch((err) =>
+        console.log('[hello] handshake failed:', err && err.message)
+      );
+      // Watchdog: if hello_ack never arrives, surface to popup.
+      helloTimeoutTimer = setTimeout(() => {
+        if (!helloAcked && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+          console.log(
+            `[hello] timeout: hello_ack not received within ${HELLO_TIMEOUT_MS}ms`
+          );
+          updateConnectionStatus('error', 'Identification failed', 'identify_timeout');
+        }
+      }, HELLO_TIMEOUT_MS);
     };
 
     wsConnection.onmessage = (event) => {
@@ -397,10 +412,38 @@ function connectWebSocket() {
 
         // Handle non-command messages from server
         if (message.type === 'paired_agents_list') {
+          // Pairing is now web-UI-only; the popup no longer renders this list,
+          // but we still stash it in storage in case future tooling consumes it.
           chrome.storage.local.set({ pairedAgents: message.agents });
-          try {
-            chrome.runtime.sendMessage({ type: 'PAIRED_AGENTS_UPDATED', agents: message.agents });
-          } catch (_) { /* popup may not be open */ }
+          return;
+        }
+
+        if (message.type === 'identify_required') {
+          // Server cannot determine which profile this extension belongs to.
+          // Store the known-profiles list and notify the popup to show a picker.
+          const knownProfiles = message.knownProfiles || [];
+          chrome.storage.local.set({
+            'webpilot.knownProfiles': knownProfiles,
+            'webpilot.profileId': null
+          });
+          // The popup picker has moved to the webapp's /pairings flow in
+          // Phase 6 — the IDENTIFY_REQUIRED broadcast had no remaining
+          // listener and was removed in P2 phase 7.
+          console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
+          return;
+        }
+
+        if (message.type === 'hello_ack') {
+          console.log('[hello] handshake acknowledged, profileId=' + message.profileId);
+          helloAcked = true;
+          if (helloTimeoutTimer) {
+            clearTimeout(helloTimeoutTimer);
+            helloTimeoutTimer = null;
+          }
+          // Persist the resolved profileId for future connects
+          chrome.storage.local.set({ 'webpilot.profileId': message.profileId });
+          // Now (and only now) is the WS safe to consider fully connected.
+          updateConnectionStatus('connected', null, null);
           return;
         }
 
@@ -429,8 +472,13 @@ function connectWebSocket() {
     };
 
     wsConnection.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
+      console.log('[ws:close] WebSocket closed:', event.code, event.reason);
       wsConnection = null;
+      helloAcked = false;
+      if (helloTimeoutTimer) {
+        clearTimeout(helloTimeoutTimer);
+        helloTimeoutTimer = null;
+      }
       stopKeepalive();
 
       let errorMsg = null;
@@ -442,14 +490,18 @@ function connectWebSocket() {
         errorType = 'server_unreachable';
         shouldRetry = true;
       } else if (event.code === 1008 || event.reason === 'Unauthorized') {
-        errorMsg = 'Authentication failed - invalid API key';
+        // Post-1.2.0 a 1008 from the extension WS endpoint means our installId
+        // was missing or malformed on the upgrade URL — typically a stale
+        // service-worker memory state. Clear cached server addresses and let
+        // the auto-connect path re-fetch from /connect and re-emit the
+        // installId-bearing WS URL. installId itself is preserved.
+        errorMsg = 'Authentication failed - reconnecting';
         errorType = 'auth_failed';
         shouldRetry = false;
-        chrome.storage.local.remove(['apiKey', 'serverUrl', 'enabled']);
-        config.apiKey = null;
+        chrome.storage.local.remove(['serverUrl', 'enabled', 'apiKey']);
         config.serverUrl = null;
         isEnabled = false;
-        // Re-fetch credentials from server
+        // Re-fetch addresses from server
         attemptAutoConnect();
       } else if (event.code === 1011) {
         errorMsg = 'Server error';
@@ -478,6 +530,57 @@ function connectWebSocket() {
   } catch (e) {
     console.error('Failed to connect:', e);
     updateConnectionStatus('error', e.message || 'Failed to connect', 'connection_failed');
+  }
+}
+
+/**
+ * Send the hello handshake to the server so it can route commands by Chrome
+ * profile directory name. We prefer a previously-stored profileId; otherwise
+ * we try chrome.identity.getProfileUserInfo() to surface an email the server
+ * can match against `Local State`. If neither is available, the server will
+ * reply with `identify_required` and the user picks via popup.
+ */
+async function sendHelloHandshake() {
+  if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return;
+
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(
+      ['webpilot.profileId', 'webpilot.installId'],
+      (data) => resolve(data)
+    );
+  });
+
+  const profileId = stored['webpilot.profileId'] || null;
+  const installId = stored['webpilot.installId'] || null;
+
+  let gaiaEmail = null;
+  if (!profileId) {
+    try {
+      gaiaEmail = await new Promise((resolve) => {
+        if (chrome.identity && chrome.identity.getProfileUserInfo) {
+          chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' }, (info) => {
+            resolve(info && info.email ? info.email : null);
+          });
+        } else {
+          resolve(null);
+        }
+      });
+    } catch (e) {
+      console.log('[hello] getProfileUserInfo failed: ' + (e && e.message));
+    }
+  }
+
+  const helloMsg = {
+    type: 'hello',
+    profileId,
+    gaiaEmail,
+    installId,
+  };
+  console.log('[hello] sending handshake', helloMsg);
+  try {
+    wsConnection.send(JSON.stringify(helloMsg));
+  } catch (e) {
+    console.log('[hello] send failed: ' + (e && e.message));
   }
 }
 
@@ -531,12 +634,9 @@ function updateConnectionStatus(status, error = null, errorType = null) {
   connectionStatus = status;
   connectionError = error;
   connectionErrorType = errorType;
-  chrome.runtime.sendMessage({
-    type: 'CONNECTION_STATUS_CHANGED',
-    status: status,
-    error: error,
-    errorType: errorType
-  }).catch(() => {});
+  // The CONNECTION_STATUS_CHANGED broadcast was removed in P2 phase 7. The
+  // new minimal popup polls the server for connection state and does not
+  // subscribe to chrome.runtime messages from the service worker.
 }
 
 // Command routing
@@ -587,18 +687,23 @@ async function handleServerCommand(message) {
         result = await typeText(params);
         organizeTab(params.tab_id);
         break;
-      case 'pairing_request': {
-        const pairingEntry = { commandId: id, agentName: params.agentName, timestamp: Date.now() };
-        const stored = await chrome.storage.local.get('pendingPairingRequests');
-        const pending = stored.pendingPairingRequests || [];
-        pending.push(pairingEntry);
-        await chrome.storage.local.set({ pendingPairingRequests: pending });
-        try {
-          chrome.runtime.sendMessage({ type: 'PAIRING_REQUEST', commandId: id, agentName: params.agentName });
-        } catch (_) { /* popup may not be open */ }
-        // Do NOT call sendResult — human must approve/deny via popup
-        return;
-      }
+      case 'reload_extension':
+        // Developer hot-reload: ack first, then schedule chrome.runtime.reload
+        // ~100ms later so the response makes it back over the WS before the
+        // worker restarts. After reload, the worker re-runs background.js which
+        // re-opens the WS to the server; the paired API key persists in
+        // chrome.storage so no re-pairing is required.
+        result = { reloading: true, scheduledInMs: 100 };
+        sendResult(id, true, result);
+        setTimeout(() => {
+          try {
+            chrome.runtime.reload();
+          } catch (e) {
+            // Nothing to do — the worker is about to die anyway.
+            console.warn('[handlers] chrome.runtime.reload failed:', e);
+          }
+        }, 100);
+        return; // Skip the trailing sendResult below — we already sent.
       default:
         throw new Error(`Unknown command type: ${type}`);
     }
@@ -682,8 +787,8 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.enabled) {
       isEnabled = changes.enabled.newValue;
     }
-    if (changes.apiKey) {
-      config.apiKey = changes.apiKey.newValue;
+    if (changes['webpilot.installId']) {
+      config.installId = changes['webpilot.installId'].newValue;
     }
     if (changes.serverUrl) {
       config.serverUrl = changes.serverUrl.newValue;
@@ -694,9 +799,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.whitelistedDomains) {
       restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
-    if (changes.pairingRequired) {
-      pairingRequiredCache = changes.pairingRequired.newValue !== false;
-    }
+    // pairingRequired key intentionally not mirrored — see F3 removal note.
   }
 });
 

@@ -1,10 +1,18 @@
-# Electron App (Phase 2)
+# Electron App
 
-Next.js Electron application for installer onboarding and MCP server service management.
+Minimal Next.js + Electron wrapper that ships the MCP server binary, launches it as a detached child on app start, and renders a basic status pane.
+
+> The primary management UI for WebPilot now lives **inside the server** at `http://localhost:3456/ui/` (served by the server pkg binary, see `BUILD_ARCHITECTURE.md`). The Electron app is intentionally minimal: it exists to install the binary + extension files onto disk and to bootstrap the server process; it is not where users configure profiles, approve pairings, or manage agents.
 
 ## Purpose
 
-The Electron app provides a graphical interface for setting up and managing WebPilot. On startup, the Electron main process also launches the MCP server as a detached child process (see [Server Launching](#server-launching) below). The Electron app additionally serves as a control panel for service registration and status monitoring.
+The Electron app exists to:
+
+1. Ship the compiled MCP server binary and the Chrome extension files as `extraResources`.
+2. Spawn the server binary as a detached child process on app start (`startServer()` in `electron/main.js`).
+3. Render a minimal status pane (server up/down, extension files present, polled via `/health`) so users have a visible sign the daemon is running.
+
+The server-hosted web UI is the canonical surface for pairing, profile management, agent administration, and notification preferences. Users open it by visiting `http://localhost:3456/ui/` (the server also auto-opens it on `--foreground` start via `service/open-browser.js`).
 
 ## Features
 
@@ -23,23 +31,13 @@ The status dashboard has a basic working implementation in `app/page.js`:
 - Start/stop/restart controls for the running server (note: preload exposes `installService()` and `uninstallService()` for auto-start registration, but these are not start/stop controls and are not wired to the UI)
 - Active MCP sessions display
 
-### Onboarding Wizard (Placeholder Only)
+### Onboarding (intentionally minimal here)
 
-The onboarding wizard currently exists only as a placeholder string (`"Onboarding goes here"` in `page.js`). No step-by-step wizard logic exists yet.
+The Electron page renders only the placeholder string `"Onboarding goes here"`. There is no Electron-side wizard. The server-hosted web UI at `/ui/` covers extension sideloading guidance, profile setup, pairing, and configuration. The Electron app is just the installer + binary launcher.
 
-**Planned (not yet implemented):**
-- Guide users through Chrome extension sideloading (enable Developer Mode, Load unpacked, select extension folder)
-- Display the connection string for pasting into the extension popup
-- Show the MCP config snippet for adding to Claude Code or other MCP clients
-- Verify setup: check that the server is running, extension is connected, and end-to-end communication works
+### Configuration Management
 
-### Configuration Management (Not Yet Implemented)
-
-- View and update the server port and API key
-- Regenerate the API key
-- Toggle network mode (localhost vs. LAN access)
-
-Note: `getServerPort()` is available in the preload bridge and used by the health check, but no configuration editing UI exists. API key regeneration has no implementation.
+Configuration (port, network mode, notifications, paired agents) is managed in the server-hosted web UI, not in this Electron app. `getServerPort()` is exposed via the preload bridge solely so the status pane can hit `/health`.
 
 ## Architecture
 
@@ -97,17 +95,17 @@ Electron-builder output directory is `../../dist`, placing built installers in t
 
 ## Current Status
 
-The package (`@webpilot/onboarding`, version `0.4.0`) contains a working foundation:
+The package is `@webpilot/onboarding`, version `1.0.0` (unified with the rest of the monorepo on the QOL-Features branch).
 
 ```
 packages/electron/
-  package.json          # Name: @webpilot/onboarding, version 0.4.0
+  package.json          # Name: @webpilot/onboarding, version 1.0.0
   app/layout.js         # Next.js layout with metadata
-  app/page.js           # Status dashboard with health polling
-  electron/main.js      # Electron main process with server launching
+  app/page.js           # Status pane (server up/down, extension files present)
+  electron/main.js      # Electron main process; spawns the server binary on start
   electron/preload.js   # Preload script with IPC bridge (7 methods)
   next.config.js        # Static export config with file:// compatibility
   electron-builder.yml  # Full installer configuration
 ```
 
-The status dashboard is partially functional (health polling and status display work). The onboarding wizard is a placeholder only. Configuration management and API key regeneration are not yet implemented. The MCP server and Chrome extension (Phase 1) are functional independently.
+The Electron status pane is intentionally simple — the rich management UI lives in the server's `/ui/` surface. The "Onboarding goes here" placeholder string in `page.js` is a known gap; in practice users open the server-hosted UI for setup. Configuration management and API key regeneration are not implemented in this app; both are handled by the web UI.
