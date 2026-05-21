@@ -5,22 +5,55 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;" />
   <title>WebPilot</title>
   <style>
+    /* ----------------------------------------------------------------------
+     * Splash window — warm-monochrome palette mirror.
+     *
+     * Tokens inlined from packages/server-web-ui/app/globals.css because this
+     * standalone HTML loads in a separate Electron BrowserWindow before the
+     * dashboard URL is reachable. Keep these values in sync with globals.css
+     * so the OS splash → ConnectingSplash handoff is a visual no-op.
+     *
+     * Light mode is the default (matches the app default when no theme is
+     * stored). prefers-color-scheme: dark flips to the dark token set so
+     * dark-mode OS users boot straight into the dark palette.
+     * -------------------------------------------------------------------- */
     :root {
-      color-scheme: dark;
+      color-scheme: light dark;
+      --wp-bg: #FBFAF7;
+      --wp-fg: #1A1815;
+      --wp-fg-secondary: rgba(26, 24, 21, 0.62);
+      --wp-fg-muted: rgba(26, 24, 21, 0.36);
+      --dur-quick: 180ms;
+      --ease-quart-out: cubic-bezier(0.25, 1, 0.5, 1);
     }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --wp-bg: #161412;
+        --wp-fg: #F0EDE8;
+        --wp-fg-secondary: rgba(240, 237, 232, 0.62);
+        --wp-fg-muted: rgba(240, 237, 232, 0.36);
+      }
+    }
+
     html, body {
       height: 100%;
       margin: 0;
       padding: 0;
-      background: #0e0e10;
-      color: #f5f5f7;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-                   'Helvetica Neue', Arial, sans-serif;
+      background: var(--wp-bg);
+      color: var(--wp-fg);
+      /* Geist may not have loaded yet — splash must NOT block on web font.
+         Fall back to system-ui immediately. */
+      font-family: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                   "Segoe UI", system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
     }
+
     .wrap {
       height: 100%;
       display: flex;
@@ -29,46 +62,65 @@
       justify-content: center;
       gap: 24px;
     }
+
     .logo {
-      width: 144px;
-      height: 144px;
-      animation: float 3.4s ease-in-out infinite;
+      width: 96px;
+      height: 96px;
+      /* Resting hairline-everything: no shadow on the logo itself. A subtle
+         floating motion provides the only "alive" cue while we wait. */
+      animation: wp-splash-float 3.4s ease-in-out infinite;
     }
-    @keyframes float {
+
+    @keyframes wp-splash-float {
       0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-6px); }
+      50%      { transform: translateY(-6px); }
     }
+
     .wordmark {
-      font-size: 28px;
-      font-weight: 500;
-      letter-spacing: -0.02em;
       margin: 0;
+      font-size: 32px;        /* matches --fs-display */
+      font-weight: 500;
+      line-height: 1.2;
+      letter-spacing: -0.015em;
+      color: var(--wp-fg);
     }
+
     .status {
-      font-size: 14px;
-      color: #8b8b94;
-      letter-spacing: 0.01em;
       display: flex;
       align-items: center;
       gap: 4px;
       min-height: 20px;
+      font-size: 13px;        /* matches --fs-small */
+      letter-spacing: 0.01em;
+      color: var(--wp-fg-secondary);
     }
+
     .status .dots {
       display: inline-flex;
       gap: 3px;
     }
+
     .status .dots span {
       width: 4px;
       height: 4px;
       border-radius: 50%;
-      background: #8b8b94;
-      animation: pulse 1.2s ease-in-out infinite;
+      background: var(--wp-fg-muted);
+      animation: wp-splash-pulse 1.2s ease-in-out infinite;
     }
+
     .status .dots span:nth-child(2) { animation-delay: 0.15s; }
     .status .dots span:nth-child(3) { animation-delay: 0.30s; }
-    @keyframes pulse {
+
+    @keyframes wp-splash-pulse {
       0%, 100% { opacity: 0.25; transform: scale(1); }
-      50% { opacity: 1; transform: scale(1.3); }
+      50%      { opacity: 1;    transform: scale(1.3); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .logo,
+      .status .dots span {
+        animation: none;
+      }
     }
   </style>
 </head>
@@ -78,7 +130,7 @@
     <h1 class="wordmark">WebPilot</h1>
     <div class="status">
       <span>Starting</span>
-      <span class="dots"><span></span><span></span><span></span></span>
+      <span class="dots" aria-hidden="true"><span></span><span></span><span></span></span>
     </div>
   </div>
 </body>

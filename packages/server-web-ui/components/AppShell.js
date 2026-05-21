@@ -188,7 +188,9 @@ function ConnectingSplash({ message }) {
           margin: 0,
           fontSize: 'var(--fs-display)',
           fontWeight: 500,
-          letterSpacing: '-0.02em',
+          lineHeight: 1.2,
+          letterSpacing: '-0.015em',
+          color: 'var(--wp-fg)',
         }}
       >
         WebPilot
@@ -196,7 +198,7 @@ function ConnectingSplash({ message }) {
       <div
         style={{
           fontSize: 'var(--fs-small)',
-          color: 'var(--wp-fg-muted)',
+          color: 'var(--wp-fg-secondary)',
           letterSpacing: '0.01em',
           display: 'flex',
           alignItems: 'center',
