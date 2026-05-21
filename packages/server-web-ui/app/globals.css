@@ -465,7 +465,7 @@ hr {
 /* Active: neutral elevated fill, primary-fg text, 3px neutral-fg left edge,
    600-weight label. Three value-only strengtheners stacked — no hue change
    (warm-monochrome restraint, dot-only color, hairline-everything per
-   ELEGANCE.md). Solid Heroicons variant comes from JS. The left edge is
+   docs/DESIGN_AND_UX.md). Solid Heroicons variant comes from JS. The left edge is
    a pseudo-element so it sits flush at the row's left side regardless
    of padding. */
 .wp-nav-item.is-active {
