@@ -16,7 +16,7 @@ The MCP server is the middle layer between AI agents and the browser. It:
 6. Manages local Chrome state: detects whether Chrome is running with `--silent-debugger-extension-api`, can launch/kill+relaunch Chrome per profile, and tracks per-profile filesystem-mtime activity
 7. Sends native OS notifications (Windows toast / macOS osascript / Linux notify-send) when a new pairing request arrives
 
-MCP tool calls require a paired API key by default, except for `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. The key can be provided via the `X-API-Key` HTTP header, the `apiKey` query parameter on the SSE/message endpoints, or as an `api_key` parameter in individual tool call arguments. The server's resolved key for each call drives both authentication and per-agent profile routing via `resolveTargetProfile` in `mcp-handler.js`.
+MCP tool calls require a paired API key by default, except for `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_dev_get_formatter_logs`. The key can be provided via the `X-API-Key` HTTP header, the `apiKey` query parameter on the SSE/message endpoints, or as an `api_key` parameter in individual tool call arguments. The server's resolved key for each call drives both authentication and per-agent profile routing via `resolveTargetProfile` in `mcp-handler.js`.
 
 The extension-facing WebSocket endpoint identifies the connecting extension by `?installId=<uuid>` — there is no shared transport key. The `/api/ui/*` REST and WebSocket endpoints are **localhost-only** and require no API key (rejected from non-loopback addresses with HTTP 403).
 
@@ -84,7 +84,7 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 Implements the MCP protocol:
 
 - **SSE session management** -- Each `GET /sse` request creates a session with a UUID. The session ID is sent as the first SSE event so the client knows where to POST messages. Each session maintains a message queue that is flushed every 100ms via `setInterval`, plus a separate keepalive comment sent every 30 seconds. On client disconnect, both intervals are cleared and the session is removed from the Map.
-- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. The auth-exempt set is `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp. Auth enforcement is gated by `isPairingRequired()` — the server retains a legacy code path where pairing-required can be disabled. In the current build it is always true.
+- **Message handling** -- `POST /message?session_id=<id>` processes JSON-RPC requests and queues responses for delivery via the SSE stream. Late-arriving API keys (sent on `/message` requests via `X-API-Key` header or `apiKey` query parameter) update the session's stored key. The `processMessage` function enforces authentication on `tools/call` requests: it checks `session.mcpApiKey` first, then falls back to `params.arguments.api_key`, and validates the effective key via `pairedKeys.validateKey()`. The auth-exempt set is `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_dev_get_formatter_logs`. After successful authentication, `pairedKeys.touchKey()` is called to update the key's `lastAccessed` timestamp. Auth enforcement is gated by `isPairingRequired()` — the server retains a legacy code path where pairing-required can be disabled. In the current build it is always true.
 - **Per-agent profile routing** -- `resolveTargetProfile(apiKey)` looks up the entry's `profileId` (set during approval or via `PATCH /api/ui/agents/:key`) and returns it. Tool calls are then routed to the extension WS bound to that profile via `extensionBridge.sendCommand(profileId, ...)`. Legacy entries with `profileId: null` fall back to the server-wide `managedProfile` config. The auth gate's resolved key is threaded into `handleToolCall(params, effectiveKey)` so routing and auth share a single key resolution.
 - **request_pairing short-circuit** -- If the caller already presents a valid API key, `request_pairing` returns the existing identity (`agentName`, `profileId`) instead of minting a new pending entry. This handles subagents that inherit `.mcp.json` from a parent and reflexively re-pair.
 - **Protocol methods** -- Handles `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
@@ -202,7 +202,9 @@ Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, 
 | `browser_type` | Type text with CDP keyboard simulation | `tab_id`, `text`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
 | `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
-| `webpilot_reload_formatters` | Reload all formatters without server restart | (none) |
+| `webpilot_reload_formatters` | DEVELOPER TOOL. Reload all formatters (auto-updated + custom) without restarting the server. Auth-gated (reloads code from disk → mutates server state). | (none) |
+| `webpilot_dev_get_formatter_logs` | DEVELOPER TOOL. Returns health summary + recent error ring-buffer entries for one platform formatter. Auth-exempt (strictly read-only inspection). | `platform`, `limit?` |
+| `webpilot_dev_reload_extension` | DEVELOPER TOOL. Triggers `chrome.runtime.reload()` in the extension service worker bound to the caller's profile, so edits under `packages/chrome-extension-unpacked/` take effect without manually reloading from `chrome://extensions/`. Per-profile scope only — other paired agents must call it from their own profile to reload everywhere. WS drops momentarily; the paired API key persists. | `api_key?` |
 | `webpilot_run_workflow` | Execute a platform-specific workflow (e.g. `discord/send_message`) that bundles multiple primitive actions into one named operation. Workflow names + parameters come from each formatter's manifest. | `platform`, `workflow`, `tab_id`, `params?` |
 
 ### `browser_request_chain`
@@ -390,13 +392,15 @@ Background daemon output is captured by a size-managed log writer (`src/service/
 
 ### Data Directory
 
-The data directory location depends on the execution mode:
+The data directory is resolved by `getDataDir()` in `src/service/paths.js`:
 
-- **pkg binary mode**: `../../data/` relative to the executable path (designed for the Electron deployment layout)
-- **Dev mode**: Platform-specific user-local config directory:
-  - Windows: `%LOCALAPPDATA%\WebPilot`
-  - macOS: `~/Library/Application Support/WebPilot`
-  - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
+1. **`WEBPILOT_DATA_DIR` env var** — when set (Electron main passes `app.getPath('userData')` here when it spawns the daemon), this wins outright.
+2. **Platform user-data path** — otherwise, the platform-appropriate userData-equivalent path (mirrors what Electron's `app.getPath('userData')` resolves to for this build, so the autostart-launched daemon and the Electron-spawned daemon land on the same dir):
+   - Windows: `%APPDATA%\@webpilot\onboarding` (matches `app.getName()` from `packages/electron/package.json`; do not change without migrating user data)
+   - macOS: `~/Library/Application Support/WebPilot`
+   - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
+
+The legacy pre-1.1.6 in-install location (`../../data/` relative to the pkg binary's `execPath`) is consulted only by the one-shot `migrateLegacyInstallData()` upgrade path and is not used at runtime.
 
 Contents (post-P2):
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.

@@ -23,12 +23,15 @@ Defined in `packages/server-for-chrome-extension/package.json`:
     "outputPath": "dist",
     "assets": [
       "src/**/*.js",
+      "src/**/*.sql",
       "index.js",
       "../server-web-ui/out/**/*"
     ]
   }
 }
 ```
+
+`src/**/*.sql` ships the SQL migration files for `better-sqlite3` into the snapshot. `better-sqlite3` itself ships a native binding (`build/Release/better_sqlite3.node`) that **cannot** be baked into the pkg snapshot — see the `copy-native-deps.js` step below.
 
 The `../server-web-ui/out/**/*` glob bundles the Next.js static export into the pkg snapshot so the binary ships with the web UI baked in. The platform-specific build scripts (`build:win`, `build:mac`, `build:linux`) run `build:web-ui` first (which executes `next build` in `packages/server-web-ui`) before invoking `pkg`. At runtime the server resolves the snapshot path and serves `/ui/...` via `fs.readFileSync` (express.static is bypassed so the pkg-patched `fs` works correctly — see QOL fix F8).
 
@@ -68,10 +71,14 @@ Targets are specified as CLI flags in the per-platform npm scripts, not in the `
 
 ```bash
 cd packages/server-for-chrome-extension
-npm run build:win    # npm run build:web-ui && pkg . --target node18-win-x64 --out-path dist
-npm run build:mac    # npm run build:web-ui && pkg . --target node18-macos-x64 --out-path dist
-npm run build:linux  # npm run build:web-ui && pkg . --target node18-linux-x64 --out-path dist
+npm run build:win    # build:web-ui && pkg . --target node22-win-x64   --out-path dist && node scripts/copy-native-deps.js
+npm run build:mac    # build:web-ui && pkg . --target node22-macos-x64 --out-path dist && node scripts/copy-native-deps.js
+npm run build:linux  # build:web-ui && pkg . --target node22-linux-x64 --out-path dist && node scripts/copy-native-deps.js
 ```
+
+### `copy-native-deps.js`
+
+`packages/server-for-chrome-extension/scripts/copy-native-deps.js` runs as the final stage of every platform build. `@yao-pkg/pkg` cannot embed native `.node` bindings inside the snapshot, so the script locates the hoisted `node_modules/better-sqlite3/build/Release/better_sqlite3.node` (checking the monorepo root first, then the package-local `node_modules/` as a fallback) and copies it into `dist/better_sqlite3.node` next to the built binary. The runtime shim in `src/db/connection.js` then points better-sqlite3 at that file via `BETTER_SQLITE3_BINDING_PATH`. The script exits non-zero on failure so the parent build halts.
 
 Output goes to `packages/server-for-chrome-extension/dist/`:
 
@@ -83,11 +90,59 @@ Output goes to `packages/server-for-chrome-extension/dist/`:
 
 ## Electron Build
 
-The Electron app is built with `electron-builder`. The key configuration points:
+The Electron app is built with `electron-builder`. Configuration lives in `packages/electron/electron-builder.yml`. Key shape:
+
+```yaml
+appId: com.webpilot.app
+productName: WebPilot
+npmRebuild: false
+directories:
+  output: ../../dist
+files:
+  - electron/**/*
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../server-for-chrome-extension/dist   # → resources/server/
+    to: server
+  - from: ../chrome-extension-unpacked          # → resources/chrome-extension/
+    to: chrome-extension
+  - from: assets                                 # → resources/assets/
+    to: assets
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: false
+  perMachine: false
+  include: build/installer.nsh
+```
 
 - **Target**: NSIS installer (Windows), `.dmg` (macOS), AppImage (Linux)
-- **Install location**: `%LOCALAPPDATA%\Programs\WebPilot\` (Windows default for per-user NSIS installs)
-- **extraResources**: The server binary and extension directory are declared as `extraResources` in the electron-builder config so they ship inside the Electron app's `resources/` folder but are not part of the Asar archive.
+- **Install location**: `%LOCALAPPDATA%\Programs\WebPilot\` (Windows default for per-user NSIS installs; `perMachine: false`)
+- **extraResources**: The server binary, the unpacked Chrome extension, and the icon assets ship inside the Electron app's `resources/` folder but are not part of the Asar archive.
+- **NSIS hook**: `build/installer.nsh` plugs in `customCheckAppRunning` and `customUnInstall` macros — see below.
+
+### `generate-icons.js`
+
+`packages/electron/scripts/generate-icons.js` (run manually via `npm run generate:icons` in the Electron workspace) regenerates icon assets from `packages/electron/assets/logo.png` using `sharp`. Outputs:
+
+| Output | Sizes | Purpose |
+|---|---|---|
+| `packages/electron/assets/icon.ico` | 16/24/32/48/64/128/256 | Windows app icon (referenced by `electron-builder.yml` → `win.icon`) |
+| `packages/electron/assets/tray-icon.ico` | 16/20/24/32/40/48 | Windows tray icon — `Tray()` on Windows needs an `.ico`, passing a PNG composites on a white square |
+| `packages/electron/assets/tray-icon.png` | 32×32 | Tray icon fallback for macOS / Linux |
+| `packages/server-web-ui/app/icon.png` | 512×512 | Next.js auto-discovered favicon for `/ui/` |
+| `packages/electron/electron/splash-logo.png` | 192×192 | Splash window logo |
+
+The `.ico` files are written by hand — modern Windows accepts PNG-encoded payloads inside `.ico`, so each `ICONDIRENTRY` carries the raw PNG bytes at that size.
+
+### `installer.nsh` macros
+
+The default electron-builder NSIS uninstaller knows about `WebPilot.exe` but not the standalone daemon, leaves the HKCU Run key in place, and does not touch user data. `packages/electron/build/installer.nsh` overrides two hook points:
+
+- **`customCheckAppRunning`** — runs at both install and uninstall time. `taskkill /F /IM "webpilot-server-for-chrome-extension.exe" /T` first (the daemon holds file handles on its own `.exe` inside the install dir, which otherwise aborts the uninstall), then `taskkill /F /IM "WebPilot.exe" /T`, then `Sleep 800` to let Windows release handles before file ops. Always runs for both upgrade and full-uninstall flows.
+- **`customUnInstall`** — runs at the end of the uninstall section. Belt-and-suspenders kills anything still bound to port 3456 via PowerShell, removes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry under `WebPilotServer`, and wipes user data at `$APPDATA\WebPilot` and `$LOCALAPPDATA\WebPilot` (the latter for back-compat with pre-1.1.6 dev-mode writes).
+
+The destructive parts of `customUnInstall` (autostart removal, user-data wipe) are guarded by `${ifNot} ${isUpdated}`. `${isUpdated}` is set by electron-builder's uninstaller template when this stub is being run as the preflight of an upgrade installer ("install new version on top of old"). On upgrades we must preserve the user's DB, paired-key state, and Run key — otherwise every version bump re-onboards the user. The `${else}` branch just prints "Upgrade in progress — preserving user data and autostart."
 
 What gets bundled into the Electron app:
 
@@ -115,10 +170,10 @@ The Electron app provides:
 When the Electron app starts, it performs these steps:
 
 1. Ensures the data directory exists (creates it if necessary).
-2. Spawns the server binary from its bundled location (`process.resourcesPath/server/`).
+2. Spawns the server binary from its bundled location (`process.resourcesPath/server/`), passing `WEBPILOT_DATA_DIR=app.getPath('userData')` in the child env so the daemon writes to the same location the Electron shell reads from.
 3. Opens the management UI window.
 
-No file copying or deployment occurs. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory. The data directory (for config, logs, PID files) is at `<installDir>/data/`, a sibling of the `resources/` directory.
+No file copying or deployment occurs. The server binary and extension files run directly from their bundled locations inside the Electron app's `resources/` directory. The data directory (DB, paired-key state, formatter config, PID/port files, logs) lives **outside** the install dir at Electron's `userData` path — see *Deployment Paths* below — so that user state survives the install-dir wipe that electron-builder performs on every version bump.
 
 ## Deployment Paths
 
@@ -132,13 +187,14 @@ No file copying or deployment occurs. The server binary and extension files run 
 
 ### Bundled Resources (inside install directory)
 
-The server binary and extension files remain in the Electron app's `resources/` directory. They are not copied elsewhere.
+The server binary and extension files remain in the Electron app's `resources/` directory. They are not copied elsewhere. **User data does not live here** — it lives at Electron's `userData` path (see below).
 
 ```
 <installDir>/
   resources/
     server/
       webpilot-server-for-chrome-extension[.exe]    Compiled server binary
+      better_sqlite3.node                            Native sqlite binding (copied by copy-native-deps.js)
     chrome-extension/                                Unpacked Chrome extension files
       manifest.json
       background.js
@@ -147,19 +203,36 @@ The server binary and extension files remain in the Electron app's `resources/` 
       icons/
       popup/
       utils/
-  data/                                              Created at runtime
-    config/
-      server.json                                    API key and port configuration
-      paired-keys.json                               Paired agent API keys
-    daemon.log                                       Daemon log output
-    network.enabled                                  Persisted network mode preference (1 or 0)
-    server.pid                                       PID of running daemon
-    server.port                                      Port of running daemon
-    logs/
-      server.log                                     Server log output
+    assets/                                          Icons used by tray + windows
 ```
 
-The data directory is at `<installDir>/data/`, computed as a sibling of `resources/` via `path.resolve(path.dirname(process.execPath), '..', '..', 'data')`. In dev mode (when `app.isPackaged` is false), the data directory falls back to `%LOCALAPPDATA%\WebPilot\` (Windows) or platform equivalent.
+### User Data Directory (outside install dir, survives upgrades)
+
+User state lives at Electron's `userData` path. The Electron main process resolves this via `app.getPath('userData')`, and the standalone daemon receives the same value through the `WEBPILOT_DATA_DIR` environment variable when Electron spawns it. When the daemon is launched by the HKCU Run key autostart (no env var), `service/paths.js` hardcodes the same platform path so both processes land on the same directory.
+
+| Platform | User-data path |
+|---|---|
+| Windows | `%APPDATA%\@webpilot\onboarding\` |
+| macOS   | `~/Library/Application Support/WebPilot/` |
+| Linux   | `$XDG_CONFIG_HOME/WebPilot/` (or `~/.config/WebPilot/`) |
+
+The Windows path uses `@webpilot\onboarding` — not `WebPilot` — because `app.getName()` returns the `name` field from `packages/electron/package.json` (`@webpilot/onboarding`), which takes precedence over electron-builder's `productName` for the userData path. Do not change that `name` without also writing a migration: the autostart-launched daemon hardcodes this exact string in `service/paths.js`.
+
+```
+<userDataDir>/
+  config/
+    server.json                                    Port configuration (apiKey field is silently ignored — legacy)
+    paired-keys.json                               Paired agent API keys
+  daemon.log                                       Daemon log output
+  network.enabled                                  Persisted network mode preference (1 or 0)
+  server.pid                                       PID of running daemon
+  server.port                                      Port of running daemon
+  logs/
+    server.log                                     Server log output
+    server-error.log                               Server error log output
+```
+
+The legacy `<installDir>\data\` location (pkg builds ≤ 1.1.5) and the dev-mode `%LOCALAPPDATA%\WebPilot\` location are both wiped by the NSIS uninstaller's `customUnInstall` macro on a clean uninstall but preserved on upgrades (guarded by `${isUpdated}`). Dev mode now aligns with prod — `app.isPackaged === false` still uses `app.getPath('userData')` so the upgrade path can be exercised locally.
 
 The extension directory users point Chrome to is `<installDir>/resources/chrome-extension/`.
 
@@ -312,18 +385,21 @@ The pkg / Electron / installed binary path is unchanged by these scripts — it 
        | installs
        v
 [Electron App]  ──────────────────────────────────────┐
-  %LOCALAPPDATA%\Programs\WebPilot\                   |
+  install dir: %LOCALAPPDATA%\Programs\WebPilot\      |
+       └── resources/ (bundled, no copying)           |
+             ├── server/                              |
+             │     webpilot-server-for-chrome-extension.exe
+             │     better_sqlite3.node                |
+             ├── chrome-extension/                    |
+             └── assets/                              |
+                                                      |
+  user data: %APPDATA%\@webpilot\onboarding\          |
+       ├── config/server.json                         |
+       ├── server.pid / server.port                   |
+       └── logs/                                      |
        |                                              |
-       ├── resources/ (bundled, no copying)             |
-       │     ├── server/                               |
-       │     │     webpilot-server-for-chrome-extension.exe
-       │     └── chrome-extension/                     |
-       └── data/ (created at runtime)                  |
-             ├── config/server.json                    |
-             ├── server.pid / server.port              |
-             └── logs/                                 |
-       |                                              |
-       | on launch, spawns server from resources/     |
+       | on launch, spawns server with                |
+       | WEBPILOT_DATA_DIR=app.getPath('userData')    |
        | (auto-registers as background service)       |
        v                                              |
 [MCP Server]  (port 3456)                             |

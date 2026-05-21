@@ -41,7 +41,7 @@ The WebPilot service starts automatically on login. The Chrome extension is auto
 
 If your agent already has an API key (e.g. a subagent inheriting its parent's `.mcp.json`), `request_pairing` short-circuits and returns the existing identity — no re-pairing needed.
 
-For the full tool reference (14 MCP tools: nine `browser_*` + pairing + formatter inspection + workflow orchestration), see [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md).
+For the full tool reference (17 MCP tools: ten `browser_*` + pairing + formatter inspection + workflow orchestration), see [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md).
 
 ## Architecture
 
@@ -65,7 +65,7 @@ Full architecture index: [`docs/INDEX.md`](docs/INDEX.md).
 
 ## Development
 
-Requires Node 20+ and a local Chrome install.
+Requires Node 22+ and a local Chrome install.
 
 ```bash
 git clone https://github.com/Jtonna/WebPilot.git
@@ -86,7 +86,7 @@ npm run dist:win    # or :mac / :linux
 
 ## Contributing
 
-Issues and PRs welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first — every PR needs a `release:*` label so the auto-release pipeline knows whether to bump the version.
+Issues and PRs welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first — releases are cut manually from the Actions tab (patch / minor / major dispatchers), so merging a PR does not auto-release.
 
 Found a security issue? Please follow [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
 

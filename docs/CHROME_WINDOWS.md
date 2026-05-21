@@ -2,9 +2,9 @@
 
 This document captures Chrome (and Windows-host) behaviors that WebPilot
 empirically depends on. Everything below was verified against Chrome on
-Windows 10/11. macOS and Linux behavior may differ — when those platforms
-ship to v1, either verify each section's claims still hold or add
-platform-specific siblings (`CHROME_MACOS.md`, `CHROME_LINUX.md`).
+Windows 10/11, which is the supported platform. macOS and Linux behavior
+may differ — see [`CHROME_MAC.md`](CHROME_MAC.md) and
+[`CHROME_LINUX.md`](CHROME_LINUX.md) for the platform-specific siblings.
 
 ---
 

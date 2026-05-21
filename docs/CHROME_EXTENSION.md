@@ -48,7 +48,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired 2026-05-17, see `docs/SECURITY_AUDIT_2026-05-17.md`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Hello handshake
 
@@ -228,7 +228,7 @@ It does **not** send any `chrome.runtime.sendMessage` to the background service 
 
 ### Per-profile reload required
 
-The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** in Phase 6 and again to **`1.2.0`** at the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge), so you can confirm which copy is live from `chrome://extensions/`.
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** in Phase 6, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`1.1.8`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
 
 For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
@@ -288,9 +288,10 @@ Standard command envelope:
 | `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; popup surfaces a profile picker. |
 | `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
-| `formatter_update_result` | Push (no `id`) | _(result payload)_ | Server responds to a `check_formatter_updates` request with the outcome of the update check. |
 
 > Removed: `pairing_request`. Pairing approval no longer goes through the extension popup — pending pairings are surfaced and approved/denied via the web UI at `/ui/pairings`. The legacy `pairing_request` push has no consumer in the current extension.
+>
+> Removed: `formatter_update_result`. The Phase-7 popup rewrite removed the extension-side `CHECK_FORMATTER_UPDATES` runtime message and the corresponding `check_formatter_updates` WebSocket request, so the server's push response no longer has a consumer in the extension. Formatter update checks are now driven from the web UI.
 
 ### Extension to Server (WebSocket)
 
@@ -320,9 +321,10 @@ Error:
 | `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
 | `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
 | `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |
-| `check_formatter_updates` | _(none)_ | Trigger an on-demand formatter update check. Server responds with `formatter_update_result`. |
 
 > **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. The extension popup no longer sends these. Network mode and pairing config are now owned by the web UI.
+>
+> **Removed from the extension:** `check_formatter_updates`. The Phase-7 popup rewrite dropped the runtime listener and the WebSocket sender. Formatter update checks now run from the server-hosted web UI.
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
@@ -344,4 +346,4 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 Host permission `<all_urls>` allows the extension to operate on any website.
 
-Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.2.0"`. The background service worker is declared with `"type": "module"`.
+Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.1.8"`. The background service worker is declared with `"type": "module"`.

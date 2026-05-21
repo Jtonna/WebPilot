@@ -4,9 +4,16 @@
 > server control panel served at `http://localhost:<port>/ui`. This is a
 > spec — no source code in this branch is modified by this document.
 >
-> Locked constraints: same five pages (Dashboard, Pairings, Profiles, Agents,
-> Settings); inline Action Items on the Dashboard; fully responsive; Apple-grade
-> "quiet" feel.
+> Locked constraints: seven pages (Dashboard, Profiles, Agents, Sites,
+> Formatters, Pairings, Settings) split across two sidebar groups
+> (Workspace / System); inline Action Items on the Dashboard; fully
+> responsive; Apple-grade "quiet" feel.
+>
+> Status: this spec was written against the original five-page IA. Sites
+> and Formatters were added in P2 (phases 5 and 6) and are documented in
+> the IA tree below. Sections 1–5 still describe the pre-cutover key
+> stories; pages 6 (Sites) and 7 (Formatters) are sketched at the end of
+> the per-page detail.
 
 ---
 
@@ -30,15 +37,14 @@ still feels honest about what's happening on the user's machine.
 
 ```
 WebPilot UI
+│
+│  Workspace (sidebar group)
+│
 ├── Dashboard                         (/ui)
 │   ├── Action items                  (pending pairings, inline approve/deny)
+│   ├── Chrome profiles               (each row links to /agents?profile=<dir>)
 │   ├── System status (single card)   (Chrome + Server + Extensions, one line each)
 │   └── Quiet zone                    (gentle "what next" card when truly empty)
-│
-├── Pairings                          (/ui/pairings)
-│   ├── Awaiting review               (same inline card as Dashboard)
-│   └── History                       (persistent, server-backed, paginated)
-│       └── Row → expand              (timestamp, decision, bound profile)
 │
 ├── Profiles                          (/ui/profiles)
 │   ├── Known profiles                (list, grouped by status)
@@ -50,6 +56,23 @@ WebPilot UI
 │   ├── Pair a new agent              (primary CTA → modal walkthrough)
 │   └── Manual setup snippets         (collapsed; for advanced users)
 │
+├── Sites                             (/ui/sites)         — P2 phase 5
+│   ├── Baseline blocklist            (toggle + version + last fetch + count)
+│   ├── Global rules                  (domain / decision / source rows)
+│   └── Per-agent overrides           (filter by agent)
+│
+├── Formatters                        (/ui/formatters)    — P2 phase 6
+│   ├── Loaded from remote            (GitHub manifest formatters)
+│   ├── Custom                        (user-local formatters)
+│   └── Row → /ui/formatters/logs/?name=…  (status panel + error ring buffer)
+│
+├── Pairings                          (/ui/pairings)
+│   ├── Awaiting review               (same inline card as Dashboard)
+│   └── History                       (persistent, server-backed, paginated)
+│       └── Row → expand              (timestamp, decision, bound profile)
+│
+│  System (sidebar group)
+│
 └── Settings                          (/ui/settings)
     ├── Appearance                    (theme: System / Light / Dark)
     ├── Network                       (LAN toggle, restarts server)
@@ -58,11 +81,13 @@ WebPilot UI
     └── About                         (version, "Check for updates", links)
 ```
 
-The five pages are kept; the *contents* of each are tightened. Dashboard
-becomes lighter (was: 4 big sections; becomes: 2 — action items + a
-single status card). Pairings History becomes persistent (server-backed,
-not session-scoped). Agents grows a real onboarding flow. Settings
-finally has more than one thing in it.
+The original five pages are kept and tightened; two new pages (Sites,
+Formatters) were added in P2. Dashboard becomes lighter (was: 4 big
+sections; becomes: 3 — action items + Chrome profiles + a single status
+card). Pairings History becomes persistent (server-backed, not
+session-scoped). Agents grows a real onboarding flow. Settings finally
+has more than one thing in it. Sites and Formatters are pure
+admin/observability surfaces — see the per-page detail below.
 
 ---
 
@@ -71,20 +96,25 @@ finally has more than one thing in it.
 ### Sidebar (desktop, ≥ 900px)
 
 - Fixed 240px left rail, full height. Subtle inner border, no shadow.
-- Order: **Dashboard**, **Pairings**, **Profiles**, **Agents**, **Settings**.
-  This is the order the user *thinks* about them — what needs me now, what
-  asked me recently, who I trust, what's the boring config.
-- Active state: solid background pill on the row, no left bar, no arrow.
+- Two source-list groups (Apple Mail / Reminders pattern):
+  - **Workspace** — Dashboard, Profiles, Agents, Sites, Formatters, Pairings.
+  - **System** — Settings.
+  This order matches the implementation in `components/AppShell.js`.
+- Active state: neutral elevated fill + 2px accent left-edge hairline +
+  solid Heroicons variant + primary-fg text. No accent-tinted bg.
   Inactive items get a faint hover tint only — no underline.
 - Brand: "WebPilot" wordmark at the top, links to Dashboard. Not a button.
-- Sidebar footer: a tiny dot + label — `Connected` / `Disconnected` —
-  polling every 15s. Already implemented; keep it. No port number, no
-  PID, no IP — those live on the Settings → Server card.
+- Sidebar footer: a tiny dot + label — `Connected` / `Disconnected` /
+  `Connecting…` — polling every 15s after first success, 500ms before.
+  No port number, no PID, no IP — those live on the Settings → Server card.
 
-No badge counts on nav items. If there are 3 pending pairings, the user
-sees them on the Dashboard or on the dot in the page title (`(3) WebPilot`
-in `<title>` — a notification surface they don't have to look for).
-Sidebar counts create permanent visual noise.
+One nav-item count is allowed: **Pairings** shows a typeset count of
+pending requests on the right edge of the row (no red dot, no pill —
+just the number, mono nano). This is the single exception to the "no
+badge counts" rule and is justified because Pairings is the only
+time-sensitive surface; the count exists as a typographic affordance,
+not a notification badge. The page-title `(N) WebPilot` channel is also
+kept.
 
 ### Top bar (mobile, < 900px)
 
@@ -416,6 +446,78 @@ with a `Retry` link.
 
 ---
 
+### 6. Sites
+
+**Purpose.** Administer the site-policy model — which domains agents may
+visit, which are blocked, and per-agent overrides. Shipped in P2 phase 5.
+
+**Primary user action.** Add a global rule, or override a baseline
+decision for one specific agent.
+
+**Layout.**
+1. Header.
+2. **Baseline blocklist** card — small: enabled toggle + version + last
+   fetch + domain count. Toggle calls `toggleBaselineBlocklist`.
+3. **Global rules** section — list of (`domain`, `decision`, `source`)
+   rows. Filter chips: `All` / `User` / `Baseline`. `+ Add rule` opens
+   an inline form (not a modal). Baseline rows are read-only; user rows
+   have a `Remove` action.
+4. **Per-agent overrides** section — agent picker at the top, then a
+   list of overrides for the selected agent. Each row: domain,
+   override decision, `Remove`. `+ Add override` opens an inline form.
+
+**Empty state.** Per section. Global rules empty: `No user rules yet.
+The baseline blocklist still applies.` Per-agent overrides empty:
+`No overrides for <agent>.`
+
+**Loading state.** Section-level skeleton rows.
+
+**Error state.** Section-scoped `ErrorCard` with retry.
+
+**Microcopy.** Decision pill labels: `Allow`, `Block`. Source pill
+labels: `User`, `Baseline`.
+
+**Modals.** None in v1 — all CRUD is inline.
+
+---
+
+### 7. Formatters
+
+**Purpose.** Observability for accessibility-tree formatters. Lets the
+user see which formatters are loaded, which are healthy, and drill into
+recent errors. Shipped in P2 phase 6.
+
+**Primary user action.** Diagnose an unhealthy formatter by drilling
+into its log page.
+
+**Layout.**
+1. Header.
+2. **Loaded from remote** section — formatters fetched from the GitHub
+   manifest. Row: name + `HealthPill` + last error time.
+3. **Custom** section — formatters loaded from the user's local
+   custom-formatters directory. Same row pattern.
+4. Each row is a link to `/ui/formatters/logs/?name=<name>`, which
+   renders the per-formatter status panel + recent error ring-buffer
+   entries (the `app/formatters/logs/` subroute).
+
+**Refresh strategy.** REST poll every 30s (no `formatter_logs_updated`
+WS event yet). Endpoint is localhost-only so polling is cheap.
+
+**Empty state.** `No formatters loaded.` Sub: `WebPilot fetches the
+remote manifest on startup. Check Settings → Network or restart the
+server.`
+
+**Loading state.** `SkeletonRow` per pending row.
+
+**Error state.** `ErrorCard` per section.
+
+**Microcopy.** Health pill states: `Healthy`, `Degraded`, `Unhealthy`.
+Last-error formatting matches the relative-time convention from Agents.
+
+**Modals.** None — drilldown is a route, not a modal.
+
+---
+
 ## Cross-cutting patterns
 
 ### Status pill semantics
@@ -483,6 +585,39 @@ button. Three flavors:
 Toasts never carry an action button in v1 — they are confirmations,
 not commands. If the user needs to act, the action belongs in the
 underlying UI, not in a fleeting toast.
+
+### Boot-time connecting splash (AppShell gate)
+
+Implemented in `components/AppShell.js` (`ConnectingSplash`). Until the
+renderer has had its first successful `/api/ui/status` response,
+AppShell renders a full-window splash instead of the page content. This
+prevents the Dashboard from flashing in with a "Disconnected" banner
+during the server-boot window — the renderer typically loads ~100ms
+ahead of the DB-backed status endpoint.
+
+Visual contract:
+
+- Dark background (`var(--wp-bg)`), centered `WebPilot` wordmark at 28px
+  weight 500, single-line "Starting server…" / "Connecting…" message,
+  three pulsing dots.
+- Mirrors `electron/splash.html` so the OS splash → in-app splash
+  transition is seamless. Do not redesign one without the other.
+- Polled at 500ms during boot; falls back to a 15s heartbeat after the
+  first success. Once cleared, this splash never returns for the rest
+  of the session — transient disconnects after first success surface
+  via the sidebar dot, not by re-mounting the splash.
+
+### Native select / dropdown dark-mode contract
+
+Native `<option>` popup chrome does not inherit colors reliably across
+themes — in dark mode the OS will render light text on a default white
+background and the menu becomes unreadable. `globals.css` anchors both
+`background-color` and `color` on `option` directly (under `.wp-select
+option, .wp-input option`) to the theme tokens (`--wp-bg-card`,
+`--wp-fg`). Any new dropdown surface (profile picker, agent picker, the
+pairing card's profile select) **must** use `.wp-select` or `.wp-input`
+so it inherits this fix. Do not introduce a bespoke `<select>` style
+without re-applying the option color anchors.
 
 ### Theme toggle UI placement
 

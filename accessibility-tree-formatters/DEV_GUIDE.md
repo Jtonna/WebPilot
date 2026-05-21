@@ -20,7 +20,7 @@ Each step has an MCP tool. None of them require restarting the WebPilot server.
 
 | Step | Tool | What it does |
 |---|---|---|
-| Discover | `webpilot_get_formatter_info` | Lists every loaded formatter, versions, manifest notes, and the path to drop custom files (`customFormatterDir`). |
+| Discover | `webpilot_get_formatter_info` | Lists every loaded formatter, versions, manifest notes, and the path to drop custom files (`customFormatterDir`). Calling this also triggers a reload from disk, so it doubles as a no-auth way to pick up your latest edit. |
 | Reload formatters | `webpilot_reload_formatters` | Re-reads every formatter from disk into memory. Returns the updated state; **verify the version bumped** in the response to confirm your edit took effect. |
 | Test (read) | `browser_get_accessibility_tree` | Runs the formatter against a live tab and returns the formatted tree + any structured extras (postCount, recipientUsername, etc.). |
 | Test (action) | `webpilot_run_workflow` | Runs a workflow declared in the formatter's `workflows.js`, with typed params. |
@@ -75,9 +75,13 @@ See `discord/manifest.json` in this repo for a worked example with workflows.
    editing.
 
 2. **Edit the formatter file.** The formatter is a CommonJS module exporting a
-   function `(nodes) => { tree, elementCount, refs, ...extras }`. For multi-page
-   sites, the entry can route on `nodes[0].url` to per-page sub-formatters
-   (Discord, Threads, and Zillow all do this).
+   function `(nodes) => { tree, elementCount, refs, ...extras }`. Two export
+   shapes are accepted by the loader: `module.exports = fn` (single function,
+   what most platform formatters use) or `module.exports = { someName: fn }`
+   (the default formatter uses `{ formatAccessibilityTree }`); the manager
+   takes the first value if it's an object. For multi-page sites, the entry
+   can route on `nodes[0].url` to per-page sub-formatters (Discord, Threads,
+   and Zillow all do this).
 
 3. **Bump `manifest.json#version`.** Even a patch bump is fine; it just lets
    you confirm the reload picked up your file.

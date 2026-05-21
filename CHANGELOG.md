@@ -6,8 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.8]
+
 ### Added
+- Electron shell — tray + splash window, single platform-appropriate `userData` path, multi-resolution RGBA icons.
+- UI — connecting splash held until the daemon responds; readable dark dropdowns.
+- Server — ships the `better-sqlite3` native binding alongside the app; legacy `userData` migration on first launch.
+- CI — manual release workflows replace the previous label-gated flow.
 - Open-source repository scaffolding: `README.md`, `LICENSE` (MIT), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and this `CHANGELOG.md`.
+
+### Fixed
+- Installer — kill running processes on install/uninstall to make upgrades safe; `installer.nsh` now tracked in the repo.
 
 ### Removed
 - Internal task tracking and design docs that lived in the repo during pre-1.0 development (`OPEN_ITEMS.md`, the P2 redesign design doc, the auth audit doc). The decisions they captured are now reflected in the live architecture docs and the code.
@@ -22,5 +31,6 @@ Internal pre-1.0 development. Notable architectural milestones from this period:
 - Dashboard pivot — replaced the four-up KPI grid with an Action Items section that surfaces pending pairings + formatter errors inline.
 - Baseline blocklist — bundled financial-institution blocklist with hourly auto-update from GitHub, local-cache fallback chain for offline resilience.
 
-[Unreleased]: https://github.com/Jtonna/WebPilot/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/Jtonna/WebPilot/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/Jtonna/WebPilot/compare/v1.1.1...v1.1.8
 [1.1.1]: https://github.com/Jtonna/WebPilot/releases/tag/v1.1.1

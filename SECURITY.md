@@ -15,7 +15,7 @@ Include:
 
 - A description of the issue and its impact (what an attacker could do).
 - Reproduction steps or a proof of concept.
-- The affected version (visible in the dashboard footer) and your platform/Chrome version.
+- The affected version (visible in the dashboard under Settings → General → About) and your platform/Chrome version.
 - Optionally, a suggested fix.
 
 You will receive an acknowledgement within **3 business days**. A fix-or-mitigation plan will follow within **14 days** depending on complexity. You will be credited in the release notes for the fix unless you prefer to remain anonymous.

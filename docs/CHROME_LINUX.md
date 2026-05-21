@@ -66,12 +66,12 @@ Every Linux file under `chrome/` and `notifications/` carries a
 real issues first, ranked by guessed risk:
 
 1. **`linux-detector.detect()`** — `/proc/<pid>/comm` is truncated to
-   15 characters on Linux (`TASK_COMM_LEN`). The matcher accepts
-   `chrome-browser` and anything starting with `chrome`, but if the
-   distro packages Chrome as `google-chrome-stable` the comm will
-   show as `google-chrome-` (truncated, missing the final `s`). The
-   current prefix check `comm.startsWith('chrome')` would miss this
-   entirely. Also: snap-packaged Chromium runs under a confinement
+   15 characters on Linux (`TASK_COMM_LEN` = 16 including the NUL).
+   The matcher accepts `chrome-browser` and anything starting with
+   `chrome`, but if the distro packages Chrome as
+   `google-chrome-stable` the comm will show as `google-chrome-s`
+   (15 chars, truncated mid-word). The current prefix check
+   `comm.startsWith('chrome')` would miss this entirely. Also: snap-packaged Chromium runs under a confinement
    wrapper that may show as `snap-confine` or `chromium` depending on
    the snap version. **Expect this matcher to need broadening on
    first run.**
@@ -96,7 +96,8 @@ real issues first, ranked by guessed risk:
    `plasmashell`). Headless / SSH-only sessions have neither, and
    `notify-send` will exit nonzero. The current code logs the error
    and resolves — the notification is silently lost. Acceptable for
-   v1; document the limitation. The `-u critical` urgency level
+   the first Linux release (tracked in repo issue #49); document the
+   limitation. The `-u critical` urgency level
    means notifications won't auto-time-out on most DEs — verify
    that pairing-request notifications don't pile up indefinitely if
    the user is AFK.

@@ -7,6 +7,10 @@ through the steps below on an actual Mac. The macOS code paths were
 scaffolded honestly per spec but have **never been executed on real
 hardware** — they were written from a Windows dev box.
 
+The macOS build is **not currently shipping** — see the README's Install
+table and [issue #48](https://github.com/Jtonna/WebPilot/issues/48) for
+the gating work this doc is meant to help unblock.
+
 If you are that first user: please read this end-to-end before launching
 the server, then file issues against any section that diverges from
 reality.
@@ -43,9 +47,13 @@ The dedicated macOS files are:
   the default user-data-dir to `~/Library/Application Support/Google/
   Chrome`.
 - `packages/server-for-chrome-extension/src/service/paths.js`
-  (darwin branch in `getDataDir()`) — in dev mode, WebPilot's own
-  data dir is `~/Library/Application Support/WebPilot`. In pkg-binary
-  mode it sits next to the binary under `Programs/WebPilot/data/`.
+  (darwin branch in `platformUserDataDir()`) — WebPilot's own data dir
+  resolves to `~/Library/Application Support/WebPilot` in both dev and
+  pkg-binary modes. The `WEBPILOT_DATA_DIR` env var overrides this when
+  set (Electron main passes `app.getPath('userData')` that way). A
+  legacy in-install path (`<install>/../../data`) is only consulted by
+  `legacyInstallDataDir()` for the one-time pre-1.1.6 migration, not as
+  a runtime data dir.
 - `packages/server-for-chrome-extension/src/service/open-browser.js`
   (`spawnOpen` darwin branch) — opens the web UI on `--foreground`
   startup via `open <url>`.
@@ -125,13 +133,18 @@ Tick each of these by hand on first run.
 - [ ] If it returns zero, run `pgrep -x "Google Chrome"` manually and
       compare. The matcher is case-sensitive and whitespace-sensitive.
 - [ ] Verify `--user-data-dir=` is extracted correctly when the path
-      contains spaces (e.g. `/Users/J/Library/Application Support/
+      contains spaces (e.g. `/Users/<you>/Library/Application Support/
       Google/Chrome`). The regex in `macos-detector.extractUserDataDir`
       handles both quoted (`"…"`) and bare-with-no-spaces forms. macOS
       `ps -ww -o command=` output does **not** quote spaces — so the
       bare form will capture only up to the first space and lose the
-      rest of the path. This is almost certainly broken for the
-      default user-data-dir; expect to need a regex fix on first try.
+      rest of the path. Note that `launcher.js` deliberately omits
+      `--user-data-dir` when it equals the default (see
+      `getDefaultUserDataDir()`), so the default-path case won't have
+      the flag on the cmdline at all — the regex bug only bites when an
+      explicit non-default user-data-dir containing spaces is passed.
+      Still likely to need a regex fix on first try if anyone uses a
+      custom UDD with spaces.
 
 ### Notification system
 
@@ -165,8 +178,10 @@ Tick each of these by hand on first run.
 - [ ] If running from a downloaded .app bundle in the future, expect
       Gatekeeper (`xattr -d com.apple.quarantine`) and notarization
       issues. WebPilot's pkg binary is currently unsigned; the first
-      run will likely require right-click → Open or a `sudo
-      spctl --master-disable` workaround until signing is set up.
+      run will likely require right-click → Open. (Note: the older
+      `sudo spctl --master-disable` global workaround was removed in
+      recent macOS releases; per-binary `xattr -d` is the supported
+      escape hatch.)
 - [ ] Full Disk Access: WebPilot does not need it for current
       functionality, but if you grant it, double-check nothing leaks
       sensitive paths into logs.

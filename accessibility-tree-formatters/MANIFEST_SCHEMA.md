@@ -229,9 +229,12 @@ manager synthesizes a minimal manifest:
   name: "<directory name>",
   version: "0.0.0",
   match: "<from top-level manifest if present, else ''>",
-  source: "custom",
+  source: "<dir-based hint: 'remote' for auto-updated, 'custom' for user dir>",
   description: "(no manifest.json — synthesized)",
-  workflows: []
+  notes: "",
+  errorHandling: { fallbackToRawTree: true },
+  workflows: [],
+  _synthesized: true
 }
 ```
 

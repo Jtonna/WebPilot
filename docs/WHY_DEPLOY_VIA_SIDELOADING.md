@@ -6,7 +6,7 @@ Why the WebPilot Chrome extension must be sideloaded via Developer Mode rather t
 
 WebPilot's Chrome extension requires the `chrome.debugger` permission, which grants access to the Chrome DevTools Protocol (CDP). This is how the extension inspects and interacts with web pages on behalf of MCP clients.
 
-The `chrome.debugger` permission is classified as a **restricted permission** by Google. Extensions that request it are not eligible for listing on the Chrome Web Store. There is no review process or exception workflow that would allow it -- the restriction is a hard policy gate.
+The `chrome.debugger` permission is treated as a **powerful, high-risk permission** under Google's Chrome Web Store Developer Program Policies. Extensions that request it face heightened scrutiny under the minimum-permissions / single-purpose / user-data policies, and listings that use it to attach to arbitrary user-driven tabs (rather than a narrow, single-purpose developer-tools scenario) are routinely rejected. For WebPilot's use case -- giving an external MCP client broad CDP access across the user's browsing session -- the policy gate is effectively closed.
 
 This single constraint determines the entire distribution strategy.
 
@@ -20,7 +20,7 @@ Every standard Chrome extension installation method was evaluated:
 | External CRX (local file) | No | Chrome blocks local `.crx` installs (since Chrome 33 on Windows, Chrome 44 on macOS) |
 | External CRX (self-hosted URL) | No | Windows requires a Web Store listing; macOS blocks external CRX entirely |
 | Registry/JSON preference + Web Store | No | Still requires a Web Store listing as the install source |
-| Enterprise Policy (self-hosted) | No | Requires Active Directory domain enrollment; not viable for individual users |
+| Enterprise Policy (self-hosted) | No | Requires a managed-device policy channel (Windows Group Policy / registry, macOS MDM profile, Linux JSON policy); not viable for individual users on unmanaged machines |
 | **Developer Mode sideload** | **Yes** | Works on all platforms without any external approval or infrastructure |
 
 Developer Mode sideloading is the only method that works for individual users without Chrome Web Store approval.
@@ -46,6 +46,6 @@ Sideloading via Developer Mode has trade-offs that users should be aware of:
 
 ## Chrome Web Store Policy Reference
 
-Google's extension policy restricts several permissions from Web Store distribution. The `chrome.debugger` permission is restricted because it allows an extension to attach to any tab and read/modify all network traffic, DOM content, and JavaScript execution -- effectively granting full control over the browser session.
+Google's Chrome Web Store Developer Program Policies single out a handful of high-risk permissions for stricter review. The `chrome.debugger` permission gets this treatment because it lets an extension attach to any tab and read/modify all network traffic, DOM content, and JavaScript execution -- effectively granting full control over the browser session via the Chrome DevTools Protocol.
 
-This is by design for WebPilot: CDP access is what enables MCP clients to interact with web pages. The permission is not optional, and no reduced-scope alternative exists that would satisfy both Chrome Web Store policy and WebPilot's functionality requirements.
+This is by design for WebPilot: CDP access is what enables MCP clients to interact with web pages. The permission is not optional, and no reduced-scope alternative (e.g. `activeTab` + content scripts) would cover the cross-tab, network-level, and execution-control surface that the MCP tools depend on.

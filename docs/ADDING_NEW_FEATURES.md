@@ -60,9 +60,20 @@ Edit `packages/server-for-chrome-extension/src/mcp-handler.js`:
 }
 ```
 
-**Note:** All tools except the auth-exempt set (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header. The auth-exempt set is enforced in `processMessage` in `mcp-handler.js` — if you add a new auth-exempt tool, update that check too.
+**Note:** All tools except the auth-exempt set (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) must include the `api_key` property in their schema. This allows agents to authenticate per-request as an alternative to the session-level `X-API-Key` header. The auth-exempt set is enforced in `processMessage` in `mcp-handler.js` — if you add a new auth-exempt tool, update that check too. Note that `webpilot_reload_formatters` is NOT auth-exempt (it mutates loaded formatter state).
 
-**Add case to `handleToolCall` switch:**
+**Add case to `handleToolCall` switch.** Most browser_* tools today call a private `_browser*` helper directly and return the MCP-wrapped response inline. Two legacy cases (`browser_inject_script`, `browser_execute_js`) still use the older `commandType` / `commandParams` pattern that falls through to a shared dispatch at the bottom of the switch. Prefer the direct-call shape for new tools:
+
+```javascript
+case 'browser_your_tool_name': {
+  const result = await _browserYourToolName(args, apiKey);
+  return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+}
+```
+
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers — it owns the policy / whitelist checks and the WebSocket round-trip to the extension via `extension-bridge.js`.
+
+If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
 ```javascript
 case 'browser_your_tool_name':
@@ -70,8 +81,6 @@ case 'browser_your_tool_name':
   commandParams = { param_name: args.param_name };
   break;
 ```
-
-Note: `handleToolCall` wraps the extension's response in the MCP protocol format automatically. You do not need to handle that wrapping yourself.
 
 ### Step 2: Add Permissions (If Needed)
 
@@ -167,11 +176,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 ## Adding a Site-Specific Formatter
 
-Site-specific formatters extract structured data (posts, feeds, listings) from accessibility trees. They auto-route by URL via `detectPlatform()` inside the existing `browser_get_accessibility_tree` tool -- no new MCP tools or command types are needed.
+Site-specific formatters extract structured data (posts, feeds, listings) from accessibility trees. They auto-route by URL inside the existing `browser_get_accessibility_tree` tool -- no new MCP tools or command types are needed.
+
+For the full iteration loop (reload-without-restart, log inspection, custom-formatter directory), see [`accessibility-tree-formatters/DEV_GUIDE.md`](../accessibility-tree-formatters/DEV_GUIDE.md). For the manifest data shape, see [`accessibility-tree-formatters/MANIFEST_SCHEMA.md`](../accessibility-tree-formatters/MANIFEST_SCHEMA.md). This section is the contributor-onboarding overview; those two are the canonical references.
 
 ### How Platform Detection Works
 
-The MCP server's `formatter-manager.js` receives raw nodes and the tab URL from the extension. It reads `manifest.json` and matches each platform's `match` string against the URL hostname. The matched formatter is loaded from the local cache. No extension changes are needed for new formatters.
+Inside `formatTree(url, rawNodes)` in `packages/server-for-chrome-extension/src/formatter-manager.js`, the server parses the tab's URL, extracts the hostname, and tests each registered platform's `match` substring against it. The first match wins; if nothing matches, the `default.js` formatter is used. The formatter file is loaded lazily and cached, then invoked with the raw CDP nodes. No extension changes are needed for new formatters.
 
 ### Step 1: Create the Formatter
 
@@ -236,9 +247,9 @@ Omitting `refs` will break click/scroll-by-ref functionality.
 
 ### Step 2: Register in manifest.json
 
-Edit `accessibility-tree-formatters/manifest.json`:
+Edit the top-level `accessibility-tree-formatters/manifest.json`:
 
-- Add a platform entry under `"platforms"` with a `"match"` hostname substring and an `"entry"` path pointing to your formatter file.
+- Add a platform entry under `"platforms"` with a `"match"` hostname substring and an `"entry"` path pointing to your formatter file (path is relative to the formatters directory — do NOT prefix with `accessibility-tree-formatters/`).
 - Add all new formatter files to the `"files"` array so the auto-updater downloads them.
 - Bump `"version"` to trigger auto-updates for existing users.
 
@@ -248,14 +259,17 @@ Edit `accessibility-tree-formatters/manifest.json`:
   "platforms": {
     "yoursite": {
       "match": "yoursite.com",
-      "entry": "accessibility-tree-formatters/yoursite/router.js"
+      "entry": "yoursite/router.js"
     }
   },
   "files": [
-    "accessibility-tree-formatters/yoursite/router.js"
+    "yoursite/router.js",
+    "yoursite/manifest.json"
   ]
 }
 ```
+
+**Also create a per-formatter `manifest.json` at `accessibility-tree-formatters/yoursite/manifest.json`.** This file is loaded by `formatter-manager.js` via `loadPerFormatterManifest` and powers `webpilot_get_formatter_info`. Required fields: `name`, `version`, `match`, `source`, `description`. Optional: `notes`, `workflows[]` (declaration of each workflow exposed by an adjacent `workflows.js`). See `accessibility-tree-formatters/MANIFEST_SCHEMA.md` for the full schema and `accessibility-tree-formatters/discord/manifest.json` for a worked example with workflows.
 
 > **Auto-updater note:** The auto-updater compares the remote `manifest.json` `"version"` against the locally cached version. If `"version"` is not bumped, users never receive the update. Every new file must be listed in the `"files"` array — the updater downloads exactly those files and nothing else.
 
@@ -319,11 +333,13 @@ Update MCP_SERVER.md and MCP_INTEGRATION.md to list the new platform under `brow
 ### 2. mcp-handler.js - handleToolCall
 
 ```javascript
-case 'browser_focus_tab':
-  commandType = 'focus_tab';
-  commandParams = { tab_id: args.tab_id };
-  break;
+case 'browser_focus_tab': {
+  const result = await _browserFocusTab(args, apiKey);
+  return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+}
 ```
+
+…with a `_browserFocusTab(args, apiKey)` helper defined alongside the other `_browser*` helpers that performs the policy check and routes `{ type: 'focus_tab', params: { tab_id } }` to the extension via `extension-bridge.js`.
 
 ### 3. handlers/tabs.js - Handler Function
 
@@ -392,10 +408,11 @@ Use this when adding a site-specific formatter (GitHub / public):
 
 ```
 [ ] 1. accessibility-tree-formatters/<site>/router.js — Create formatter (CommonJS, returns tree, elementCount, refs)
-[ ] 2. accessibility-tree-formatters/manifest.json — Add platform entry, add files to "files" array, bump "version"
-[ ] 3. docs/ — Document the new platform
-[ ] 4. Push to main so auto-updater fetches the new version
-[ ] 5. Test with browser_get_accessibility_tree on target site
+[ ] 2. accessibility-tree-formatters/<site>/manifest.json — Per-formatter metadata (name, version, match, source, description; optional workflows[])
+[ ] 3. accessibility-tree-formatters/manifest.json — Add platform entry, add files to "files" array (include the per-formatter manifest.json), bump top-level "version"
+[ ] 4. docs/ — Document the new platform
+[ ] 5. Push to main so auto-updater fetches the new version
+[ ] 6. Test with browser_get_accessibility_tree on target site
 ```
 
 Use this when adding a private/custom formatter (no GitHub commit):

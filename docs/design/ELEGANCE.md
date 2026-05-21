@@ -3,6 +3,25 @@
 > Scope: typography, spacing, sizing, borders, shadows, icons, motion, composition, responsive behavior. Color is defined separately.
 > Audience: power-users / developers who care about craft.
 > Goal: an Apple-grade, quiet, premium feel for the local web UI at `http://localhost:<port>/ui`.
+>
+> Related docs: [`PALETTE.md`](./PALETTE.md) (color tokens), [`UX.md`](./UX.md)
+> (information architecture, per-page composition), and the design-research
+> siblings [`research/APPLE.md`](./research/APPLE.md),
+> [`research/LUXURY.md`](./research/LUXURY.md),
+> [`research/SIMPLE.md`](./research/SIMPLE.md).
+>
+> <!-- TODO(founder): Sections that have drifted from the shipped UI and need a rewrite:
+>   - "Icons (Phosphor)" — the app actually uses `@heroicons/react` (outline + solid).
+>     The icon catalog table below lists Phosphor names that do not exist in the codebase.
+>   - "Borders — the lift-via-background philosophy" — the shipped `.wp-card` uses a
+>     1px hairline border (`var(--wp-separator)`), not background-lift only. This
+>     reflects the "hairline-everything" direction adopted from research/SIMPLE.md.
+>   - "Active sidebar = duotone icon + accent tint" — shipped active state is the
+>     solid Heroicons variant + neutral elevated fill + a 3px neutral-fg left-edge
+>     bar. There is no accent tint on the active row.
+>   - Sections that still match the implementation (typography, type scale, spacing
+>     tokens, radii, shadow tokens, motion eases/durations, focus-ring philosophy,
+>     responsive breakpoints) are load-bearing and should be preserved on rewrite. -->
 
 ---
 
@@ -200,34 +219,45 @@ In dark mode, shadows do less work (less perceived contrast against a dark canva
 
 ---
 
-## Icons (Phosphor)
+## Icons (Heroicons)
 
-**Weight:** primary use is **Phosphor Regular**. The active sidebar item, and only the active item, swaps to **Phosphor Duotone** at the same size to mark state — this gives one quiet "lit candle" per screen without adding a color rule. We never mix Thin, Light, or Bold in the product.
+<!-- TODO(founder): This section originally specified Phosphor. The shipped UI
+uses @heroicons/react (outline + solid 24px set) — see
+packages/server-web-ui/components/AppShell.js for the canonical icon imports.
+The catalog below has been rewritten to match the shipped set; the
+weight/state-treatment paragraph has been updated for Heroicons. The earlier
+Phosphor catalog (House / Handshake / Robot / GearSix / Pulse / Wind / etc.)
+is preserved in git history (see commit log) if you want to revisit. -->
+
+**Library:** [`@heroicons/react`](https://heroicons.com) — the 24×24 set. We import the **outline** variant by default and swap to the **solid** variant on the single active sidebar item to mark state (one quiet "lit candle" per screen, no color rule needed). We never mix in mini (20px) or micro (16px) Heroicons sets — visual weight stays uniform across the chrome.
 
 **Color:** icons inherit `currentColor`. They live in the type system — never tinted independently of their surrounding text.
 
-**Standard sizes:** 16 / 20 / 24 / 32. See sizing tokens above for which-where.
+**Standard sizes:** 16 / 20 / 24 / 32. See sizing tokens above for which-where. Heroicons are authored at 24×24 but scale cleanly at all four sizes when rendered as inline SVG.
 
-**Icon catalog** (the working set — add to this list with intent, not by reflex):
+**Icon catalog** (the working set — add to this list with intent, not by reflex). Names below are the Heroicons React component names; both outline and solid variants are imported:
 
-| Surface                    | Phosphor icon (`@phosphor-icons/react`) |
-| -------------------------- | --------------------------------------- |
-| Dashboard / Home           | `House`                                 |
-| Pairings (pending)         | `Handshake`                             |
-| Profiles                   | `UserCircle`                            |
-| Paired agents              | `Robot`                                 |
-| Settings                   | `GearSix`                               |
-| Network mode toggle        | `WifiHigh` / `WifiSlash`                |
-| Chrome / browser status    | `BrowserBold` (Regular weight)          |
-| Server running / stopped   | `Pulse` / `PlugsConnected`              |
-| Approve                    | `Check`                                 |
-| Deny / revoke              | `X`                                     |
-| Copy to clipboard          | `Copy`                                  |
-| External link              | `ArrowSquareOut`                        |
-| Info / help                | `Info`                                  |
-| Warning                    | `Warning`                               |
-| Search                     | `MagnifyingGlass`                       |
-| Empty state / nothing here | `Wind`                                  |
+| Surface                    | Heroicons React component (`@heroicons/react/24/{outline,solid}`) |
+| -------------------------- | ----------------------------------------------------------------- |
+| Dashboard / Home           | `HomeIcon`                                                        |
+| Pairings (pending)         | `KeyIcon`                                                         |
+| Profiles                   | `UserCircleIcon`                                                  |
+| Paired agents              | `CpuChipIcon`                                                     |
+| Sites                      | `GlobeAltIcon`                                                    |
+| Formatters                 | `CommandLineIcon`                                                 |
+| Settings                   | `Cog6ToothIcon`                                                   |
+| Mobile nav toggle          | `Bars3Icon`                                                       |
+
+<!-- TODO(founder): Surfaces below were on the original Phosphor catalog but
+don't yet have a Heroicons mapping in the shipped UI. Confirm intent and add
+the chosen Heroicons component when these surfaces ship:
+  - Network mode toggle (WifiHigh / WifiSlash)
+  - Chrome / browser status
+  - Server running / stopped
+  - Approve / Deny / Revoke
+  - Copy to clipboard
+  - External link
+  - Info / Warning / Search / Empty state -->
 
 ---
 
@@ -263,7 +293,7 @@ Wrap every transition/animation in a `@media (prefers-reduced-motion: reduce)` o
 
 ## Composition rules
 
-1. **One accent per screen.** A page may use the accent color in exactly one place — the primary CTA, or the active nav item, but not both at the same focal weight. The active nav uses duotone icon + background tint; the primary CTA gets the saturated accent. Everywhere else is neutral.
+1. **One accent per screen.** A page may use the accent color in exactly one place — the primary CTA, or the active nav item, but not both at the same focal weight. <!-- TODO(founder): the next sentence describes the original duotone+accent-tint treatment. The shipped active nav (see `.wp-nav-item.is-active` in app/globals.css) uses the **solid Heroicons variant + neutral elevated fill + a 3px neutral-fg left-edge bar** — no accent tint, no hue change. Rewrite once the active-state direction is finalized. --> The active nav uses duotone icon + background tint; the primary CTA gets the saturated accent. Everywhere else is neutral.
 2. **No nested cards more than one level deep.** A card may contain a list, a form, or a table — never another card. If you feel the need to nest, you need a divider and spacing instead.
 3. **Every page opens with a quiet `h1` (`display` token) followed by a 1-sentence lede in the secondary text color.** Then `s-7` (48px) of breathing room before the first card. No banners, no breadcrumbs above the `h1` on top-level pages.
 4. **Mono is for facts, sans is for prose.** A port number, agent ID, file path, or pairing code is mono. A description of what that code means is sans. Never the reverse, never both at once.

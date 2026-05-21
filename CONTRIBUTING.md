@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` runs the MCP server (with `node --watch` hot-reload) and the Next.js web UI concurrently. The dashboard is at <http://localhost:3456/ui/>.
+`npm run dev` runs the MCP server and the Next.js web UI concurrently. The web UI has HMR; the server does not auto-reload — restart it after editing server code. The dashboard is at <http://localhost:3456/ui/>.
 
 To exercise the Chrome side, load `packages/chrome-extension-unpacked/` as an unpacked extension in `chrome://extensions` for at least one Chrome profile.
 
@@ -71,7 +71,10 @@ Open a [GitHub issue](https://github.com/Jtonna/WebPilot/issues) using the **Bug
 - WebPilot version (visible in the dashboard footer)
 - Steps to reproduce
 - Expected vs. actual behavior
-- Relevant log output (`%LOCALAPPDATA%\WebPilot\logs\server.log` on Windows; equivalent paths on macOS/Linux)
+- Relevant log output. Default locations:
+  - Windows: `%APPDATA%\@webpilot\onboarding\logs\server.log`
+  - macOS: `~/Library/Application Support/WebPilot/logs/server.log`
+  - Linux: `${XDG_CONFIG_HOME:-~/.config}/WebPilot/logs/server.log`
 
 ## Security
 

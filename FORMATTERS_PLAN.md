@@ -1,5 +1,20 @@
 # Formatters Overhaul — Tracking
 
+> **STATUS: STALE — recommend deletion.** Every engineering item below
+> has shipped on `QOL-Features` (verified: `formatter-logs.js`,
+> `lib/tree-query.js`, `webpilot_run_workflow`, per-formatter
+> `manifest.json` files, `/api/ui/formatters` endpoints all present).
+> The two "Still open" bullets are operational (a live human test + an
+> auto-updater tick post-merge), not work items. Per the original
+> instruction below, delete this file once the PR description absorbs
+> the remaining bullets.
+>
+> Cross-ref note: `MCP_SERVER.md`, `MCP_INTEGRATION.md`, and
+> `BUILD_ARCHITECTURE.md` referenced under "Documentation pass" no
+> longer exist in the repo (dropped in commit `8d14e5f`,
+> "docs: drop transient audit/redesign docs"). The content was either
+> folded into `README.md` or intentionally retired.
+
 Work scoped for the QOL-Features overnight push. Update statuses as items
 ship; delete the file when the PR description absorbs the relevant items.
 
