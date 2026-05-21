@@ -79,6 +79,11 @@ function detectLegacyStores() {
 /**
  * Rename a successfully-imported source file to `<name>.imported.<ISO>`.
  * Returns the new path on success, or null on failure (logs the reason).
+ *
+ * Used ONLY as a fallback when an import partially failed and we want to
+ * keep a recovery copy. Successful full imports delete the source instead
+ * (see `deleteImported`) — leaving plaintext API keys on disk in a
+ * `.imported.<TS>` archive is an unnecessary risk.
  */
 function archiveImported(sourcePath) {
   try {
@@ -90,11 +95,27 @@ function archiveImported(sourcePath) {
     // keys at rest. Tighten perms so other local users cannot read them.
     // Best-effort on Windows where fs.chmodSync only maps the read-only bit.
     try { fs.chmodSync(dest, 0o600); } catch (_e) { /* non-fatal */ }
-    console.log(`[migration] archived ${sourcePath} → ${dest}`);
+    console.log(`[migration] archived ${sourcePath} → ${dest} (partial import — kept as safety net)`);
     return dest;
   } catch (e) {
     console.error(`[migration] failed to archive ${sourcePath}: ${e && e.message}`);
     return null;
+  }
+}
+
+/**
+ * Delete a successfully-imported source file. Preferred over archiving for
+ * files that contained plaintext credentials (paired-keys.json) — there is
+ * no reason to keep secrets on disk once the DB has them in hashed form.
+ */
+function deleteImported(sourcePath) {
+  try {
+    fs.unlinkSync(sourcePath);
+    console.log(`[migration] deleted ${sourcePath} after successful import (no plaintext copy retained)`);
+    return true;
+  } catch (e) {
+    console.error(`[migration] failed to delete ${sourcePath}: ${e && e.message}`);
+    return false;
   }
 }
 
@@ -183,6 +204,11 @@ function importPairedKeysAndPairings(detected) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
+  // Track whether the paired-keys side had ANY skipped/lost key. Used to
+  // decide between deleting (full success) and archiving (partial — keep a
+  // safety net) the legacy paired-keys.json.
+  let pairedKeysHadFailures = false;
+
   // We use a single transaction so a mid-flight failure rolls back cleanly.
   const importTx = db.transaction(() => {
     // If --reimport is active and tables had rows, clear them first so the
@@ -200,9 +226,17 @@ function importPairedKeysAndPairings(detected) {
     for (const entry of keys) {
       if (!entry || typeof entry.key !== 'string' || typeof entry.agentName !== 'string') {
         console.warn(`[migration] paired-keys: skipping malformed entry: ${JSON.stringify(entry)}`);
+        pairedKeysHadFailures = true;
         continue;
       }
-      const hash = pairedKeys.hashApiKey(entry.key);
+      let hash;
+      try {
+        hash = pairedKeys.hashApiKey(entry.key);
+      } catch (e) {
+        console.warn(`[migration] paired-keys: failed to hash key for "${entry.agentName}": ${e && e.message}`);
+        pairedKeysHadFailures = true;
+        continue;
+      }
       try {
         const res = insertAgent.run(
           entry.agentName,
@@ -215,7 +249,9 @@ function importPairedKeysAndPairings(detected) {
         agentsInserted += 1;
       } catch (e) {
         // UNIQUE constraint on api_key_hash — the same plaintext appears in
-        // the JSON twice. Look up the existing row and keep going.
+        // the JSON twice. Look up the existing row and keep going. Duplicate
+        // rows are not a partial-failure: every distinct key is still
+        // represented in the DB.
         const existing = db.prepare('SELECT id FROM agents WHERE api_key_hash = ?').get(hash);
         if (existing) {
           keyHashToAgentId.set(hash, existing.id);
@@ -304,11 +340,26 @@ function importPairedKeysAndPairings(detected) {
 
   const { agentsInserted, pairingsInserted } = importTx();
 
-  // Archive the source files AFTER successful commit. If either rename fails,
-  // we leave the original alone — the destination tables are populated so the
-  // next boot will skip-on-already-populated and a manual cleanup is fine.
-  if (pairedKeysEntry && pairedKeysEntry.exists) archiveImported(pairedKeysEntry.path);
-  if (pendingEntry    && pendingEntry.exists)    archiveImported(pendingEntry.path);
+  // Clean up source files AFTER successful commit.
+  //
+  // paired-keys.json: contains plaintext API keys. On a CLEAN import (every
+  // key hashed + inserted) we DELETE — there's no reason to keep secrets on
+  // disk once the DB has hashed equivalents. If anything was skipped (a
+  // malformed entry, an un-hashable key, etc.) we ARCHIVE instead so the
+  // operator has a recovery copy. The archive is chmod 0o600.
+  //
+  // pending-pairings.json: not a credential store (ephemeral approval-flow
+  // state). Archived to give the operator a recovery copy without urgency.
+  if (pairedKeysEntry && pairedKeysEntry.exists) {
+    if (pairedKeysHadFailures) {
+      archiveImported(pairedKeysEntry.path);
+    } else {
+      deleteImported(pairedKeysEntry.path);
+    }
+  }
+  if (pendingEntry && pendingEntry.exists) {
+    archiveImported(pendingEntry.path);
+  }
 
   return { agents: agentsInserted, pairings: pairingsInserted };
 }
@@ -609,6 +660,97 @@ function importNetworkEnabledFlag(detected) {
 }
 
 /**
+ * One-shot startup purge for legacy `paired-keys.json.imported.<TS>` archives
+ * left over from earlier migration runs. Earlier versions kept the archive
+ * indefinitely (with chmod 0o600) "for recovery", which left plaintext API
+ * keys on disk forever. This task runs on next daemon boot, zero-overwrites
+ * every archive it finds, unlinks it, and drops a sentinel so it never runs
+ * again.
+ *
+ * Safety: we only run the purge if the DB already has agents (i.e. the
+ * import has already happened). If the DB is empty we leave the archives
+ * alone — they may still be the only copy of the keys.
+ *
+ * See QOL security audit Fix 4.
+ */
+function purgeLegacyPairedKeysArchives() {
+  const dataDir = getDataDir();
+  const sentinel = path.join(dataDir, '.archives-purged');
+  if (fs.existsSync(sentinel)) return { purged: 0, skippedReason: 'sentinel present' };
+
+  // Only purge once the DB is populated. If it isn't, the archive may still
+  // be the only copy of the keys — leave it for manual recovery.
+  let agentCount = 0;
+  try {
+    const db = require('./connection').getDb();
+    agentCount = db.prepare('SELECT COUNT(*) AS c FROM agents').get().c;
+  } catch (e) {
+    console.warn(`[migration:purge] could not read agents table — skipping purge: ${e && e.message}`);
+    return { purged: 0, skippedReason: 'agents table not readable' };
+  }
+  if (agentCount === 0) {
+    return { purged: 0, skippedReason: 'agents table empty — archives may be only copy' };
+  }
+
+  const configDir = path.join(dataDir, 'config');
+  if (!fs.existsSync(configDir)) {
+    // No archives possible — drop the sentinel so we don't keep looking.
+    try { fs.writeFileSync(sentinel, new Date().toISOString() + '\n'); } catch (_e) { /* non-fatal */ }
+    return { purged: 0, skippedReason: 'no config dir' };
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(configDir);
+  } catch (e) {
+    console.warn(`[migration:purge] could not list ${configDir}: ${e && e.message}`);
+    return { purged: 0, skippedReason: `readdir failed: ${e && e.message}` };
+  }
+
+  const archives = entries.filter((n) => n.startsWith('paired-keys.json.imported.'));
+  if (archives.length === 0) {
+    try { fs.writeFileSync(sentinel, new Date().toISOString() + '\n'); } catch (_e) { /* non-fatal */ }
+    return { purged: 0, skippedReason: 'no archives present' };
+  }
+
+  let purged = 0;
+  for (const name of archives) {
+    const full = path.join(configDir, name);
+    try {
+      const stat = fs.statSync(full);
+      // Zero-overwrite the file contents, then unlink. On Windows this still
+      // beats leaving secrets at rest; on Linux/macOS it makes a casual
+      // forensic recovery harder (no claim of secure-delete on COW or SSDs).
+      const size = Math.max(0, Number(stat.size) || 0);
+      if (size > 0) {
+        const fd = fs.openSync(full, 'r+');
+        try {
+          const zero = Buffer.alloc(size, 0);
+          fs.writeSync(fd, zero, 0, size, 0);
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+      fs.unlinkSync(full);
+      purged += 1;
+      console.log(`[migration:purge] zero-overwrote + unlinked legacy archive ${full}`);
+    } catch (e) {
+      console.warn(`[migration:purge] failed to purge ${full}: ${e && e.message}`);
+    }
+  }
+
+  try {
+    fs.writeFileSync(sentinel, new Date().toISOString() + '\n');
+  } catch (e) {
+    console.warn(`[migration:purge] failed to write sentinel ${sentinel}: ${e && e.message}`);
+  }
+
+  console.log(`[migration:purge] complete — purged ${purged}/${archives.length} legacy paired-keys archives`);
+  return { purged, total: archives.length };
+}
+
+/**
  * Walk the legacy JSON stores and import them into the DB. Returns a summary
  * of what was detected and what was imported. Each branch is independently
  * idempotent — re-running this on a populated DB is a no-op (unless the
@@ -617,6 +759,15 @@ function importNetworkEnabledFlag(detected) {
 function runImportFromJsonStores() {
   const dataDir = getDataDir();
   console.log(`[migration] checking for legacy JSON stores under ${dataDir}...`);
+
+  // Best-effort one-shot purge of legacy paired-keys archives left behind by
+  // earlier migration runs. Safe to call on every boot: sentinel-gated, and
+  // refuses to act unless the DB has already absorbed the keys.
+  try {
+    purgeLegacyPairedKeysArchives();
+  } catch (e) {
+    console.warn(`[migration] legacy archive purge errored (non-fatal): ${e && e.message}`);
+  }
 
   const detected = detectLegacyStores();
   const present = detected.filter((d) => d.exists);
@@ -733,5 +884,6 @@ module.exports = {
   importFormatterIncidents,
   importExtensionInstalls,
   importNetworkEnabledFlag,
+  purgeLegacyPairedKeysArchives,
   reimportRequested,
 };

@@ -1,4 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('node:crypto');
+const dns = require('node:dns').promises;
 const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 const { findInTree } = require('./lib/tree-query');
 const formatterLogs = require('./formatter-logs');
@@ -33,15 +35,63 @@ const MAX_SCRIPT_FETCH_BYTES = 5 * 1024 * 1024;
  * private addresses — 127.0.0.1, 10/8, 169.254/16 (cloud metadata
  * endpoints, file shares, internal admin panels). Block them.
  *
- * We resolve the hostname against the literal forms only — DNS rebinding
- * is a more involved attack the in-process `fetch` does not naturally
- * defend against, and the realistic threat (a hostname that resolves to
- * a private range) is the common case. A fuller defence would require a
- * pinned DNS lookup + bracketed-IP fetch; that's a larger change and is
- * captured in the audit's "Strategic flags".
+ * We defend against DNS rebinding by resolving the hostname ONCE, checking
+ * the resolved IP against the private/loopback list, then issuing the
+ * fetch against the IP literal (carrying the original hostname in the
+ * `Host:` header so virtual-hosted servers still route correctly). A
+ * second TOCTOU lookup at the kernel layer can't redirect us to 127.0.0.1
+ * because we hand `fetch` an IP, not a hostname. Post-redirect targets get
+ * the same treatment.
  *
  * See QOL security audit S6.
  */
+function _formatIpForUrl(address, family) {
+  if (family === 6) return `[${address}]`;
+  return address;
+}
+
+/**
+ * Resolve a hostname and verify the result is not in the private/loopback
+ * blocklist. Returns the resolved address + family on safety; throws on
+ * unsafe or unresolvable. Distinguishing throw vs. return keeps the error
+ * messaging consistent with the literal-hostname guard above.
+ */
+async function _safeResolveHost(hostname) {
+  // If the caller passed an IP literal directly, we still need to validate
+  // it (the literal-check already did this, but be defensive).
+  const bare = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
+  const isIpv4Literal = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare);
+  const isIpv6Literal = bare.includes(':');
+  if (isIpv4Literal || isIpv6Literal) {
+    if (_isPrivateOrLoopbackHost(hostname)) {
+      throw new Error(
+        `Refusing to fetch script from private / loopback host "${hostname}". ` +
+          `browser_inject_script may only fetch from public URLs.`
+      );
+    }
+    return { address: bare, family: isIpv6Literal ? 6 : 4 };
+  }
+
+  let lookup;
+  try {
+    lookup = await dns.lookup(hostname, { family: 0 });
+  } catch (e) {
+    throw new Error(`DNS lookup failed for "${hostname}": ${e && e.message}`);
+  }
+  const { address, family } = lookup;
+  if (_isPrivateOrLoopbackHost(address)) {
+    console.log(
+      `[mcp:inject_script] refusing fetch — hostname "${hostname}" resolved to private/loopback address ${address}`
+    );
+    throw new Error(
+      `Refusing to fetch script from private / loopback host "${hostname}". ` +
+        `browser_inject_script may only fetch from public URLs.`
+    );
+  }
+  return { address, family };
+}
 function _isPrivateOrLoopbackHost(hostname) {
   if (typeof hostname !== 'string' || hostname.length === 0) return true;
   const h = hostname.toLowerCase();
@@ -75,6 +125,8 @@ async function fetchScriptFromUrl(url) {
   if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
     throw new Error(`Unsupported protocol: ${parsedUrl.protocol}`);
   }
+  // First-pass literal check — catches IP-literal URLs without spending a
+  // DNS lookup, and gives a fast reject for the obvious cases.
   if (_isPrivateOrLoopbackHost(parsedUrl.hostname)) {
     console.log(
       `[mcp:inject_script] refusing fetch to private/loopback host "${parsedUrl.hostname}"`
@@ -85,29 +137,68 @@ async function fetchScriptFromUrl(url) {
     );
   }
 
+  // Pinned-DNS fetch: resolve once, validate the IP, then fetch the IP
+  // literal so the kernel can't re-resolve to a private range under us.
+  // We follow up to 5 redirects manually, re-resolving each hop.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+  const MAX_REDIRECTS = 5;
+  let currentUrl = parsedUrl;
+  let response = null;
+
   try {
-    const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const hostname = currentUrl.hostname;
+      const { address, family } = await _safeResolveHost(hostname);
+      const ipForUrl = _formatIpForUrl(address, family);
+
+      // Rebuild the URL with the IP literal in the host portion, preserving
+      // path / query / hash / port. Keep the original Host header so SNI +
+      // virtual hosting work — Node's fetch will use the URL's host for
+      // SNI by default; setting the Host header steers the HTTP-layer
+      // routing while the connection target is the pinned IP.
+      const ipUrl = new URL(currentUrl.toString());
+      ipUrl.hostname = ipForUrl;
+
+      response = await fetch(ipUrl.toString(), {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: { Host: currentUrl.host },
+      });
+
+      // 3xx with Location → resolve next hop, re-validate.
+      if (response.status >= 300 && response.status < 400) {
+        const loc = response.headers.get('location');
+        if (!loc) break; // no location header — treat as final
+        if (hop === MAX_REDIRECTS) {
+          throw new Error('Too many redirects');
+        }
+        let nextUrl;
+        try {
+          nextUrl = new URL(loc, currentUrl);
+        } catch (_e) {
+          throw new Error(`Invalid redirect target: ${loc}`);
+        }
+        if (!['http:', 'https:'].includes(nextUrl.protocol)) {
+          throw new Error(`Unsupported redirect protocol: ${nextUrl.protocol}`);
+        }
+        // Literal pre-check on the next hop (cheap reject before DNS).
+        if (_isPrivateOrLoopbackHost(nextUrl.hostname)) {
+          throw new Error(
+            `Script fetch followed a redirect into private host "${nextUrl.hostname}"; refusing.`
+          );
+        }
+        currentUrl = nextUrl;
+        continue;
+      }
+      break; // non-3xx — done following
+    }
+
     clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-
-    // Re-validate the final URL after redirects — `fetch` will happily
-    // follow a redirect into 127.0.0.1 unless we re-check.
-    try {
-      const finalUrl = new URL(response.url);
-      if (_isPrivateOrLoopbackHost(finalUrl.hostname)) {
-        throw new Error(
-          `Script fetch followed a redirect into private host "${finalUrl.hostname}"; refusing.`
-        );
-      }
-    } catch (e) {
-      // If response.url isn't parseable, fall through — the read below
-      // bounded by size still applies.
     }
 
     // Read with a hard byte cap so a malicious server can't stream
@@ -1436,7 +1527,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         const key = result.apiKey;
         console.log(
           `[pairing] request_pairing returning already-approved key for "${agentName}" ` +
-            `(key=${key.slice(0, 8)}...)`
+            `pairingId=${result.pairingId}`
         );
         return {
           content: [
@@ -1531,7 +1622,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         const key = status.apiKey;
         console.log(
           `[pairing] check_pairing_status: returning approved key for pairingId=${pairingId} ` +
-            `(key=${key ? key.slice(0, 8) + '...' : 'MISSING'})`
+            `(key${key ? '=present' : '=MISSING'})`
         );
         return {
           content: [
@@ -1715,9 +1806,15 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
     // From here down all tools require a connected extension for the target profile.
     const targetProfile = resolveTargetProfile(apiKey);
-    const keyDisplay = apiKey ? apiKey.slice(0, 8) : '(none)';
+    // Per-call opaque correlation ID. Random, not derived from the api_key,
+    // so log lines can be traced through a session without leaking any
+    // prefix of the credential or its hash. Agent name is still logged —
+    // it's already user-visible in the UI.
+    const corrId = crypto.randomUUID().slice(0, 8);
+    const agentEntry = apiKey ? pairedKeys.validateKey(apiKey) : null;
+    const agentName = agentEntry ? agentEntry.agentName : '(unauthed)';
     console.log(
-      `[mcp:routing] tool=${name} apiKey=${keyDisplay}... profileId=${targetProfile}`
+      `[mcp:routing] req=${corrId} agent="${agentName}" tool=${name} profileId=${targetProfile}`
     );
 
     // browser_create_tab is the readiness gate: it may launch/restart Chrome.

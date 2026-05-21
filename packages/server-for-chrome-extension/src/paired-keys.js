@@ -383,7 +383,7 @@ function createPairedAgent({ agentName, profileId }) {
     .get(hashApiKey(key));
   console.log(
     `[pairing:createPairedAgent] minted direct key for agent "${agentName}" ` +
-      `(profileId="${profileId || ''}", key=${key.slice(0, 8)}...)`
+      `(profileId="${profileId || ''}")`
   );
   return {
     apiKey: key,
@@ -665,7 +665,7 @@ function approvePairing(pairingId, options = {}) {
   };
   console.log(
     `[pairing] approvePairing: pairingId=${pairingId} approved for agent "${row.agent_name}", ` +
-      `key=${key.slice(0, 8)}..., profileId="${profileId || ''}"`
+      `profileId="${profileId || ''}"`
   );
   emitPairingEvent('approved', entry);
   return entry;
@@ -793,10 +793,9 @@ function cleanupUnusedKeys(maxAgeMs = UNUSED_KEY_EXPIRY_MS) {
   if (stale.length === 0) return 0;
   const revokeStmt = db.prepare("UPDATE agents SET state = 'revoked' WHERE id = ?");
   for (const row of stale) {
-    const keyDisplay = (row.api_key_hash || '').slice(0, 8) + '...';
     console.log(
-      `[paired-keys:cleanupUnusedKeys] revoked unused key ${keyDisplay} ` +
-        `for agent "${row.name}" (created ${row.created_at}, never accessed)`
+      `[paired-keys:cleanupUnusedKeys] revoked unused key for agent "${row.name}" ` +
+        `(created ${row.created_at}, never accessed)`
     );
     revokeStmt.run(row.id);
   }

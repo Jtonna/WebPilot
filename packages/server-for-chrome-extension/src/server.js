@@ -341,29 +341,25 @@ function validateProfileName(name, userDataDir) {
  * Dev-mode signal — loosens the localhost-only UI auth so a developer can
  * hit the UI / popup endpoints over LAN (e.g. via `http://192.168.x.x:3456/ui`)
  * during iteration. NEVER true in production: pkg .exe builds don't run with
- * `node --watch` and don't have `WEBPILOT_DEV` set. The check uses both
- * signals so users running plain `node index.js` from source can opt in
- * explicitly, while the `npm run dev` script (which uses `node --watch`)
- * picks it up automatically.
+ * `WEBPILOT_DEV=1` set.
  *
  * In dev mode, ui-auth / mutating-ui-auth / ui-ws-upgrade still LOG that
  * they accepted a non-local request so it's visible in daemon.log, but do
  * not reject. The mutating layer's policy is preserved in production where
  * it matters.
  */
-// Detection: `npm_lifecycle_event === 'dev'` is set by npm whenever you run
-// `npm run dev` (Node strips `--watch` from `process.execArgv` so the watch
-// flag itself isn't a reliable signal). `NODE_ENV === 'development'` and an
-// explicit `WEBPILOT_DEV=1` env var are also accepted for setups that
-// invoke the server directly without npm.
-const IS_DEV_MODE =
-  process.env.WEBPILOT_DEV === '1' ||
-  process.env.NODE_ENV === 'development' ||
-  process.env.npm_lifecycle_event === 'dev';
+// Detection: the ONLY signal is an explicit `WEBPILOT_DEV=1` env var. The
+// repo-root `npm run dev` script sets it via cross-env, and the
+// package-level `dev` script does the same for direct invocation. We
+// deliberately do NOT consult `NODE_ENV` or `npm_lifecycle_event` — both
+// can be inherited from a parent process and would otherwise widen the
+// blast radius of a dev-only bypass into shipped environments. See QOL
+// security audit S4 (Fix 2).
+const IS_DEV_MODE = process.env.WEBPILOT_DEV === '1';
 
 if (IS_DEV_MODE) {
   console.log(
-    '[ui-auth] DEV MODE detected (npm run dev / NODE_ENV=development / WEBPILOT_DEV=1) — localhost-only UI gates will pass-through with a warning log. Do NOT ship a production build in this mode.'
+    '[ui-auth] DEV MODE detected (WEBPILOT_DEV=1) — localhost-only UI gates will pass-through with a warning log. Do NOT ship a production build in this mode.'
   );
 }
 
@@ -820,7 +816,14 @@ function mountWebUiRoutes(app, deps) {
       const key = req.params.key;
       const body = req.body || {};
       const profileIdRaw = body.profileId;
-      console.log(`[ui-api] PATCH agent ${key.slice(0, 8)}... profileId=${JSON.stringify(profileIdRaw)}`);
+      // Log the agent identity via agent-name lookup (not the api_key_hash
+      // prefix) — see Fix 5 in QOL security audit.
+      let agentLabel = '(unknown)';
+      try {
+        const entry = pairedKeys.validateKey(key);
+        if (entry && entry.agentName) agentLabel = entry.agentName;
+      } catch (_e) { /* non-fatal — fall through with (unknown) */ }
+      console.log(`[ui-api] PATCH agent "${agentLabel}" profileId=${JSON.stringify(profileIdRaw)}`);
 
       if (typeof profileIdRaw !== 'string' || profileIdRaw.length === 0) {
         return res.status(400).json({
@@ -1088,7 +1091,7 @@ function mountWebUiRoutes(app, deps) {
   //
   // Calls chromeManager.ensureReady — handles all three cases (running with
   // flag → noop; running without flag → kill+relaunch; not running → launch).
-  app.post('/api/ui/chrome/restart', auth, express.json(), async (req, res) => {
+  app.post('/api/ui/chrome/restart', auth, mutatingAuth, express.json(), async (req, res) => {
     try {
       // Pick a sensible profile set to require:
       //   1) Connected profiles (so we don't kill+relaunch fewer windows than
@@ -1129,7 +1132,7 @@ function mountWebUiRoutes(app, deps) {
 
   // ---- Server restart (Phase 3 D3) ----
   // Identical spawn-and-exit semantics as POST /api/ui/settings/network-mode.
-  app.post('/api/ui/server/restart', auth, express.json(), (req, res) => {
+  app.post('/api/ui/server/restart', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       console.log('[ui-api] /server/restart received — spawning replacement and exiting');
       res.json({ ok: true, restarting: true });

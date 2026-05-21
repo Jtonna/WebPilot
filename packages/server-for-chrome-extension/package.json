@@ -6,8 +6,8 @@
   "bin": "cli.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
-    "dev:network": "node --watch index.js --network",
+    "dev": "cross-env WEBPILOT_DEV=1 node --watch index.js",
+    "dev:network": "cross-env WEBPILOT_DEV=1 node --watch index.js --network",
     "start:network": "node index.js --network",
     "build": "echo Use build:win, build:mac, or build:linux && exit 1",
     "build:web-ui": "cd ../server-web-ui && npm run build",
@@ -21,7 +21,8 @@
       "src/**/*.js",
       "src/**/*.sql",
       "index.js",
-      "../server-web-ui/out/**/*"
+      "../server-web-ui/out/**/*",
+      "../../accessibility-tree-formatters/PUBKEY.pem"
     ],
     "_comment_native_modules": "better-sqlite3 has a native binding (build/Release/better_sqlite3.node). @yao-pkg/pkg cannot bundle native .node files into the snapshot — they must be shipped as loose files next to the pkg-built .exe. Hoisted under monorepo node_modules at: <repo>/node_modules/better-sqlite3/build/Release/better_sqlite3.node. The Electron deploy step (packages/electron/) already copies the server dist + sidecar files into %LOCALAPPDATA%\\WebPilot; extend that step to also copy the .node binary next to the .exe. better-sqlite3's loader (node_modules/better-sqlite3/lib/database.js) auto-discovers the .node binary alongside the running executable."
   },
