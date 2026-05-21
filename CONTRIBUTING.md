@@ -4,7 +4,7 @@ Thanks for your interest in WebPilot! This document covers how to set up a dev e
 
 ## Getting started
 
-Requires Node 20+ and a local Chrome install (any channel).
+Requires Node 22+ and a local Chrome install (any channel).
 
 ```bash
 git clone https://github.com/Jtonna/WebPilot.git
@@ -28,24 +28,22 @@ See [`docs/INDEX.md`](docs/INDEX.md) for the full architecture index and [`docs/
 ## Pull request workflow
 
 1. **Branch from `main`.** Use a descriptive branch name (e.g. `fix/popup-localhost-pill`, `feat/site-rules-export`).
-2. **Open a PR against `main`.** The CI build must pass before merge — it builds the Electron installer on Windows, macOS, and Linux.
-3. **Add a `release:*` label.** Exactly one of:
-   - `release:major` — breaking changes (incompatible API/config/protocol changes).
-   - `release:minor` — new user-visible features, backwards-compatible.
-   - `release:patch` — bug fixes, internal refactors, security fixes.
-   - `release:none` — docs-only or repo-meta changes that should not trigger a release.
+2. **Open a PR against `main`.** The CI build must pass before merge — it builds the Electron installer on Windows.
+3. **Write a clear PR description.** Explain the *why* — the *what* is in the diff. Link any related issues.
 
-   **PRs without a `release:*` label cannot be merged.** The version-bump workflow reads this label on merge to decide whether to tag a new release.
-4. **Write a clear PR description.** Explain the *why* — the *what* is in the diff. Link any related issues.
+Merging a PR does **not** trigger a release. Releases are cut manually from the Actions tab when a maintainer decides a batch of merged PRs is ready to ship.
 
-### What happens on merge
+## Releasing
 
-On every merge to `main`:
+Releases are cut by a maintainer from the GitHub Actions tab. Pick the workflow that matches the impact of the changes being shipped:
 
-1. A GitHub Action reads the merged PR's `release:*` label.
-2. If `release:none`: nothing else happens.
-3. Otherwise: it bumps the version in `package.json` per the label, commits the bump, tags `v<new-version>`, and pushes the tag.
-4. The tag push triggers `release.yml`, which builds Win/Mac/Linux installers in parallel and publishes them to a GitHub Release.
+- **Release (patch)** — `.github/workflows/release-patch.yml` — bug fixes, internal refactors, security fixes (`X.Y.Z` → `X.Y.(Z+1)`).
+- **Release (minor)** — `.github/workflows/release-minor.yml` — new user-visible features, backwards-compatible (`X.Y.Z` → `X.(Y+1).0`).
+- **Release (major)** — `.github/workflows/release-major.yml` — breaking changes, incompatible API/config/protocol changes (`X.Y.Z` → `(X+1).0.0`).
+
+Each dispatcher reads the current version from root `package.json`, runs `scripts/bump-version.js` to sync the new version across the monorepo, commits the bump to `main` as `github-actions[bot]`, tags `v<new-version>`, pushes both, and then invokes `release.yml` to build the Windows installer and publish the GitHub Release.
+
+If you need to release a specific version without auto-bumping (e.g. rebuilding an existing tag, or shipping a hotfix tagged locally), push a `v*` tag to `origin` and `release.yml` will fire on the tag push.
 
 ## Commit messages
 
@@ -55,7 +53,7 @@ A loose conventional-commits style is preferred but not enforced:
 - `fix(scope): short summary` — bug fix
 - `docs(scope): ...`, `refactor(scope): ...`, `chore(scope): ...`
 
-The `release:*` PR label is the source of truth for versioning — commit prefixes are advisory.
+The release type (patch / minor / major) is decided at release time by the maintainer dispatching the workflow — commit prefixes are advisory.
 
 ## Code style
 

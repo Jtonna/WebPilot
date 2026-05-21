@@ -1,13 +1,9 @@
 <!--
 Thanks for contributing to WebPilot!
 
-Reminder: this PR needs a `release:*` label before it can be merged.
-  - release:major — breaking change
-  - release:minor — new user-visible feature
-  - release:patch — bug fix / refactor / internal change
-  - release:none  — docs-only or repo-meta change (no release)
-
-PRs without a release label will fail the PR-validation check.
+Merging this PR does NOT trigger a release. Releases are cut manually from
+the Actions tab using one of release-patch / release-minor / release-major.
+See CONTRIBUTING.md.
 -->
 
 ## Summary
@@ -16,10 +12,10 @@ PRs without a release label will fail the PR-validation check.
 
 ## Type of change
 
-- [ ] Bug fix (`release:patch`)
-- [ ] New feature (`release:minor`)
-- [ ] Breaking change (`release:major`)
-- [ ] Docs / repo meta only (`release:none`)
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Docs / repo meta only
 
 ## Related issues
 
@@ -38,6 +34,5 @@ For UI changes: screenshot or GIF appreciated.
 ## Checklist
 
 - [ ] I have read [`CONTRIBUTING.md`](../CONTRIBUTING.md).
-- [ ] I have added a `release:*` label to this PR.
 - [ ] I have exercised the change locally (or noted why I couldn't).
 - [ ] Docs in `docs/` are updated if my change affects user-facing behavior or the architecture.

@@ -3,49 +3,13 @@ name: PR validation
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
   pull-requests: read
 
 jobs:
-  release-label:
-    name: Release label
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify exactly one release:* label
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const allowed = ['release:major', 'release:minor', 'release:patch', 'release:none'];
-            const labels = context.payload.pull_request.labels.map(l => l.name);
-            const release = labels.filter(l => l.startsWith('release:'));
-
-            if (release.length === 0) {
-              core.setFailed(
-                'PR must have exactly one release:* label. ' +
-                'Allowed: ' + allowed.join(', ') + '. ' +
-                'See CONTRIBUTING.md.'
-              );
-              return;
-            }
-            if (release.length > 1) {
-              core.setFailed(
-                'PR has multiple release:* labels: ' + release.join(', ') + '. ' +
-                'Use exactly one.'
-              );
-              return;
-            }
-            if (!allowed.includes(release[0])) {
-              core.setFailed(
-                'Unknown release label: "' + release[0] + '". ' +
-                'Allowed: ' + allowed.join(', ') + '.'
-              );
-              return;
-            }
-            core.info('Release label OK: ' + release[0]);
-
   build:
     name: Build (windows)
     # Mac + Linux build legs are intentionally disabled until those platforms
@@ -57,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

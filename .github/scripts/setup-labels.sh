@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# One-time bootstrap of the four release:* labels used by the PR validation
-# and Release workflows. Re-running is safe — `gh label create --force`
-# updates an existing label instead of failing.
+# Label bootstrap. Currently a no-op — the previous release:* labels were
+# retired when the release flow moved from PR-label gating to manually
+# dispatched workflows (release-patch.yml / release-minor.yml /
+# release-major.yml). See CONTRIBUTING.md.
+#
+# Re-add `gh label create ... --force` calls here if you want to bootstrap
+# other labels on a fresh clone.
 #
 # Usage:
 #   gh auth login          # if you haven't already
@@ -15,27 +19,4 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Creating/updating release:* labels..."
-
-gh label create release:major \
-  --color 'B60205' \
-  --description 'Breaking change — incompatible API/config/protocol change.' \
-  --force
-
-gh label create release:minor \
-  --color '0E8A16' \
-  --description 'New user-visible feature, backwards-compatible.' \
-  --force
-
-gh label create release:patch \
-  --color 'FBCA04' \
-  --description 'Bug fix, refactor, or internal change.' \
-  --force
-
-gh label create release:none \
-  --color 'C5DEF5' \
-  --description 'Docs-only or repo-meta change. No release on merge.' \
-  --force
-
-echo
-echo "Done. Labels are now available on PRs."
+echo "No labels to bootstrap."
