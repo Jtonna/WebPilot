@@ -5,10 +5,7 @@
 > Goal: an Apple-grade, quiet, premium feel for the local web UI at `http://localhost:<port>/ui`.
 >
 > Related docs: [`PALETTE.md`](./PALETTE.md) (color tokens), [`UX.md`](./UX.md)
-> (information architecture, per-page composition), and the design-research
-> siblings [`research/APPLE.md`](./research/APPLE.md),
-> [`research/LUXURY.md`](./research/LUXURY.md),
-> [`research/SIMPLE.md`](./research/SIMPLE.md).
+> (information architecture, per-page composition).
 >
 ---
 
@@ -137,7 +134,7 @@ Rule of thumb: a container's radius should be larger than the radius of its chil
 
 ### Borders — the hairline-everything philosophy
 
-The shipped direction (adopted from `research/SIMPLE.md`) is **hairline-everything**: every card-shaped surface gets a 1px `--wp-separator` border, no shadow. `.wp-card` in `app/globals.css` is the canonical example — `background: var(--wp-bg-card); border: 1px solid var(--wp-separator);` and nothing else. The hairline defines the edge; the warm-monochrome value-step between `--wp-bg` and `--wp-bg-card` (ivory → pure white in light, near-black → first-elevation in dark) provides the secondary cue. We do not stack tonal-lift *and* shadow on the same surface — that's the SaaS-card move we're explicitly rejecting.
+The shipped direction is **hairline-everything**: every card-shaped surface gets a 1px `--wp-separator` border, no shadow. `.wp-card` in `app/globals.css` is the canonical example — `background: var(--wp-bg-card); border: 1px solid var(--wp-separator);` and nothing else. The hairline defines the edge; the warm-monochrome value-step between `--wp-bg` and `--wp-bg-card` (ivory → pure white in light, near-black → first-elevation in dark) provides the secondary cue. We do not stack tonal-lift *and* shadow on the same surface — that's the SaaS-card move we're explicitly rejecting.
 
 **When to use a border**
 
@@ -296,7 +293,7 @@ Beyond raw color swaps, the two modes differ in feel:
 
 - **Hairlines do the work in both modes; shadows are reserved for floating surfaces.** Cards on the canvas use `1px var(--wp-separator)` and nothing else, in both light and dark. Shadows (`elev-2` / `elev-3`) appear only on popovers, menus, and modals — surfaces that are genuinely floating above the page.
 - **Hairline opacity is tuned per mode.** Light mode `--wp-separator` is `rgba(26, 24, 21, 0.08)`; dark mode is `rgba(240, 237, 232, 0.10)`. Strong variants (`--wp-separator-strong`, used for input borders and header rules) sit at 0.14 / 0.16. Both modes keep the edge readable without making it a "ruled line"; the warm-neutral surfaces underneath are doing the heavier hierarchy work.
-- **Three tone steps in dark, three in light.** Both modes ship a canvas / card / elevated triad (light: `#FBFAF7` / `#FFFFFF` / `#F4F2EE`; dark: `#161412` / `#1F1D1A` / `#2A2724`). The dark triad is read as "background → card → hover", the light triad as "background → card → hover/selected". `research/SIMPLE.md` (around line 328) recommended keeping the dark layering; the shipped CSS does that, with the light side getting an equivalent three-step structure rather than the originally proposed single-canvas approach.
+- **Three tone steps in dark, three in light.** Both modes ship a canvas / card / elevated triad (light: `#FBFAF7` / `#FFFFFF` / `#F4F2EE`; dark: `#161412` / `#1F1D1A` / `#2A2724`). The dark triad is read as "background → card → hover", the light triad as "background → card → hover/selected".
 - **Icons stay at Regular weight in both modes.** No "bolder in dark, lighter in light" tricks — we trust the color spec to handle perceived weight.
 - **Focus rings get slightly thicker in dark mode (2.5px vs 2px) because the accent-against-dark contrast feels visually thinner.** Same offset.
 

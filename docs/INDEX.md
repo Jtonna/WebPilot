@@ -23,7 +23,7 @@ WebPilot documentation covering system architecture, development guides, and API
 
 ## Design
 
-- `design/UX.md`, `design/ELEGANCE.md`, `design/PALETTE.md`, and `design/research/{APPLE,LUXURY,SIMPLE}.md` -- Web UI design system, palette, and design-research briefs. These describe the look-and-feel of the server-hosted web UI at `/ui`.
+- `design/UX.md`, `design/ELEGANCE.md`, `design/PALETTE.md` -- Web UI design system, palette, and visual craft. These describe the look-and-feel of the server-hosted web UI at `/ui`.
 
 ## Project Meta
 

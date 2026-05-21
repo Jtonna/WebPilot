@@ -464,10 +464,10 @@ hr {
 
 /* Active: neutral elevated fill, primary-fg text, 3px neutral-fg left edge,
    600-weight label. Three value-only strengtheners stacked — no hue change
-   per docs/design/research/SIMPLE.md ("warm-monochrome restraint, dot-only
-   color, hairline-everything"). Solid Heroicons variant comes from JS.
-   The left edge is a pseudo-element so it sits flush at the row's left
-   side regardless of padding. */
+   (warm-monochrome restraint, dot-only color, hairline-everything per
+   ELEGANCE.md). Solid Heroicons variant comes from JS. The left edge is
+   a pseudo-element so it sits flush at the row's left side regardless
+   of padding. */
 .wp-nav-item.is-active {
   background-color: var(--wp-bg-elevated);
   color: var(--wp-fg);
