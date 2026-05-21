@@ -172,13 +172,13 @@ function ConnectingSplash({ message }) {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'var(--wp-bg, #0e0e10)',
-        color: 'var(--wp-fg, #f5f5f7)',
+        background: 'var(--wp-bg)',
+        color: 'var(--wp-fg)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 24,
+        gap: 'var(--s-5)',
         zIndex: 9999,
         userSelect: 'none',
       }}
@@ -186,7 +186,7 @@ function ConnectingSplash({ message }) {
       <h1
         style={{
           margin: 0,
-          fontSize: 28,
+          fontSize: 'var(--fs-display)',
           fontWeight: 500,
           letterSpacing: '-0.02em',
         }}
@@ -195,12 +195,12 @@ function ConnectingSplash({ message }) {
       </h1>
       <div
         style={{
-          fontSize: 14,
-          color: 'var(--wp-fg-muted, #8b8b94)',
+          fontSize: 'var(--fs-small)',
+          color: 'var(--wp-fg-muted)',
           letterSpacing: '0.01em',
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: 'var(--s-1)',
           minHeight: 20,
         }}
       >
@@ -219,7 +219,7 @@ function ConnectingSplash({ message }) {
           width: 4px;
           height: 4px;
           border-radius: 50%;
-          background: var(--wp-fg-muted, #8b8b94);
+          background: var(--wp-fg-muted);
           animation: wp-splash-pulse 1.2s ease-in-out infinite;
         }
         .wp-splash-dot:nth-child(2) { animation-delay: 0.15s; }

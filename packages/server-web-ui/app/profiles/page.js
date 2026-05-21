@@ -195,6 +195,7 @@ export default function ProfilesPage() {
           <div style={{ display: 'flex', gap: 'var(--s-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               className="wp-input"
+              aria-label="New profile name"
               style={{ flex: 1, minWidth: 240 }}
               value={newName}
               placeholder="e.g. WebPilot Sandbox"

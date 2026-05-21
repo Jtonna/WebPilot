@@ -69,6 +69,7 @@ export default function PairingPromptCard({
             <input
               type="text"
               className="wp-input"
+              aria-label="New profile name"
               placeholder="New profile name"
               value={newProfileName}
               onChange={(e) => setNewProfileName(e.target.value)}
@@ -80,6 +81,7 @@ export default function PairingPromptCard({
       <div className="wp-row-actions" style={{ flexWrap: 'wrap' }}>
         <select
           className="wp-select"
+          aria-label="Chrome profile to bind"
           style={{ width: 'auto', minWidth: 200 }}
           value={selectedProfile}
           onChange={(e) => setSelectedProfile(e.target.value)}

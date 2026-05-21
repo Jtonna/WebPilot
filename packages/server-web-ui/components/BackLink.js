@@ -17,7 +17,7 @@ export default function BackLink({ href, label }) {
   return (
     <a href={href} className="wp-back-link">
       <ArrowLeftIcon
-        style={{ width: 16, height: 16, marginRight: 4 }}
+        style={{ width: 16, height: 16, marginRight: 'var(--s-1)' }}
         aria-hidden="true"
       />
       {label}

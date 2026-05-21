@@ -24,7 +24,7 @@ export default function ErrorCard({
 
   return (
     <div className="wp-card">
-      <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 6 }}>
+      <div style={{ color: 'var(--wp-danger)', fontWeight: 500, marginBottom: 'var(--s-1)' }}>
         {title}
       </div>
       {message ? (

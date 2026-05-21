@@ -52,6 +52,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
             className="wp-input"
             value={name}
             autoFocus
+            aria-label="Agent name"
             placeholder="Pick a memorable name"
             onChange={(e) => setName(e.target.value)}
             onBlur={commitRename}
@@ -66,7 +67,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
         ) : (
           <>
             <div className="wp-row-title">
-              {agent.name || <span className="wp-empty" style={{ fontSize: 15 }}>Unnamed agent</span>}
+              {agent.name || <span className="wp-empty" style={{ fontSize: 'var(--fs-body)' }}>Unnamed agent</span>}
             </div>
             <div className="wp-row-sub">
               <span className="wp-mono" title={agent.key}>{shortKey(agent.key)}</span>
@@ -79,6 +80,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
                   className="wp-input wp-input-compact"
                   defaultValue={agent.profileId || ''}
                   autoFocus
+                  aria-label="Change Chrome profile"
                   disabled={!onRebind}
                   onBlur={() => setEditingProfile(false)}
                   onChange={(e) => {

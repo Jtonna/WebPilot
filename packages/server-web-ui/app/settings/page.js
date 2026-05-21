@@ -387,11 +387,12 @@ export default function SettingsPage() {
 
 function Switch({ checked, disabled = false, onChange, ariaLabel }) {
   return (
-    <label className="wp-switch" aria-label={ariaLabel}>
+    <label className="wp-switch">
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-label={ariaLabel}
         onChange={(e) => onChange && onChange(e.target.checked)}
       />
       <span className="wp-switch-track" />
