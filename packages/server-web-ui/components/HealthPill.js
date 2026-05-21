@@ -1,19 +1,18 @@
 'use client';
 
+import Pill from './Pill';
+
 /**
- * HealthPill — small status pill for formatter health rendering.
+ * HealthPill — small status pill for formatter health rendering. Thin
+ * wrapper that maps the server's `/api/ui/formatters` `health` field onto
+ * the shared `Pill` primitive (`.wp-pill` markup).
  *
- * Three states (matching the server's `/api/ui/formatters` `health` field
- * and `formatter-logs.js` `computeHealth`):
+ * Three states (matching `formatter-logs.js` `computeHealth`):
  *   - "healthy"   The last N invocations succeeded (or the formatter has
  *                 been called fewer than the minimum number of times).
  *   - "unhealthy" At least one of the last N invocations threw.
  *   - "unknown"   The formatter has never been invoked yet. Server returns
  *                 this for newly-loaded formatters that haven't run.
- *
- * Reuses the existing `wp-pill` system (data-state slots: `info`/`danger`/
- * `unknown`) rather than introducing a parallel component, so visual
- * styling stays consistent with `ProfileStatusBadge`.
  */
 
 const HEALTH_META = {
@@ -24,10 +23,5 @@ const HEALTH_META = {
 
 export default function HealthPill({ health }) {
   const meta = HEALTH_META[health] || HEALTH_META.unknown;
-  return (
-    <span className="wp-pill" data-state={meta.state}>
-      <span className="wp-pill-dot" />
-      <span className="wp-pill-label">{meta.label}</span>
-    </span>
-  );
+  return <Pill state={meta.state} label={meta.label} />;
 }

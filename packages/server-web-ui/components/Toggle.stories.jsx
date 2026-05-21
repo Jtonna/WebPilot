@@ -8,6 +8,7 @@ const meta = {
     label: { control: 'text' },
     disabled: { control: 'boolean' },
     title: { control: 'text' },
+    ariaLabel: { control: 'text' },
   },
   parameters: {
     docs: {
@@ -44,4 +45,12 @@ export const Disabled = {
 export const NoLabel = {
   render: (args) => <ControlledToggle {...args} />,
   args: { checked: false },
+};
+
+// AriaLabel-only — the consolidated "Switch" callsite shape used inside
+// settings' wp-inset-rows. The row title supplies the visible label, so
+// the toggle itself takes only an aria-label for screen readers.
+export const AriaLabelOnly = {
+  render: (args) => <ControlledToggle {...args} />,
+  args: { checked: true, ariaLabel: 'System notifications' },
 };

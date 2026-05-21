@@ -5,6 +5,9 @@ import ErrorCard from '../../components/ErrorCard';
 import Toggle from '../../components/Toggle';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
+import EmptyState from '../../components/EmptyState';
+import Pill from '../../components/Pill';
+import SectionToolbar from '../../components/SectionToolbar';
 import {
   createSequencedFetcher,
   getStatus,
@@ -69,36 +72,16 @@ function previewNormalizedDomain(input) {
 
 function decisionPill(decision) {
   if (decision === 'allow') {
-    return (
-      <span className="wp-pill" data-state="ready">
-        <span className="wp-pill-dot" />
-        <span className="wp-pill-label">Allow</span>
-      </span>
-    );
+    return <Pill state="ready" label="Allow" />;
   }
-  return (
-    <span className="wp-pill" data-state="danger">
-      <span className="wp-pill-dot" />
-      <span className="wp-pill-label">Block</span>
-    </span>
-  );
+  return <Pill state="danger" label="Block" />;
 }
 
 function sourcePill(source) {
   if (source === 'baseline') {
-    return (
-      <span className="wp-pill" data-state="info">
-        <span className="wp-pill-dot" />
-        <span className="wp-pill-label">Baseline</span>
-      </span>
-    );
+    return <Pill state="info" label="Baseline" />;
   }
-  return (
-    <span className="wp-pill" data-state="active">
-      <span className="wp-pill-dot" />
-      <span className="wp-pill-label">User</span>
-    </span>
-  );
+  return <Pill state="active" label="User" />;
 }
 
 function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
@@ -509,39 +492,35 @@ export default function SitesPage() {
           </span>
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 'var(--s-3)',
-            padding: '0 var(--s-2)',
-            marginBottom: 'var(--s-2)',
-          }}
-        >
-          <div role="tablist" aria-label="Filter rules by source" style={{ display: 'inline-flex', gap: 'var(--s-2)' }}>
-            {SOURCE_FILTERS.map((f) => (
-              <button
-                key={f.value}
-                type="button"
-                role="tab"
-                aria-selected={sourceFilter === f.value}
-                className={`wp-btn wp-btn-compact${sourceFilter === f.value ? ' wp-btn-primary' : ''}`}
-                onClick={() => setSourceFilter(f.value)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="wp-btn wp-btn-primary"
-            onClick={() => setAddRuleOpen((v) => !v)}
-            disabled={busy}
-          >
-            {addRuleOpen ? 'Close' : '+ Add rule'}
-          </button>
-        </div>
+        <SectionToolbar
+          left={(
+            <div role="tablist" aria-label="Filter rules by source" style={{ display: 'inline-flex', gap: 'var(--s-2)' }}>
+              {SOURCE_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={sourceFilter === f.value}
+                  className={`wp-btn wp-btn-compact${sourceFilter === f.value ? ' wp-btn-primary' : ''}`}
+                  onClick={() => setSourceFilter(f.value)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+          right={(
+            <button
+              type="button"
+              className="wp-btn wp-btn-primary"
+              onClick={() => setAddRuleOpen((v) => !v)}
+              disabled={busy}
+            >
+              {addRuleOpen ? 'Close' : '+ Add rule'}
+            </button>
+          )}
+        />
+
 
         {addRuleOpen ? (
           <div style={{ marginBottom: 'var(--s-3)' }}>
@@ -561,15 +540,13 @@ export default function SitesPage() {
             <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
           </div>
         ) : filteredRules.length === 0 ? (
-          <div className="wp-card">
-            <div className="wp-empty" style={{ padding: 0 }}>
-              {sourceFilter === 'user'
-                ? 'No user-set rules yet. Click "+ Add rule" to allow or block a domain.'
-                : sourceFilter === 'baseline'
-                  ? 'No baseline rules. The baseline pack may be disabled or not yet fetched.'
-                  : 'No global rules yet.'}
-            </div>
-          </div>
+          <EmptyState
+            body={sourceFilter === 'user'
+              ? 'No user-set rules yet. Click "+ Add rule" to allow or block a domain.'
+              : sourceFilter === 'baseline'
+                ? 'No baseline rules. The baseline pack may be disabled or not yet fetched.'
+                : 'No global rules yet.'}
+          />
         ) : (
           <div className="wp-row-list">
             {filteredRules.map((rule) => (
@@ -595,47 +572,43 @@ export default function SitesPage() {
           </span>
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 'var(--s-3)',
-            padding: '0 var(--s-2)',
-            marginBottom: 'var(--s-2)',
-          }}
-        >
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-            <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-              Agent
-            </span>
-            <select
-              className="wp-input"
-              value={selectedAgentKey}
-              onChange={(e) => setSelectedAgentKey(e.target.value)}
-              disabled={agents.length === 0}
+        <SectionToolbar
+          left={(
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)' }}>
+              <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
+                Agent
+              </span>
+              <select
+                className="wp-input"
+                value={selectedAgentKey}
+                onChange={(e) => setSelectedAgentKey(e.target.value)}
+                disabled={agents.length === 0}
+              >
+                {agents.length === 0 ? (
+                  <option value="">No paired agents</option>
+                ) : (
+                  agents.map((a) => (
+                    <option key={a.key} value={a.key}>
+                      {a.name}
+                      {a.profileId ? ` · ${a.profileId}` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          )}
+          right={(
+            <button
+              type="button"
+              className="wp-btn wp-btn-primary"
+              onClick={() => setAddOverrideOpen((v) => !v)}
+              disabled={busy || !selectedAgentKey}
             >
-              {agents.length === 0 ? (
-                <option value="">No paired agents</option>
-              ) : (
-                agents.map((a) => (
-                  <option key={a.key} value={a.key}>
-                    {a.name}
-                    {a.profileId ? ` · ${a.profileId}` : ''}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="wp-btn wp-btn-primary"
-            onClick={() => setAddOverrideOpen((v) => !v)}
-            disabled={busy || !selectedAgentKey}
-          >
-            {addOverrideOpen ? 'Close' : '+ Add override'}
-          </button>
-        </div>
+              {addOverrideOpen ? 'Close' : '+ Add override'}
+            </button>
+          )}
+        />
+
 
         {addOverrideOpen && selectedAgentKey ? (
           <div style={{ marginBottom: 'var(--s-3)' }}>
@@ -651,24 +624,18 @@ export default function SitesPage() {
         {overridesError ? (
           <ErrorCard error={overridesError} title="Couldn’t load overrides." />
         ) : !selectedAgentKey ? (
-          <div className="wp-card">
-            <div className="wp-empty" style={{ padding: 0 }}>
-              {agentsLoading
-                ? 'Loading agents…'
-                : 'No paired agents yet. Pair an agent first to give it per-site overrides.'}
-            </div>
-          </div>
+          <EmptyState
+            body={agentsLoading
+              ? 'Loading agents…'
+              : 'No paired agents yet. Pair an agent first to give it per-site overrides.'}
+          />
         ) : overridesLoading ? (
           <div className="wp-inset-group">
             <SkeletonRow titleWidth="42%" subWidth="30%" showTrailing />
             <SkeletonRow titleWidth="50%" subWidth="35%" showTrailing />
           </div>
         ) : overrides.length === 0 ? (
-          <div className="wp-card">
-            <div className="wp-empty" style={{ padding: 0 }}>
-              No overrides for this agent.
-            </div>
-          </div>
+          <EmptyState body="No overrides for this agent." />
         ) : (
           <div className="wp-row-list">
             {overrides.map((o) => (

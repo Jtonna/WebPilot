@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ErrorCard from '../../components/ErrorCard';
 import HealthPill from '../../components/HealthPill';
 import { SkeletonRow } from '../../components/Skeleton';
+import EmptyState from '../../components/EmptyState';
 import { createSequencedFetcher, getFormatters } from '../../lib/api';
 import { formatRelativeTime } from '../../lib/format';
 
@@ -122,11 +123,7 @@ function FormattersSection({ title, items, emptyText }) {
         </span>
       </div>
       {items.length === 0 ? (
-        <div className="wp-card">
-          <div className="wp-empty" style={{ padding: 0 }}>
-            {emptyText}
-          </div>
-        </div>
+        <EmptyState body={emptyText} />
       ) : (
         <div className="wp-row-list">
           {items.map((f) => <FormatterRow key={f.name} f={f} />)}

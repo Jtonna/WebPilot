@@ -1,8 +1,13 @@
 'use client';
 
+import Pill from './Pill';
+
 /**
  * ProfileStatusBadge — a small, quiet pill showing a profile's WebPilot
- * status. Sentence-case, tiny dot prefix, no border.
+ * status. Thin wrapper that maps the server's `webPilotStatus` field onto
+ * the shared `Pill` primitive (`.wp-pill` markup). State + label are the
+ * only per-domain variation here, so the wrapper exists only to keep the
+ * Profile → status mapping in one place.
  *
  * Three states (matching the server's /api/ui/status `webPilotStatus`):
  *   - "active"      Profile is holding a live WebSocket. Accent dot, faint
@@ -24,15 +29,7 @@ const STATE_META = {
 export default function ProfileStatusBadge({ status }) {
   const meta = STATE_META[status] || { label: 'Unknown' };
   const state = STATE_META[status] ? status : 'unknown';
-  // Re-key the label span on state change so the small fade-in keyframe runs.
-  // This is the "fade out, swap, fade in" trick — but trimmed to a single
-  // fade-in on the new value (the old one disappears in the React unmount).
-  return (
-    <span className="wp-pill" data-state={state}>
-      <span className="wp-pill-dot" />
-      <span className="wp-pill-label" key={state}>{meta.label}</span>
-    </span>
-  );
+  return <Pill state={state} label={meta.label} />;
 }
 
 export const NEEDS_SETUP_HINT =

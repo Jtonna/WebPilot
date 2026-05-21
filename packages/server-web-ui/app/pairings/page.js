@@ -5,6 +5,8 @@ import ErrorCard from '../../components/ErrorCard';
 import PairingPromptCard from '../../components/PairingPromptCard';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
+import EmptyState from '../../components/EmptyState';
+import Pill from '../../components/Pill';
 import {
   createSequencedFetcher,
   getStatus,
@@ -177,7 +179,7 @@ export default function PairingsPage() {
               <SkeletonRow titleWidth="48%" subWidth="42%" showTrailing />
             </>
           ) : pairings.length === 0 ? (
-            <div className="wp-empty">Nothing pending right now.</div>
+            <EmptyState variant="bare" body="Nothing pending right now." />
           ) : (
             pairings.map((p) => (
               <PairingPromptCard
@@ -218,11 +220,7 @@ export default function PairingsPage() {
             <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
           </div>
         ) : history.length === 0 ? (
-          <div className="wp-card">
-            <div className="wp-empty" style={{ padding: 0 }}>
-              No pairings yet. They’ll appear here after you approve or deny your first request.
-            </div>
-          </div>
+          <EmptyState body="No pairings yet. They’ll appear here after you approve or deny your first request." />
         ) : (
           <>
             <div className="wp-row-list">
@@ -258,10 +256,7 @@ export default function PairingsPage() {
                         ) : null}
                       </div>
                     </div>
-                    <span className="wp-pill" data-state={state}>
-                      <span className="wp-pill-dot" />
-                      <span className="wp-pill-label">{label}</span>
-                    </span>
+                    <Pill state={state} label={label} />
                   </div>
                 );
               })}

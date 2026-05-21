@@ -2,6 +2,20 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+// Standard focusable-elements selector. Used by the hand-rolled focus
+// trap: on Tab at the last focusable, wrap to the first; on Shift+Tab at
+// the first, wrap to the last. No third-party dep; queried fresh on every
+// keystroke so dynamically rendered buttons (e.g. ConfirmModal showing a
+// "Saving…" spinner) are picked up.
+const FOCUSABLE_SELECTORS = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
 /**
  * Modal — shared scaffolding for ConfirmModal, ProfileSetupModal, PairAgentModal.
  *
@@ -43,6 +57,7 @@ export default function Modal({
 }) {
   const [closing, setClosing] = useState(false);
   const wasOpenRef = useRef(open);
+  const modalRef = useRef(null);
 
   // Mirror open → closing animation. Stay mounted until exit anim finishes.
   useEffect(() => {
@@ -56,13 +71,47 @@ export default function Modal({
     return undefined;
   }, [open, closeMs]);
 
-  // Esc closes.
+  // Esc closes + Tab/Shift+Tab focus trap. Both handlers live in one
+  // keydown listener so we only attach one global handler per open modal.
+  // The trap queries the modal root on every Tab so dynamically inserted
+  // controls (e.g. ConfirmModal swapping a button label mid-submit) are
+  // included in the wrap-around order.
   useEffect(() => {
     if (!open) return undefined;
     function onKey(e) {
       if (e.key === 'Escape') {
         e.preventDefault();
         if (typeof onClose === 'function') onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const root = modalRef.current;
+      if (!root) return;
+      const nodes = root.querySelectorAll(FOCUSABLE_SELECTORS);
+      // Filter to nodes that are actually focusable right now: skip
+      // visually-hidden or inert elements (offsetParent === null is the
+      // cheapest sniff that catches `display:none` ancestors; disabled
+      // inputs are already excluded by the selector).
+      const focusable = Array.from(nodes).filter(
+        (el) => el.offsetParent !== null || el === document.activeElement
+      );
+      if (focusable.length === 0) {
+        // Nothing focusable inside the dialog — keep focus from escaping
+        // by parking it on the dialog itself.
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !root.contains(active)) {
+          e.preventDefault();
+          try { last.focus(); } catch (_) { /* ignore */ }
+        }
+      } else if (active === last || !root.contains(active)) {
+        e.preventDefault();
+        try { first.focus(); } catch (_) { /* ignore */ }
       }
     }
     window.addEventListener('keydown', onKey);
@@ -95,7 +144,7 @@ export default function Modal({
       aria-labelledby={titleId}
       onClick={handleBackdrop}
     >
-      <div className={modalClass}>{children}</div>
+      <div ref={modalRef} className={modalClass}>{children}</div>
     </div>
   );
 }

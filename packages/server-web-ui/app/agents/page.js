@@ -9,6 +9,8 @@ import ErrorCard from '../../components/ErrorCard';
 import PairAgentModal from '../../components/PairAgentModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
+import EmptyState from '../../components/EmptyState';
+import SectionToolbar from '../../components/SectionToolbar';
 import {
   createSequencedFetcher,
   getStatus,
@@ -182,27 +184,23 @@ function AgentsPageInner() {
       {error ? <ErrorCard error={error} /> : null}
 
       {/* Slim pair-agent bar — opens PairAgentModal with the instructions. */}
-      <div
-        className="wp-card"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 'var(--s-4)',
-          padding: 'var(--s-3) var(--s-4)',
-        }}
-      >
-        <span style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
-          Pair a new agent
-        </span>
-        <button
-          type="button"
-          className="wp-btn wp-btn-primary"
-          onClick={() => setPairOpen(true)}
-        >
-          Pair a new agent
-        </button>
-      </div>
+      <SectionToolbar
+        variant="card"
+        left={(
+          <span style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
+            Pair a new agent
+          </span>
+        )}
+        right={(
+          <button
+            type="button"
+            className="wp-btn wp-btn-primary"
+            onClick={() => setPairOpen(true)}
+          >
+            Pair a new agent
+          </button>
+        )}
+      />
 
       {/* Paired agents */}
       {agentsLoading ? (
@@ -238,13 +236,11 @@ function AgentsPageInner() {
             </div>
           ) : null}
           {filteredAgents.length === 0 ? (
-            <div className="wp-card">
-              <div className="wp-empty" style={{ padding: 0 }}>
-                {profileFilter
-                  ? `No agents paired to ${filterDisplayName} yet.`
-                  : 'No agents paired yet. Use “Pair a new agent” above to copy the setup prompt for your AI agent.'}
-              </div>
-            </div>
+            <EmptyState
+              body={profileFilter
+                ? `No agents paired to ${filterDisplayName} yet.`
+                : 'No agents paired yet. Use “Pair a new agent” above to copy the setup prompt for your AI agent.'}
+            />
           ) : (
             <div className="wp-row-list">
               {filteredAgents.map((a) => (

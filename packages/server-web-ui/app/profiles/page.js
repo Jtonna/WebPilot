@@ -6,6 +6,7 @@ import ProfileStatusBadge from '../../components/ProfileStatusBadge';
 import ProfileSetupModal from '../../components/ProfileSetupModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
+import EmptyState from '../../components/EmptyState';
 import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 
@@ -123,11 +124,7 @@ export default function ProfilesPage() {
             <SkeletonRow titleWidth="52%" subWidth="50%" showTrailing />
           </div>
         ) : sorted.length === 0 ? (
-          <div className="wp-card">
-            <div className="wp-empty" style={{ padding: 0 }}>
-              No profiles found. Launch Chrome once on this machine to populate the list.
-            </div>
-          </div>
+          <EmptyState body="No profiles found. Launch Chrome once on this machine to populate the list." />
         ) : (
           <div className="wp-row-list">
             {sorted.map((p) => {

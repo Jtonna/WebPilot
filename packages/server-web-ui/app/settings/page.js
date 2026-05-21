@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DocumentDuplicateIcon } from '@heroicons/react/20/solid';
 import ConfirmModal from '../../components/ConfirmModal';
 import Skeleton, { SkeletonRow } from '../../components/Skeleton';
+import Toggle from '../../components/Toggle';
 import { useToast } from '../../components/ToastRegion';
 import {
   getStatus,
@@ -214,7 +215,7 @@ export default function SettingsPage() {
               <div className="wp-inset-row-title">System notifications for pairing requests</div>
               <div className="wp-inset-row-sub">Show a system notification when an agent requests pairing.</div>
             </div>
-            <Switch
+            <Toggle
               checked={notifOn}
               onChange={handleNotifChange}
               ariaLabel="System notifications"
@@ -230,7 +231,7 @@ export default function SettingsPage() {
                 A short chime alongside the system notification.
               </div>
             </div>
-            <Switch
+            <Toggle
               checked={soundOn}
               disabled={!notifOn}
               onChange={handleSoundChange}
@@ -270,7 +271,7 @@ export default function SettingsPage() {
                 </div>
               ) : null}
             </div>
-            <Switch
+            <Toggle
               checked={networkMode}
               disabled={busy || loading}
               onChange={(next) => setPendingToggle(next)}
@@ -385,18 +386,3 @@ export default function SettingsPage() {
   );
 }
 
-function Switch({ checked, disabled = false, onChange, ariaLabel }) {
-  return (
-    <label className="wp-switch">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        onChange={(e) => onChange && onChange(e.target.checked)}
-      />
-      <span className="wp-switch-track" />
-      <span className="wp-switch-thumb" />
-    </label>
-  );
-}

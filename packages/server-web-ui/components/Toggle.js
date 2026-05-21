@@ -23,8 +23,14 @@ import { useId } from 'react';
  *               in a paragraph).
  *   disabled  — boolean.
  *   id        — optional. Auto-generated otherwise.
+ *   ariaLabel — optional. Applied to the hidden checkbox input as
+ *               `aria-label`. Use this when the toggle is rendered
+ *               without a visible `label` prop (e.g. inside a wp-inset-row
+ *               where the row title supplies the visible context) so the
+ *               control still has an accessible name. Mirrors the prop the
+ *               retired local `Switch` component exposed in settings/.
  */
-export default function Toggle({ checked, onChange, label, title, disabled, id }) {
+export default function Toggle({ checked, onChange, label, title, disabled, id, ariaLabel }) {
   const generatedId = useId();
   const inputId = id || `wp-toggle-${generatedId}`;
   return (
@@ -41,6 +47,7 @@ export default function Toggle({ checked, onChange, label, title, disabled, id }
           className="wp-toggle-input"
           checked={!!checked}
           disabled={!!disabled}
+          aria-label={ariaLabel || undefined}
           onChange={(e) => {
             if (typeof onChange === 'function') onChange(e.target.checked);
           }}

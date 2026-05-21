@@ -9,6 +9,7 @@ import StatusRow from '../components/StatusRow';
 import Skeleton from '../components/Skeleton';
 import ErrorCard from '../components/ErrorCard';
 import { useToast } from '../components/ToastRegion';
+import EmptyState from '../components/EmptyState';
 import { createSequencedFetcher, getStatus, approvePairing, denyPairing, restartChrome, dismissIncident, dismissAllForFormatter } from '../lib/api';
 import { createUiEventsClient } from '../lib/ws';
 import { profileOptions } from '../lib/format';
@@ -268,7 +269,7 @@ export default function HomePage() {
           </div>
           <div className="wp-inset-group">
             {actionItemsCount === 0 ? (
-              <div className="wp-empty">Nothing pending right now.</div>
+              <EmptyState variant="bare" body="Nothing pending right now." />
             ) : (
               <>
                 {pendingPairings.map((p) => (
@@ -305,11 +306,7 @@ export default function HomePage() {
             </span>
           </div>
           {sortedProfiles.length === 0 ? (
-            <div className="wp-card">
-              <div className="wp-empty" style={{ padding: 0 }}>
-                No Chrome profiles found yet. Launch Chrome once on this machine.
-              </div>
-            </div>
+            <EmptyState body="No Chrome profiles found yet. Launch Chrome once on this machine." />
           ) : (
             <div className="wp-row-list">
               {sortedProfiles.map((p) => {
