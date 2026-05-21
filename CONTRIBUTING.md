@@ -33,6 +33,27 @@ See [`docs/INDEX.md`](docs/INDEX.md) for the full architecture index and [`docs/
 
 Merging a PR does **not** trigger a release. Releases are cut manually from the Actions tab when a maintainer decides a batch of merged PRs is ready to ship.
 
+## Comment style
+
+Comments document **what** a thing is and **how** it works, with the **occasional why** for non-obvious decisions, hidden constraints, or workarounds. The git log carries history; the code carries the present.
+
+Keep:
+
+- Module-level docstrings that explain a file's purpose and how it fits the system.
+- *Why*-comments for surprising choices (e.g. `Sleep 800ms — Windows needs this before file ops or RMDir fails when daemon still has handles`).
+- Algorithm walkthroughs where the names alone aren't enough.
+- TODOs that point at real outstanding work, with enough context to act on them.
+
+Drop:
+
+- Phase / wave / cycle labels (`P2 — phase 1`, `Phase 6`, `Wave B`, `QOL review C1`). The phases are gone, the lifecycle docs that named them are gone, and the labels are illegible to anyone reading the file today.
+- References to deleted docs (`see EXTENSION_REDESIGN_AND_POLICY.md`, `per SECURITY_AUDIT_2026-05-17.md`).
+- Commit / PR archaeology (`added in 1.1.4`, `per founder review on 2026-04-X`).
+- Narration of code that's obvious from the names (`// Increment count` over `count++`).
+- Multi-paragraph "history of this function" blocks. Compress to a single paragraph of what + how + occasional why.
+
+When you delete a lore-laden comment, salvage anything that's actually useful and restate it in plain prose. If you're not sure whether something is lore or load-bearing context, leave it for review — better a flagged keep than a wrong delete.
+
 ## Releasing
 
 Releases are cut by a maintainer from the GitHub Actions tab. Pick the workflow that matches the impact of the changes being shipped:
