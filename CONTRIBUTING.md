@@ -126,7 +126,7 @@ Open a [GitHub issue](https://github.com/Jtonna/WebPilot/issues) using the **Bug
 
 - Platform + OS version (`win11`, `macOS 14.5`, `Ubuntu 24.04`, etc.)
 - Chrome channel + version
-- WebPilot version (visible in the dashboard footer)
+- WebPilot version (visible at Settings → General → About in the dashboard)
 - Steps to reproduce
 - Expected vs. actual behavior
 - Relevant log output. Default locations:

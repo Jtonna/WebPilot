@@ -71,7 +71,11 @@ real issues first, ranked by guessed risk:
    `chrome`, but if the distro packages Chrome as
    `google-chrome-stable` the comm will show as `google-chrome-s`
    (15 chars, truncated mid-word). The current prefix check
-   `comm.startsWith('chrome')` would miss this entirely. Also: snap-packaged Chromium runs under a confinement
+   `comm.startsWith('chrome')` would miss this entirely. The same
+   prefix check also carries a false-positive risk: any non-Chrome
+   process whose `comm` begins with `chrome` (test binaries, dev
+   tooling named `chrome-*`, etc.) would be matched as a real Chrome
+   instance. Also: snap-packaged Chromium runs under a confinement
    wrapper that may show as `snap-confine` or `chromium` depending on
    the snap version. **Expect this matcher to need broadening on
    first run.**

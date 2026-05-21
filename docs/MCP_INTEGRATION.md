@@ -179,13 +179,22 @@ Get information about available platform-specific formatters and instructions fo
       "name": "threads",
       "match": "threads.com",
       "description": "Platform-specific formatter for sites matching hostname \"threads.com\"",
-      "source": "auto-updated"
+      "source": "auto-updated",
+      "workflows": [
+        {
+          "name": "open_thread",
+          "description": "Open a thread by URL and return its formatted tree.",
+          "parameters": { "url": "string" },
+          "implemented": true
+        }
+      ]
     },
     "zillow": {
       "name": "zillow",
       "match": "zillow.com",
       "description": "Platform-specific formatter for sites matching hostname \"zillow.com\"",
-      "source": "auto-updated"
+      "source": "auto-updated",
+      "workflows": []
     }
   },
   "default": { "entry": "default.js" },
@@ -219,6 +228,7 @@ Get information about available platform-specific formatters and instructions fo
 | `version` | Formatter API version |
 | `platforms` | Object of available formatters, each with `name`, `match` pattern, `description`, and `source` |
 | `platforms[].source` | `"auto-updated"` for GitHub-hosted formatters, `"custom"` for user-provided ones |
+| `platforms[].workflows` | Array of `{ name, description, parameters, implemented }` rows declared in the platform's `manifest.json` and cross-checked against its `workflows.js`. Only call `webpilot_run_workflow` on entries with `implemented: true`. |
 | `default` | Description of fallback behavior when no formatter matches |
 | `customFormatterDir` | Absolute path to the `custom-formatters/` directory on this machine |
 | `formatterApiContract` | Input/output specification for the formatter API |
@@ -1073,6 +1083,19 @@ browser_request_chain(
 - On step failure, execution stops and returns all prior successful results plus the error
 - Domain restriction rules still apply to each individual step
 - `browser_request_chain` cannot be used as a step tool (no recursive chaining)
+
+---
+
+### Developer tools
+
+The `webpilot_dev_*` namespace exists for formatter authors iterating against a live server. These tools are **not intended for production agents** — they expose internals (log ring buffers, extension reload) that production callers should never touch. Schemas live in `packages/server-for-chrome-extension/src/mcp-handler.js`.
+
+| Tool | What it does |
+|------|--------------|
+| `webpilot_dev_get_formatter_logs` | Returns the recent error ring buffer (most-recent-first) and a health summary (`successCount`, `errorCount`, `lastSuccessAt`, `lastErrorAt`, `health`, `lastError`) for one platform. Auth-exempt (read-only). Takes `platform` (required), plus optional `limit` / filters — see source for the full schema. |
+| `webpilot_dev_reload_extension` | Triggers a `chrome.runtime.reload()` on the *calling agent's* paired Chrome profile. Requires auth. Multi-profile installs need one call per profile. Used when iterating on extension code; safe to skip in normal agent flows. |
+
+See `accessibility-tree-formatters/DEV_GUIDE.md` for the formatter dev loop these tools support.
 
 ---
 

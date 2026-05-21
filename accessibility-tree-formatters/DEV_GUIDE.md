@@ -104,7 +104,9 @@ See `discord/manifest.json` in this repo for a worked example with workflows.
    ```
 
    The response's `entries[]` is the most-recent-first error ring buffer (max
-   50 entries; success invocations are not stored as rows). Each entry has
+   50 entries; success invocations are not stored as rows). The in-memory
+   cache holds the most recent 10 entries per formatter; older entries
+   beyond that are read from SQLite when the agent requests more. Each entry has
    `timestamp`, `phase` (`format` for formatter errors, `workflow` for workflow
    errors), `message`, `stack` (truncated to 1024 chars), and for workflow
    entries also `workflow`, `params`, `tabId`. The `health` field summarizes

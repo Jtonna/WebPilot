@@ -103,10 +103,11 @@ first, ranked by my honest guess at risk:
    `kill -9 <server-pid>` triggers a successful auto-restart.
 5. **`chrome/launcher.js` — detached spawn on darwin** — `spawn(...,
    { detached: true })` on macOS does *not* fully detach a GUI app
-   in the same way a daemon would. The launched Chrome may be tied
-   to the parent's launchd session and disappear when the parent
-   exits unexpectedly. Verify the launched Chrome survives a
-   `kill <server-pid>`.
+   in the same way a daemon would. Whether the launched Chrome is
+   tied to the parent's launchd session (and so disappears when the
+   parent exits unexpectedly) is worth verifying on a real macOS
+   install — this assertion needs first-macOS-tester confirmation.
+   Verify the launched Chrome survives a `kill <server-pid>`.
 
 ## 3. What to verify on first boot
 

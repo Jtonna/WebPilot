@@ -80,7 +80,7 @@ The server replies with either `hello_ack` (handshake complete; `profileId` is t
 
 #### From popup / other extension contexts (chrome.runtime.onMessage)
 
-The new minimal popup (Phase 6) does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates, future programmatic disconnect paths):
+The current minimal popup does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates, future programmatic disconnect paths):
 
 | Message type | Action |
 |--------------|--------|
@@ -90,10 +90,10 @@ The new minimal popup (Phase 6) does **not** send any `chrome.runtime.sendMessag
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
-> Removed in P2 phase 7 (all dormant after the Phase-6 popup rewrite, no remaining listeners in the extension):
+> Removed once the popup was rewritten as a minimal status-and-escape-hatch panel and these runtime messages had no remaining listeners in the extension:
 > `GET_STATUS`, `DISCONNECT`, `RETRY_AUTO_CONNECT`, `RESET_PROFILE_ID`, `SET_PROFILE_ID`, `GET_PROFILE_IDENTITY`, `CHECK_FORMATTER_UPDATES`. Background broadcasts `IDENTIFY_REQUIRED` and `CONNECTION_STATUS_CHANGED` also removed for the same reason.
 >
-> Removed in Phase 6: `SET_NETWORK_MODE` — network mode is configured via `POST /api/ui/settings/network-mode` from the web UI.
+> Also removed: `SET_NETWORK_MODE` — network mode is configured via `POST /api/ui/settings/network-mode` from the web UI.
 
 ## Handlers
 
@@ -206,7 +206,7 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-P2 phase 6 gutted the popup to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, restricted-mode whitelist) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
+The popup was gutted to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, restricted-mode whitelist) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
 
 ### What the popup shows
 
@@ -266,7 +266,7 @@ It does **not** send any `chrome.runtime.sendMessage` to the background service 
 
 ### Per-profile reload required
 
-The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** in Phase 6, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`1.1.8`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** when the popup was rewritten, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`1.1.8`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
 
 For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
@@ -329,7 +329,7 @@ Standard command envelope:
 
 > Removed: `pairing_request`. Pairing approval no longer goes through the extension popup — pending pairings are surfaced and approved/denied via the web UI at `/ui/pairings`. The legacy `pairing_request` push has no consumer in the current extension.
 >
-> Removed: `formatter_update_result`. The Phase-7 popup rewrite removed the extension-side `CHECK_FORMATTER_UPDATES` runtime message and the corresponding `check_formatter_updates` WebSocket request, so the server's push response no longer has a consumer in the extension. Formatter update checks are now driven from the web UI.
+> Removed: `formatter_update_result`. The minimal-popup rewrite removed the extension-side `CHECK_FORMATTER_UPDATES` runtime message and the corresponding `check_formatter_updates` WebSocket request, so the server's push response no longer has a consumer in the extension. Formatter update checks are now driven from the web UI.
 
 ### Extension to Server (WebSocket)
 
@@ -362,7 +362,7 @@ Error:
 
 > **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. The extension popup no longer sends these. Network mode and pairing config are now owned by the web UI.
 >
-> **Removed from the extension:** `check_formatter_updates`. The Phase-7 popup rewrite dropped the runtime listener and the WebSocket sender. Formatter update checks now run from the server-hosted web UI.
+> **Removed from the extension:** `check_formatter_updates`. The minimal-popup rewrite dropped the runtime listener and the WebSocket sender. Formatter update checks now run from the server-hosted web UI.
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 

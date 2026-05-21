@@ -49,3 +49,5 @@ Sideloading via Developer Mode has trade-offs that users should be aware of:
 Google's Chrome Web Store Developer Program Policies single out a handful of high-risk permissions for stricter review. The `chrome.debugger` permission gets this treatment because it lets an extension attach to any tab and read/modify all network traffic, DOM content, and JavaScript execution -- effectively granting full control over the browser session via the Chrome DevTools Protocol.
 
 This is by design for WebPilot: CDP access is what enables MCP clients to interact with web pages. The permission is not optional, and no reduced-scope alternative (e.g. `activeTab` + content scripts) would cover the cross-tab, network-level, and execution-control surface that the MCP tools depend on.
+
+Further reading: [Chrome Developer Program Policies — Permissions](https://developer.chrome.com/docs/webstore/program-policies/permissions).

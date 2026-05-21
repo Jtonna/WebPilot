@@ -114,7 +114,7 @@ just the number, mono nano). This is the single exception to the "no
 badge counts" rule and is justified because Pairings is the only
 time-sensitive surface; the count exists as a typographic affordance,
 not a notification badge. The page-title `(N) WebPilot` channel is also
-kept.
+intended to be kept. <!-- TODO(founder): aspirational — no `document.title` writes currently exist in `packages/server-web-ui/`; the layout sets a static `title: 'WebPilot'` and never appends a pending count. Wire this up before treating it as a live channel. -->
 
 ### Top bar (mobile, < 900px)
 
@@ -155,7 +155,10 @@ exactly-one thing that does.
      only the spacing). One per pending pairing. Approve / Deny buttons
      right in the card. Profile selector (existing dropdown including the
      `+ New sandbox profile` sentinel) lives in the card.
-3. **System status** section. Single card with three rows:
+3. **Chrome profiles** section. One row per known profile, each linking to
+   `/agents?profile=<dir>`. Rows show profile status + paired-agent count.
+   Empty state: `No Chrome profiles found yet. Launch Chrome once on this machine.`
+4. **System status** section. Single card with three rows:
    - `Chrome` → `Running · debug flag enabled` (green) /
      `Running · debug flag missing` (amber + a "Restart Chrome" link) /
      `Not detected` (grey + a "Launch Chrome" link).
