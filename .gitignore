@@ -57,6 +57,10 @@ pkg-cache/
 # Additional environment and secrets
 config.local.json
 
+# Storybook (dev-only — never shipped in the daemon's bundled UI)
+packages/server-web-ui/storybook-static/
+packages/server-web-ui/debug-storybook.log
+
 # Additional editor files
 *.code-workspace
 /packages/electron/.next
