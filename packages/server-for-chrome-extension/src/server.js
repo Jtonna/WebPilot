@@ -1834,13 +1834,6 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           return;
         }
 
-        if (message.type === 'check_formatter_updates') {
-          formatterUpdater.checkForUpdates()
-            .then(result => ws.send(JSON.stringify({ type: 'formatter_update_result', ...result })))
-            .catch(err => ws.send(JSON.stringify({ type: 'formatter_update_result', updated: false, error: err.message })));
-          return;
-        }
-
         if (message.type === 'set_network_mode') {
           // DEPRECATED: this in-process rebind path was replaced by the
           // POST /api/ui/settings/network-mode REST endpoint which uses a
