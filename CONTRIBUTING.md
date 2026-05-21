@@ -45,6 +45,64 @@ Each dispatcher reads the current version from root `package.json`, runs `script
 
 If you need to release a specific version without auto-bumping (e.g. rebuilding an existing tag, or shipping a hotfix tagged locally), push a `v*` tag to `origin` and `release.yml` will fire on the tag push.
 
+## Signing formatter releases
+
+WebPilot daemons fetch formatter and baseline-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
+
+### Threat model
+
+The daemon refuses to apply a formatter / blocklist update unless:
+
+1. A `signed-manifest.json` is present alongside the regular `manifest.json` on the served branch.
+2. Its detached signature (`signed-manifest.json.sig`) verifies against the bundled `PUBKEY.pem` using Ed25519.
+3. The SHA-256 of every downloaded file matches the hash recorded in the signed manifest.
+
+The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never has to fetch the pubkey from the network.
+
+Verification failure is logged and the update is skipped; the previously-installed formatters keep running.
+
+### Generating a signing key for local testing
+
+```bash
+node scripts/generate-signing-key.js
+```
+
+This produces:
+
+- `~/.webpilot-signing-key` (PKCS#8 PEM, mode `0o600`) — keep private.
+- `accessibility-tree-formatters/PUBKEY.pem` (SPKI PEM) — committed to the repo.
+
+The script refuses to overwrite an existing private key — delete it explicitly if you really mean to rotate.
+
+To produce signed manifests locally:
+
+```bash
+node scripts/sign-formatters.js
+```
+
+That writes `signed-manifest.json` + `signed-manifest.json.sig` next to each top-level manifest. Idempotent — re-running with no file changes produces byte-identical output.
+
+### Production signing
+
+Production signing happens inside the release workflows. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). The dispatcher workflows (`release-patch.yml`, `release-minor.yml`, `release-major.yml`) decode it to a temp file with mode `0o600`, run `scripts/sign-formatters.js`, commit the regenerated `signed-manifest.json` + `.sig` files alongside the version bump, then tag and push.
+
+`release.yml` also re-runs the signing step on its build leg as a belt-and-braces defence against signed manifests drifting out of sync with the actual formatter sources at the tagged ref.
+
+### Key rotation
+
+When the signing key needs to be rotated (founder turnover, suspected compromise, scheduled hygiene):
+
+1. On a clean workstation, delete `~/.webpilot-signing-key` and run `node scripts/generate-signing-key.js`.
+2. Base64-encode the new private key and update the `WEBPILOT_SIGNING_KEY_BASE64` repo secret in **Settings → Secrets and variables → Actions**.
+3. Commit the regenerated `accessibility-tree-formatters/PUBKEY.pem`.
+4. Cut a new release via one of the dispatcher workflows. The next daemon update tick will fetch the new signed manifest, verify it against the new bundled pubkey, and apply normally.
+
+Old released installers continue to verify against the *old* pubkey they shipped with — the rotation does not invalidate previously installed daemons until they receive a new installer that ships the new pubkey. Plan rotation to coincide with a normal release.
+
+### Reporting a compromised signing key
+
+See [`SECURITY.md`](SECURITY.md) — `[WebPilot security]` to `jtonna@proton.me` or a private GitHub advisory.
+
 ## Commit messages
 
 A loose conventional-commits style is preferred but not enforced:

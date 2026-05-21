@@ -10,6 +10,9 @@ build/
 *.crx
 *.pem
 *.zip
+# PUBKEY.pem is the formatter / blocklist signing trust anchor — it MUST
+# be tracked. See SECURITY.md > Supply chain integrity.
+!accessibility-tree-formatters/PUBKEY.pem
 
 # Environment and secrets
 .env

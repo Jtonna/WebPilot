@@ -10,12 +10,29 @@
  * `global_site_rules` row with `source='baseline'` in a single transaction.
  * User-set rows (`source='user'`) are never touched.
  *
+ * Supply-chain integrity (added 2026-05-20):
+ *   - Every fetch tick pulls `signed-manifest.json` + `signed-manifest.json.sig`
+ *     from the remote first and verifies the Ed25519 signature against
+ *     the bundled `PUBKEY.pem`.
+ *   - Once verified, each downloaded file (the regular manifest + every
+ *     referenced list) is hashed and compared to the SHA-256 recorded
+ *     in the signed manifest. A mismatch aborts the entire tick.
+ *   - The signed bundle is also written to the local cache so a future
+ *     offline boot can still trust what it reads from disk.
+ *   - If the remote 404s on the signed bundle entirely (release predates
+ *     the signing infrastructure), we fail-skip: no DB writes, no
+ *     blocklist changes, try again next tick.
+ *
  * Resilience tier (per the user's request, smoke-test 2026-05-17):
  *   - Try remote fetch first.
  *   - On success, write the parsed content to a LOCAL CACHE under
- *     `<dataDir>/baseline-blocklists/` (manifest.json + each list file).
+ *     `<dataDir>/baseline-blocklists/` (manifest.json + each list file
+ *     + the signed manifest + signature so the next boot can re-verify
+ *     without the network).
  *   - On remote failure (network down, GitHub 404 because the branch
- *     hasn't merged to main, etc.), READ FROM THE LOCAL CACHE and proceed.
+ *     hasn't merged to main, etc.), READ FROM THE LOCAL CACHE — and
+ *     re-verify the cached signature before using it. A cache that
+ *     doesn't verify is treated as if it weren't there.
  *   - If neither remote nor local cache is available, write an empty
  *     placeholder manifest so subsequent boots see a predictable state
  *     (instead of repeatedly thrashing the network on every restart). The
@@ -37,6 +54,14 @@
 
 const fs = require('fs');
 const path = require('path');
+
+const {
+  fetchAndVerifyManifest,
+  fetchOptionalText,
+  verifySignature,
+  parseSignedManifest,
+  verifyFileHash,
+} = require('./lib/manifest-verifier');
 
 const GITHUB_RAW_BASE =
   'https://raw.githubusercontent.com/Jtonna/WebPilot/main/baseline-blocklists';
@@ -104,13 +129,21 @@ function _ensureCacheDir() {
 }
 
 /**
- * Persist the just-fetched manifest + list-file bodies to the local cache.
+ * Persist the just-fetched manifest + list-file bodies to the local cache,
+ * along with the signed manifest + signature so a future offline boot can
+ * re-verify before applying anything.
  * Best-effort — a write failure is logged but does not abort the update.
  */
-function _writeLocalCache(manifestText, listBodiesByFile) {
+function _writeLocalCache(manifestText, listBodiesByFile, signedText, sigText) {
   try {
     const dir = _ensureCacheDir();
     fs.writeFileSync(path.join(dir, 'manifest.json'), manifestText, 'utf8');
+    if (typeof signedText === 'string') {
+      fs.writeFileSync(path.join(dir, 'signed-manifest.json'), signedText, 'utf8');
+    }
+    if (typeof sigText === 'string') {
+      fs.writeFileSync(path.join(dir, 'signed-manifest.json.sig'), sigText, 'utf8');
+    }
     for (const [file, body] of Object.entries(listBodiesByFile || {})) {
       // file can contain a `subdir/name.txt`-style path; mkdir the parent.
       const dest = path.join(dir, file);
@@ -123,15 +156,43 @@ function _writeLocalCache(manifestText, listBodiesByFile) {
 }
 
 /**
- * Read the local cache, if present. Returns `{manifestText, listBodiesByFile}`
- * or `null` if the cache is empty / missing / unreadable.
+ * Read the local cache, if present, AND re-verify the cached signed
+ * manifest + every cached file's hash before returning anything. A cache
+ * whose signature doesn't verify is treated as missing — that way a
+ * corrupted-on-disk cache can't smuggle bad data into the DB on next boot.
+ *
+ * Returns `{manifestText, listBodiesByFile}` or `null`.
  */
 function _readLocalCache() {
   try {
     const dir = _getLocalCacheDir();
     const manifestPath = path.join(dir, 'manifest.json');
+    const signedPath = path.join(dir, 'signed-manifest.json');
+    const sigPath = path.join(dir, 'signed-manifest.json.sig');
     if (!fs.existsSync(manifestPath)) return null;
+    if (!fs.existsSync(signedPath) || !fs.existsSync(sigPath)) {
+      console.warn('[blocklist-updater] local cache present but missing signed manifest / signature — ignoring cache');
+      return null;
+    }
+    const signedText = fs.readFileSync(signedPath, 'utf8');
+    const sigText = fs.readFileSync(sigPath, 'utf8');
+    const v = verifySignature(signedText, sigText);
+    if (!v.ok) {
+      console.warn(`[blocklist-updater] local cache signature failed (${v.reason}) — ignoring cache`);
+      return null;
+    }
+    let signed;
+    try {
+      signed = parseSignedManifest(signedText);
+    } catch (e) {
+      console.warn(`[blocklist-updater] local cache signed manifest parse failed: ${e.message}`);
+      return null;
+    }
     const manifestText = fs.readFileSync(manifestPath, 'utf8');
+    if (!verifyFileHash(signed, 'manifest.json', Buffer.from(manifestText, 'utf8'))) {
+      console.warn('[blocklist-updater] local cache manifest.json hash mismatch — ignoring cache');
+      return null;
+    }
     let manifest;
     try {
       manifest = JSON.parse(manifestText);
@@ -146,9 +207,14 @@ function _readLocalCache() {
       const filePath = path.join(dir, list.file);
       if (!fs.existsSync(filePath)) {
         console.warn(`[blocklist-updater] local cache missing list file: ${list.file}`);
-        continue;
+        return null;
       }
-      listBodiesByFile[list.file] = fs.readFileSync(filePath, 'utf8');
+      const body = fs.readFileSync(filePath, 'utf8');
+      if (!verifyFileHash(signed, list.file, Buffer.from(body, 'utf8'))) {
+        console.warn(`[blocklist-updater] local cache list "${list.file}" hash mismatch — ignoring cache`);
+        return null;
+      }
+      listBodiesByFile[list.file] = body;
     }
     return { manifestText, listBodiesByFile };
   } catch (err) {
@@ -179,28 +245,6 @@ function _writeEmptyPlaceholder() {
 }
 
 /**
- * Fetch helper with timeout. Returns the response body as text or throws.
- */
-async function _fetchText(url, timeoutMs = 10000) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(t);
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} fetching ${url}`);
-    }
-    return await res.text();
-  } catch (err) {
-    clearTimeout(t);
-    if (err && err.name === 'AbortError') {
-      throw new Error(`Timeout fetching ${url}`);
-    }
-    throw err;
-  }
-}
-
-/**
  * Parse a hosts.txt-style file into an array of normalized domains.
  * Duplicates are de-duped; invalid lines are skipped silently.
  */
@@ -227,71 +271,113 @@ function _parseHostsFile(text) {
 /**
  * Run a single update cycle. Idempotent and safe to call repeatedly:
  *
- *   1. Fetch manifest.json from baseUrl.
- *   2. Compare manifest.version to baseline_blocklist_meta.version (if any).
- *   3. If different (or no meta row), fetch each list, parse, and within a
- *      single transaction: delete all `source='baseline'` rows, insert the
- *      new ones, upsert the meta row.
+ *   1. Fetch + verify signed-manifest.json from baseUrl. If it 404s
+ *      (pre-signing release), skip this tick entirely.
+ *   2. Fetch manifest.json + each list file from baseUrl and verify
+ *      each one's SHA-256 against the signed manifest.
+ *   3. Compare manifest.version to baseline_blocklist_meta.version (if any).
+ *   4. If different (or no meta row), within a single transaction:
+ *      delete all `source='baseline'` rows, insert the new ones,
+ *      upsert the meta row.
  *
  * Returns one of:
  *   { updated: true,  fromVersion, toVersion, domainCount }
  *   { updated: false, currentVersion }            (already up-to-date)
  *   { updated: false, skipped: 'disabled' }       (baseline pack disabled)
- *   { updated: false, error: <message> }          (network / parse failure)
+ *   { updated: false, skipped: 'no-signed-manifest' }  (pre-signing release)
+ *   { updated: false, error: <message> }          (network / parse / sig failure)
  */
 async function checkForUpdates() {
   const baseUrl = _options.baseUrl;
   console.log(`[blocklist-updater] checking ${baseUrl}/manifest.json`);
 
-  // Resolution chain: try remote first, fall back to local cache, fall back
-  // to an empty placeholder. Track where the data ultimately came from so we
-  // can log + record it on baseline_blocklist_meta.source_url.
   let manifest = null;
   let manifestText = null;
   let listBodiesByFile = {};
-  let sourceLabel = baseUrl;   // 'github' fetch URL by default
+  let sourceLabel = baseUrl;
   let fromCache = false;
   let fromEmpty = false;
 
-  // --- Step 1: try remote fetch ---
+  // --- Step 1: try remote fetch (signed) ---
+  let signedBundle = null;
+  let remoteFetchError = null;
   try {
-    manifestText = await _fetchText(`${baseUrl}/manifest.json`);
-    manifest = JSON.parse(manifestText);
+    signedBundle = await fetchAndVerifyManifest(baseUrl, 'blocklist-updater');
   } catch (err) {
-    console.warn(
-      `[blocklist-updater] remote manifest fetch failed (${err.message}) — falling back to local cache`
-    );
-    manifest = null;
-    manifestText = null;
+    remoteFetchError = err.message;
+    console.warn(`[blocklist-updater] remote signature check failed (${err.message}) — falling back to local cache`);
   }
 
-  // If remote manifest came back, fetch each list file too.
-  if (manifest) {
-    const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
-    let allListsOk = true;
-    for (const list of lists) {
-      if (!list || typeof list.file !== 'string') continue;
-      try {
-        listBodiesByFile[list.file] = await _fetchText(`${baseUrl}/${list.file}`);
-      } catch (err) {
-        console.warn(
-          `[blocklist-updater] remote fetch failed for list "${list.file}" (${err.message}) — falling back to local cache`
-        );
-        allListsOk = false;
-        break;
-      }
-    }
-    if (!allListsOk) {
-      manifest = null;
+  if (signedBundle) {
+    // Signed bundle verified. Fetch the regular manifest + each list,
+    // hash-checking every body before keeping it.
+    const signed = signedBundle.signed;
+    try {
+      manifestText = await fetchOptionalText(`${baseUrl}/manifest.json`);
+      if (manifestText === null) throw new Error('manifest.json missing on remote');
+    } catch (err) {
+      remoteFetchError = err.message;
+      console.warn(`[blocklist-updater] remote manifest fetch failed (${err.message}) — falling back to local cache`);
       manifestText = null;
-      listBodiesByFile = {};
-    } else {
-      // Remote fetch fully successful — persist to the local cache for next time.
-      _writeLocalCache(manifestText, listBodiesByFile);
     }
+
+    if (manifestText !== null) {
+      if (!verifyFileHash(signed, 'manifest.json', Buffer.from(manifestText, 'utf8'))) {
+        console.error('[blocklist-updater] remote manifest.json hash mismatch — refusing update');
+        return { updated: false, error: 'manifest.json hash mismatch' };
+      }
+      try {
+        manifest = JSON.parse(manifestText);
+      } catch (err) {
+        console.error(`[blocklist-updater] manifest parse failed: ${err.message}`);
+        return { updated: false, error: 'manifest parse: ' + err.message };
+      }
+
+      const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
+      let allListsOk = true;
+      for (const list of lists) {
+        if (!list || typeof list.file !== 'string') continue;
+        let body;
+        try {
+          const text = await fetchOptionalText(`${baseUrl}/${list.file}`);
+          if (text === null) throw new Error('list file missing on remote');
+          body = text;
+        } catch (err) {
+          console.warn(
+            `[blocklist-updater] remote fetch failed for list "${list.file}" (${err.message}) — falling back to local cache`
+          );
+          allListsOk = false;
+          break;
+        }
+        if (!verifyFileHash(signed, list.file, Buffer.from(body, 'utf8'))) {
+          console.error(`[blocklist-updater] hash mismatch for list "${list.file}" — refusing update`);
+          return { updated: false, error: `hash mismatch: ${list.file}` };
+        }
+        listBodiesByFile[list.file] = body;
+      }
+      if (!allListsOk) {
+        manifest = null;
+        manifestText = null;
+        listBodiesByFile = {};
+      } else {
+        _writeLocalCache(
+          manifestText,
+          listBodiesByFile,
+          signedBundle.signedText,
+          signedBundle.sigText
+        );
+      }
+    } else {
+      manifest = null;
+    }
+  } else if (remoteFetchError === null) {
+    // fetchAndVerifyManifest returned null cleanly (404 on signed bundle).
+    // This is a pre-signing release. Fail-skip — do not silently use
+    // unsigned manifests, but also do not abandon the local cache.
+    console.warn('[blocklist-updater] remote has no signed-manifest.json — fail-skipping remote and falling back to local cache only');
   }
 
-  // --- Step 2: fall back to local cache ---
+  // --- Step 2: fall back to local cache (re-verified inside _readLocalCache) ---
   if (!manifest) {
     const cached = _readLocalCache();
     if (cached) {
@@ -301,7 +387,7 @@ async function checkForUpdates() {
         listBodiesByFile = cached.listBodiesByFile;
         fromCache = true;
         sourceLabel = `cache:${_getLocalCacheDir()}`;
-        console.log(`[blocklist-updater] using local cache (manifest version=${manifest.version})`);
+        console.log(`[blocklist-updater] using local cache (manifest version=${manifest.version}, signature verified)`);
       } catch (e) {
         console.warn(`[blocklist-updater] local cache manifest parse failed: ${e.message}`);
         manifest = null;
@@ -311,6 +397,15 @@ async function checkForUpdates() {
 
   // --- Step 3: empty placeholder ---
   if (!manifest) {
+    // If the only reason we got here is "remote has no signed manifest"
+    // AND we already have a baseline_blocklist_meta row, the user
+    // already has a verified-at-some-point set of baseline rules in
+    // their DB. Fail-skip without rewriting an empty placeholder so we
+    // don't clobber the existing DB rows on the next tick.
+    if (signedBundle === null && remoteFetchError === null && _readMetaVersion()) {
+      console.warn('[blocklist-updater] no signed manifest available and existing DB rows present — fail-skipping');
+      return { updated: false, skipped: 'no-signed-manifest' };
+    }
     console.warn(
       '[blocklist-updater] neither remote nor local cache available — writing empty placeholder'
     );
@@ -330,10 +425,6 @@ async function checkForUpdates() {
   }
 
   const localVersion = _readMetaVersion();
-  // If we're using the cache or empty, AND the version matches what's already
-  // in the DB, treat as no-op. (For remote fetches that fail and we fall
-  // back to cache, we DO want to re-apply on first boot — but the version
-  // check naturally short-circuits subsequent boots.)
   if (localVersion === remoteVersion) {
     console.log(
       `[blocklist-updater] already up to date (version=${localVersion}, source=${sourceLabel})`
