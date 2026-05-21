@@ -306,6 +306,22 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 | POST | `/api/ui/server/restart` | Spawn-and-exit replacement daemon (identical pattern to the network-mode toggle). |
 | GET / POST | `/api/ui/settings/notifications` | Get/set notification preferences (`systemNotifications`, `sound`). |
 | POST | `/api/ui/settings/network-mode` | Body `{ enabled }`. Persists the preference and spawn-and-exits to rebind to `0.0.0.0` (or back to `127.0.0.1`). |
+| POST | `/api/ui/incidents/:id/dismiss` | Dismiss a single formatter-incident row by numeric id. Sets `dismissed_at`, returns `{ ok, incidentId, formatter, status }`, and broadcasts a `changed` event. 404 if the id doesn't exist; 400 if the id isn't numeric. |
+| POST | `/api/ui/formatters/:name/dismiss-all` | Bulk-dismiss every undismissed incident for formatter `:name` (the dashboard "Dismiss all" button). Returns `{ ok, name, affected, status }` with the affected row count for toast UX. |
+
+### Site-policy admin endpoints
+
+Mounted under the same localhost-only `/api/ui/*` surface and gated by the same `makeUiAuth` middleware; mutating routes layer the narrower `mutatingUiAuth` check on top. All routes emit a `sites_changed` event over the `/api/ui/events` WebSocket on success so the Sites admin page re-renders without a refetch.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/ui/sites` | Returns `{ globalRules, baseline }`. `globalRules` is the full `global_site_rules` list (user + baseline) sorted by `(source, domain)` with `{ domain, decision, source, createdAt, updatedAt }` per row. `baseline` is a summary of the auto-updated blocklist pack (`enabled`, `version`, `lastFetchedAt`, `domainCount`). |
+| POST | `/api/ui/sites` | Body `{ domain, decision: 'allow' \| 'block' }`. Upserts a `source='user'` global rule via `sitePolicy.setGlobalRule`. Returns 201 with the persisted row (`domain`, `decision`, `source`, `createdAt`, `updatedAt`) after normalizing the domain. 400 on invalid domain or decision. |
+| DELETE | `/api/ui/sites/:domain` | Removes a `source='user'` global rule. Refuses baseline rows with 400 and a hint pointing the operator at the baseline toggle. 404 if the rule doesn't exist. Returns `{ ok, domain }`. |
+| POST | `/api/ui/sites/baseline/toggle` | Body `{ enabled }`. Writes `config.baseline_blocklist_enabled = 'true' \| 'false'`. Existing baseline rows remain until the next fetch cycle (or server restart) — the response includes a fresh `blocklistUpdater.getStatus()` snapshot so the UI can surface the lag. Returns `{ enabled, baseline }`. |
+| GET | `/api/ui/agents/:agentId/site-overrides` | List per-agent overrides. `:agentId` is the `api_key_hash` exposed as `key` by `listKeys()`; the route resolves it to the numeric `agents.id` for the lookup. Returns an array of `{ domain, decision, createdAt }` sorted by domain. 404 if the agent isn't found. |
+| POST | `/api/ui/agents/:agentId/site-overrides` | Body `{ domain, decision: 'allow' \| 'block' }`. Upserts a per-agent override via `sitePolicy.setAgentOverride`. Returns 201 with the persisted row. 400 on invalid domain or decision; 404 if the agent isn't found. |
+| DELETE | `/api/ui/agents/:agentId/site-overrides/:domain` | Clears a single per-agent override row. 404 if no matching override exists. Returns `{ ok, domain }`. |
 
 ## Configuration
 

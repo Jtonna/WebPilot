@@ -25,3 +25,16 @@ WebPilot documentation covering system architecture, development guides, and API
 
 - `design/UX.md`, `design/ELEGANCE.md`, `design/PALETTE.md`, and `design/research/{APPLE,LUXURY,SIMPLE}.md` -- Web UI design system, palette, and design-research briefs. These describe the look-and-feel of the server-hosted web UI at `/ui`.
 
+## Project Meta
+
+- [README.md](../README.md) -- Project overview, install path, and the canonical entry point for anyone landing on the repo.
+- [CONTRIBUTING.md](../CONTRIBUTING.md) -- How to file issues, propose changes, and the contributor expectations (development setup, commit hygiene, supply-chain rules).
+- [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) -- Community standards and enforcement contact for participation in the project.
+- [SECURITY.md](../SECURITY.md) -- Vulnerability reporting channel, supported versions, scope, trust model, and `.mcp.json` safety guidance.
+- [CHANGELOG.md](../CHANGELOG.md) -- Versioned release notes for the server, extension, and Electron installer.
+
+## Formatters
+
+- [accessibility-tree-formatters/DEV_GUIDE.md](../accessibility-tree-formatters/DEV_GUIDE.md) -- How to author a platform-specific accessibility-tree formatter: directory layout, workflow conventions, local-testing loop, and the `webpilot_dev_*` tools.
+- [accessibility-tree-formatters/MANIFEST_SCHEMA.md](../accessibility-tree-formatters/MANIFEST_SCHEMA.md) -- Per-formatter `manifest.json` schema reference: required fields, workflow descriptors, `errorHandling` flags, and version semantics.
+

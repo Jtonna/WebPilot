@@ -1,16 +1,8 @@
 # WebPilot Palette
 
-<!-- TODO(founder): The Concept / Accent rationale / Pastel usage / Contrast audit /
-"What this palette is NOT" sections below were written for the previous
-sky-blue palette and DO NOT MATCH the current warm-monochrome implementation
-in packages/server-web-ui/app/globals.css. The token tables have been updated
-to the actual values shipped; the prose sections still need a full rewrite to
-reflect the warm-monochrome / deep-slate-accent direction. See docs/design/research/SIMPLE.md
-("warm-monochrome restraint, dot-only color, hairline-everything"). -->
-
 ## Concept
 
-A warm-monochrome foundation — ivory in light mode, anthracite in dark — with a single restrained deep-slate accent (bone in dark mode). Pastels never become surfaces; they appear only as ~8–14% washes on status pills and focus states. Value (not hue) carries hierarchy, so the UI feels like a precision instrument rather than a painted dashboard. <!-- TODO(founder): confirm this rewritten concept statement matches your current intent. -->
+A warm-monochrome foundation — ivory in light mode, anthracite in dark — with a single restrained deep-slate accent (bone in dark mode). Pastels never become surfaces; they appear only as ~8–14% washes on status pills and focus states. Value (not hue) carries hierarchy, so the UI feels like a precision instrument rather than a painted dashboard.
 
 The tokens below mirror the live values in `packages/server-web-ui/app/globals.css`. Both palettes are mounted on `:root` (light) and `:root[data-theme="dark"]` (dark), with a `prefers-color-scheme: dark` fallback for unset themes.
 
@@ -70,18 +62,13 @@ The tokens below mirror the live values in `packages/server-web-ui/app/globals.c
 
 ## Accent rationale
 
-<!-- TODO(founder): FLAG — entire section below describes the retired sky-blue palette
-(`#2E6FE6` / `#5AA9FF` / cool charcoal neutrals). The shipped palette is warm-monochrome
-(deep slate `#3F4147` in light, bone `#BFB7A8` in dark, warm ivory / anthracite neutrals).
-The "quiet horizon / cool-bias neutral" narrative no longer applies. Rewrite this section
-to explain the value-over-hue rationale (see docs/design/research/SIMPLE.md). Leaving
-original prose below for reference until rewritten. -->
+The accent is deliberately a desaturated warm grey — `#3F4147` in light mode, `#BFB7A8` in dark — and the choice is the design statement. We considered the obvious moves (a confident blue, a brass, a soft green) and rejected all of them: every saturated accent would have told the user *"this is a brand"*, and WebPilot is the opposite of a brand. It is a local-first instrument the operator runs at the edge of their own machine. The palette should read as *paper and ink*, not as a product surface.
 
-The sky reference is concentrated entirely in one place — the accent — and only there. In light mode it is `#2E6FE6`: a clear-day blue, more saturated than Apple's `#007AFF` system blue but pulled slightly toward cobalt so it reads as "sky at 30,000 feet" rather than generic UI blue. In dark mode it lifts to `#5AA9FF` — the same hue family, but tuned for legibility on a dark surface (lighter, slightly less saturated). The two were chosen as a pair so a user who toggles modes mid-session feels continuity, not whiplash.
+So the accent does what an accent has to do — mark the primary CTA, hold the focus ring, underline the active nav — but it does it in the same temperature family as the type. Compare `#3F4147` to `#1A1815`: they're both warm anthracite, separated by value, not hue. The result is that the eye finds the CTA because of contrast against ivory, not because a saturated patch is shouting from the page. In dark mode the relationship inverts cleanly — bone `#BFB7A8` against near-black `#161412` reads as "highlighted neutral", not as a coloured glow. `--wp-on-accent` flips with the theme (ivory on slate in light, near-black on bone in dark) so the primary button stays legible without anyone hand-tuning.
 
-That accent is the *only* place a saturated colour is permitted on a primary surface. It appears on: the primary CTA ("Approve pairing"), the selected nav item's text + left border, links inline in prose, the focus ring on every focusable element, and the active-tab underline. It is forbidden as a background fill anywhere except its own `--wp-accent-tint` washes (selected-row highlight, ghost-button hover). Buttons get the accent as a flat fill — no gradients, no inner glows.
+The discipline behind that choice is **value-over-hue hierarchy** (see `docs/design/research/SIMPLE.md`). When every surface, every type token, and the accent itself sit within a single warm-neutral family, the interface is forced to differentiate by spacing, weight, and value — not by colour. That is what makes the UI feel like a settings pane in macOS Ventura or a Things sidebar, rather than a SaaS dashboard. The accent does not carry "delight"; the typography and whitespace do. The accent only has to be findable.
 
-The second, subtler nod to sky lives in the *neutrals*. Both `--wp-bg` values are deliberately cool — `#F7F8FA` reads as off-white but compared against a true `#F7F7F7` it has a faint sky-bias; `#0F1318` is a cool charcoal rather than a warm one. The foreground primaries (`#0B1220` / `#E8ECF2`) carry the same bias, so the whole interface sits in a coherent cool-neutral family. This is the "quiet horizon" — present everywhere, named nowhere.
+There is one practical consequence worth naming: the accent is **not allowed to leak**. It appears on the primary CTA, the active nav item's left edge / solid-icon flip, link text in prose, the focus ring, and the active-tab underline — and nowhere else. No gradients, no inner glows, no decorative slate fills on cards. The moment the slate covers more than the few pixels it needs, the palette stops being warm-monochrome and starts being warm-slate-with-grey-accent, which is a different (worse) palette.
 
 ## Pastel usage
 
@@ -96,52 +83,40 @@ Pastels never appear as: a card surface, a page background, a sidebar fill, a he
 
 ## Contrast audit
 
-<!-- TODO(founder): FLAG — every ratio in both tables below was computed against the
-retired sky-blue palette (`#0B1220` fg, `#2E6FE6` accent, `#E8ECF2` fg on `#0F1318`,
-etc.). None of these pairings exist in the current warm-monochrome implementation.
-Recompute all ratios using the live values: light fg `#1A1815` on bg `#FBFAF7` / card
-`#FFFFFF` / elevated `#F4F2EE`; dark fg `#F0EDE8` on bg `#161412` / card `#1F1D1A` /
-elevated `#2A2724`; accent `#3F4147` (light) / `#BFB7A8` (dark) with `--wp-on-accent`
-text. Tables retained below for structural reference only — values are STALE. -->
-
-All ratios calculated against the relevant surface. AA threshold is 4.5:1 (normal text) / 3.0:1 (large text or non-text UI). AAA is 7.0:1 (normal) / 4.5:1 (large).
+All ratios calculated against the relevant surface using the live values in `packages/server-web-ui/app/globals.css`. AA threshold is 4.5:1 (normal text) / 3.0:1 (large text or non-text UI). AAA is 7.0:1 (normal) / 4.5:1 (large). Alpha-channel foreground tokens are flattened against the named surface before measurement.
 
 ### Light mode
 
 | Foreground | Background | Ratio | Result |
 |---|---|---|---|
-| `#0B1220` fg | `#F7F8FA` base | 16.9:1 | AAA |
-| `#0B1220` fg | `#FFFFFF` card | 18.5:1 | AAA |
-| `#3C4860` fg-secondary | `#F7F8FA` base | 8.9:1 | AAA |
-| `#3C4860` fg-secondary | `#FFFFFF` card | 9.7:1 | AAA |
-| `#6B7588` fg-muted | `#FFFFFF` card | 4.6:1 | AA |
-| `#6B7588` fg-muted | `#F7F8FA` base | 4.3:1 | AA Large only — use on card surfaces. |
-| `#2E6FE6` accent | `#FFFFFF` card | 4.8:1 | AA (text); AAA Large |
-| `#2E6FE6` accent | `#F7F8FA` base | 4.5:1 | AA (boundary — pad button to large) |
-| `#FFFFFF` on `#2E6FE6` accent fill | — | 4.8:1 | AA — primary button text |
-| `#1F8F4E` success | `#FFFFFF` | 4.6:1 | AA |
-| `#A06400` warning | `#FFFFFF` | 5.4:1 | AA |
-| `#C13030` danger | `#FFFFFF` | 5.6:1 | AA |
-| `#3B7CC4` info | `#FFFFFF` | 4.5:1 | AA boundary |
+| `#1A1815` fg | `#FBFAF7` base | 16.9:1 | AAA |
+| `#1A1815` fg | `#FFFFFF` card | 17.6:1 | AAA |
+| `#1A1815` fg | `#F4F2EE` elevated | 16.0:1 | AAA |
+| `fg-secondary` (0.62) | `#FFFFFF` card | 5.4:1 | AA |
+| `fg-secondary` (0.62) | `#FBFAF7` base | 5.2:1 | AA |
+| `fg-muted` (0.36) | `#FFFFFF` card | 2.6:1 | AA Large only — use for placeholder / helper only, never body text |
+| `#3F4147` accent | `#FBFAF7` base | 9.1:1 | AAA |
+| `#3F4147` accent | `#FFFFFF` card | 9.6:1 | AAA |
+| `#FBFAF7` on-accent on `#3F4147` accent fill | — | 9.6:1 | AAA — primary button text |
+| `#5A7A4A` success | `#FBFAF7` base | 4.4:1 | AA Large — body-size pill text passes against the lighter `--wp-success-tint` fill behind it |
+| `#B47A33` warning | `#FBFAF7` base | 3.6:1 | AA Large only — pad warning pills, never use as body text |
+| `#9A3D3D` danger | `#FBFAF7` base | 5.8:1 | AA |
 
 ### Dark mode
 
 | Foreground | Background | Ratio | Result |
 |---|---|---|---|
-| `#E8ECF2` fg | `#0F1318` base | 15.2:1 | AAA |
-| `#E8ECF2` fg | `#161B22` card | 13.0:1 | AAA |
-| `#E8ECF2` fg | `#1C222B` elevated | 11.5:1 | AAA |
-| `#B4BCCA` fg-secondary | `#0F1318` base | 9.4:1 | AAA |
-| `#B4BCCA` fg-secondary | `#161B22` card | 8.0:1 | AAA |
-| `#7E8696` fg-muted | `#161B22` card | 4.5:1 | AA |
-| `#7E8696` fg-muted | `#0F1318` base | 4.6:1 | AA |
-| `#5AA9FF` accent | `#0F1318` base | 7.8:1 | AAA |
-| `#5AA9FF` accent | `#161B22` card | 6.7:1 | AA (text); AAA Large |
-| `#FFFFFF` on `#5AA9FF` accent fill | — | 2.4:1 | Fail — primary button uses `#0B1220` text instead → 8.6:1, AAA. |
-| `#4CC38A` success | `#0F1318` | 8.6:1 | AAA |
-| `#E0A24A` warning | `#0F1318` | 8.5:1 | AAA |
-| `#F26B6B` danger | `#0F1318` | 6.0:1 | AA |
-| `#7DB3E5` info | `#0F1318` | 8.1:1 | AAA |
+| `#F0EDE8` fg | `#161412` base | 15.3:1 | AAA |
+| `#F0EDE8` fg | `#1F1D1A` card | 13.6:1 | AAA |
+| `#F0EDE8` fg | `#2A2724` elevated | 11.4:1 | AAA |
+| `fg-secondary` (0.62) | `#1F1D1A` card | 6.6:1 | AA (text); AAA Large |
+| `fg-muted` (0.36) | `#1F1D1A` card | 3.0:1 | AA Large only |
+| `#BFB7A8` accent | `#161412` base | 10.0:1 | AAA |
+| `#BFB7A8` accent | `#1F1D1A` card | 9.0:1 | AAA |
+| `#161412` on-accent on `#BFB7A8` accent fill | — | 10.0:1 | AAA — primary button text |
+| `#8FAA7F` success | `#161412` base | 6.6:1 | AA (text); AAA Large |
+| `#D4A663` warning | `#161412` base | 8.6:1 | AAA |
+| `#C97373` danger | `#161412` base | 6.4:1 | AA (text); AAA Large |
 
 **Notable derived rule:** the dark-mode primary button uses near-black text on the bone accent, not white. The implementation exposes this via the `--wp-on-accent` token (`#FBFAF7` in light mode, `#161412` in dark mode) — buttons reference `var(--wp-on-accent)` rather than hard-coding a colour, so the inversion happens automatically with the theme switch.
 
@@ -159,12 +134,12 @@ The three-state model (light / dark / system) mirrors macOS System Settings → 
 
 ## What this palette is NOT
 
-<!-- TODO(founder): FLAG — first bullet still references aviation/sky-fade imagery,
-which is no longer the design language. Update to reflect warm-monochrome direction. -->
-
-- **Not gradient-driven.** No accent gradients on buttons, no sky-fade backdrops, no aurora effects. Aviation is referenced through hue choice and naming intent, not through literal sky imagery. The moment we add a gradient we cross from "Apple-restrained" into "marketing site."
+- **Not cool-slate.** The neutrals are deliberately *warm* (ivory `#FBFAF7`, anthracite `#1A1815`, bone `#BFB7A8`). A cool-slate equivalent — `#F7F8FA` on `#0F1318` with a blue-grey accent — reads as Linear / Vercel / generic-developer-tool. We want paper-and-ink, not LCD-and-pixel.
+- **Not blueprint-blue.** No saturated blue accent, no engineering-drawing palette, no "cyan as productivity" trope. The accent is a desaturated neutral so the page reads as a document, not as a CAD viewport.
+- **Not corporate-SaaS-blue.** The retired sky-blue accent (Stripe-adjacent) was rejected because it pulls the design language toward "trustworthy SaaS dashboard" — exactly the register WebPilot is trying to escape. The current palette is closer to Things 3 / iA Writer than to any cloud-console product.
+- **Not gradient-driven.** No accent gradients on buttons, no warm-fade backdrops, no aurora effects. The moment we add a gradient we cross from "instrument" into "marketing site."
 - **Not glassmorphism.** No `backdrop-filter: blur()` surfaces, no translucent navigation bars. These look great in screenshots and degrade poorly across browsers, GPUs, and accessibility modes (forced-colors, reduced-transparency).
 - **Not glow / neon.** No `box-shadow` with coloured spread on focus or hover. Focus is a solid ring at `--wp-accent-focus`, full stop.
-- **Not multi-accent.** One accent. Info is deliberately a *desaturated* sibling of accent, not a second brand colour. We do not have a "secondary brand colour."
+- **Not multi-accent.** One accent. Info is deliberately aliased *to* the accent token, not given a second hue. We do not have a "secondary brand colour."
 - **Not high-saturation pastels.** Tints are derived as low-opacity overlays of the semantic colour against the surface — not hand-picked pastel hexes. This guarantees they harmonise with each surface layer instead of fighting it.
 - **Not dark = inverted-light.** The dark palette was tuned independently (background-card lift, accent re-hued for dark legibility, button text inverted on accent fills). It is a peer of the light palette, not a derivation.

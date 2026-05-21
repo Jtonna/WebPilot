@@ -224,6 +224,44 @@ The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (
 
 The legacy `X-API-Key` header (and the `apiKey` storage key) have been retired along with the shared server transport key. Auth is now installId-based end-to-end.
 
+### Popup IPC
+
+The two popup endpoints live in `packages/server-for-chrome-extension/src/server.js` (the `_authPopup` helper plus the two route handlers). Both are localhost-only by virtue of the server bind; both are gated by an installId resolver and an Origin allowlist.
+
+**Auth (`_authPopup`).** Every popup request must:
+
+1. Carry `X-Install-Id: <uuid>` (the same `webpilot.installId` the extension sent on its WS upgrade). A `?installId=<uuid>` query-string fallback is accepted to keep ad-hoc curl flows working. Missing or empty values → 401. Strings longer than 256 characters → 401 (defensive cap).
+2. Resolve via `extensionInstalls.getProfileForInstall(installId)`. An unknown installId → 401.
+3. Pass the **Origin gate (S3)**. The `Origin` header must either be absent (server-side caller, the popup itself, or a `chrome-extension://…` origin) or any non-`http(s)://` scheme. Any `http://` or `https://` origin is rejected outright — that pattern is a webpage running in some Chrome profile trying to ride the loopback bind to mutate site policy. This is the same hardening as the extension-WS `S1` gate and the UI-WS `S2` gate.
+
+A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context — only `global_site_rules` apply; `agent_site_overrides` are not consulted from here.
+
+#### `GET /api/popup/state`
+
+| Aspect | Value |
+|---|---|
+| Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
+| Query | `tabUrl` (optional). Strings longer than 8192 bytes → 400 (`tabUrl too long`). |
+| Response | `{ connection, profileId, agent, serverUrl, currentTab? }` |
+
+Response fields:
+
+- `connection` — `'connected'` or `'disconnected'`, based on `extensionBridge.isConnected(profileId)`.
+- `profileId` — the bound Chrome profile directoryName.
+- `agent` — always `null` (popup is profile-scoped).
+- `serverUrl` — `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers, used by the popup to build the "Open dashboard" link.
+- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_baseline' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
+
+#### `POST /api/popup/site-toggle`
+
+| Aspect | Value |
+|---|---|
+| Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
+| Body | `{ domain, action: 'block' \| 'allow' }`. Raw `domain` strings longer than 512 chars → 400. |
+| Response | `{ ok, domain, decision, newState }` |
+
+Writes a `source='user'` row to `global_site_rules` via `sitePolicy.setGlobalRule(normalized, action, 'user')`. Audit log line records the truncated installId and bound profileId (no agent identity — popup is not in agent context). Broadcasts a `sites_changed` event over `/api/ui/events` so the Sites admin page stays in sync. `newState` is the recomputed pill key (global-only, no agent override) so the popup can update its toggle without a follow-up `GET /api/popup/state`.
+
 It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 
 ### Per-profile reload required

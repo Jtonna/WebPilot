@@ -10,24 +10,11 @@
 > [`research/LUXURY.md`](./research/LUXURY.md),
 > [`research/SIMPLE.md`](./research/SIMPLE.md).
 >
-> <!-- TODO(founder): Sections that have drifted from the shipped UI and need a rewrite:
->   - "Icons (Phosphor)" — the app actually uses `@heroicons/react` (outline + solid).
->     The icon catalog table below lists Phosphor names that do not exist in the codebase.
->   - "Borders — the lift-via-background philosophy" — the shipped `.wp-card` uses a
->     1px hairline border (`var(--wp-separator)`), not background-lift only. This
->     reflects the "hairline-everything" direction adopted from research/SIMPLE.md.
->   - "Active sidebar = duotone icon + accent tint" — shipped active state is the
->     solid Heroicons variant + neutral elevated fill + a 3px neutral-fg left-edge
->     bar. There is no accent tint on the active row.
->   - Sections that still match the implementation (typography, type scale, spacing
->     tokens, radii, shadow tokens, motion eases/durations, focus-ring philosophy,
->     responsive breakpoints) are load-bearing and should be preserved on rewrite. -->
-
 ---
 
 ## Concept
 
-WebPilot is a local-first developer tool. The UI should feel like a settings pane in macOS Ventura — confident, quiet, and well-spaced — not like a SaaS dashboard. We lean on generous whitespace, a single restrained type family, near-invisible borders, and surfaces that lift through subtle background-tone differentiation rather than rings of hairlines and shadows. Motion is slow enough to feel deliberate and short enough to never be in the way. Every screen earns its content; nothing decorates.
+WebPilot is a local-first developer tool. The UI should feel like a settings pane in macOS Ventura — confident, quiet, and well-spaced — not like a SaaS dashboard. We lean on generous whitespace, a single restrained type family, and **hairline-everything** card edges (a 1px `--wp-separator` border on every panel surface, no shadow). Motion is slow enough to feel deliberate and short enough to never be in the way. Every screen earns its content; nothing decorates.
 
 ---
 
@@ -148,21 +135,22 @@ No 12px (illegible at Phosphor's regular weight), no 28px (off-rhythm), no 40px+
 
 Rule of thumb: a container's radius should be larger than the radius of its children, but never by more than 4px. Nested radii that don't follow the "outer + 4" rule look amateur.
 
-### Borders — the lift-via-background philosophy
+### Borders — the hairline-everything philosophy
 
-We confirm and lean into the macOS / iCloud approach: **prefer background-tone differentiation over visible borders**. A card sitting on the page surface is one tonal step lighter (in dark mode) or one step warmer (in light mode) than the canvas; that alone defines it. We layer in a hairline border only as a *whisper*, never as the primary edge cue.
+The shipped direction (adopted from `research/SIMPLE.md`) is **hairline-everything**: every card-shaped surface gets a 1px `--wp-separator` border, no shadow. `.wp-card` in `app/globals.css` is the canonical example — `background: var(--wp-bg-card); border: 1px solid var(--wp-separator);` and nothing else. The hairline defines the edge; the warm-monochrome value-step between `--wp-bg` and `--wp-bg-card` (ivory → pure white in light, near-black → first-elevation in dark) provides the secondary cue. We do not stack tonal-lift *and* shadow on the same surface — that's the SaaS-card move we're explicitly rejecting.
 
 **When to use a border**
 
-- Inputs and selectable controls — borders here are a usability signal ("this is interactive"), not decoration.
-- Table row dividers — only as horizontal hairlines, never vertical column dividers.
-- The single outermost frame of a popover or menu (to crisp the edge against shadow falloff).
+- Every card on the canvas — panel surface plus 1px `--wp-separator`. No `elev-1` shadow.
+- Inputs and selectable controls — borders here are a usability signal ("this is interactive") as well as an edge.
+- Table row dividers — horizontal hairlines, never vertical column dividers.
+- Popovers and menus — outermost 1px frame plus `elev-2` (the one place shadow stacks on hairline, because the surface is floating off the canvas).
 
-**When not to use a border**
+**When to skip the border**
 
-- Cards on the canvas (use background lift).
 - Sections within a card (use spacing).
-- Sidebar (use background lift + spacing — never a vertical 1px rule).
+- Buttons and tabs at rest (hairline appears only on hover for ghost variants).
+- Page-level chrome inside a card (the card edge already terminates the region).
 
 ### Border weight
 
@@ -210,24 +198,16 @@ In dark mode, shadows do less work (less perceived contrast against a dark canva
 
 ### Where each applies
 
-- `elev-0` — buttons, inputs, table rows, sidebar items at rest.
-- `elev-1` — cards on the canvas, hovered buttons, the resting state of the active sidebar item.
+- `elev-0` — buttons, inputs, table rows, sidebar items at rest, **and cards on the canvas** (cards lift via hairline + warm-neutral value-step, not shadow).
+- `elev-1` — hovered buttons. Reserved for transient interactive feedback; not used as a resting card state under the hairline-everything direction.
 - `elev-2` — popovers, dropdown menus, toast notifications.
 - `elev-3` — modal dialogs, drag-preview chips.
 
-**Rule**: never combine `elev-2` and `elev-3` on adjacent nested surfaces. A modal at `elev-3` should not contain a card at `elev-1` — inside the modal, child surfaces drop back to `elev-0` (and lift via background instead).
+**Rule**: never combine `elev-2` and `elev-3` on adjacent nested surfaces. A modal at `elev-3` should not contain a shadowed child — inside the modal, child surfaces drop back to `elev-0` and rely on hairlines + spacing.
 
 ---
 
 ## Icons (Heroicons)
-
-<!-- TODO(founder): This section originally specified Phosphor. The shipped UI
-uses @heroicons/react (outline + solid 24px set) — see
-packages/server-web-ui/components/AppShell.js for the canonical icon imports.
-The catalog below has been rewritten to match the shipped set; the
-weight/state-treatment paragraph has been updated for Heroicons. The earlier
-Phosphor catalog (House / Handshake / Robot / GearSix / Pulse / Wind / etc.)
-is preserved in git history (see commit log) if you want to revisit. -->
 
 **Library:** [`@heroicons/react`](https://heroicons.com) — the 24×24 set. We import the **outline** variant by default and swap to the **solid** variant on the single active sidebar item to mark state (one quiet "lit candle" per screen, no color rule needed). We never mix in mini (20px) or micro (16px) Heroicons sets — visual weight stays uniform across the chrome.
 
@@ -247,17 +227,6 @@ is preserved in git history (see commit log) if you want to revisit. -->
 | Formatters                 | `CommandLineIcon`                                                 |
 | Settings                   | `Cog6ToothIcon`                                                   |
 | Mobile nav toggle          | `Bars3Icon`                                                       |
-
-<!-- TODO(founder): Surfaces below were on the original Phosphor catalog but
-don't yet have a Heroicons mapping in the shipped UI. Confirm intent and add
-the chosen Heroicons component when these surfaces ship:
-  - Network mode toggle (WifiHigh / WifiSlash)
-  - Chrome / browser status
-  - Server running / stopped
-  - Approve / Deny / Revoke
-  - Copy to clipboard
-  - External link
-  - Info / Warning / Search / Empty state -->
 
 ---
 
@@ -293,7 +262,7 @@ Wrap every transition/animation in a `@media (prefers-reduced-motion: reduce)` o
 
 ## Composition rules
 
-1. **One accent per screen.** A page may use the accent color in exactly one place — the primary CTA, or the active nav item, but not both at the same focal weight. <!-- TODO(founder): the next sentence describes the original duotone+accent-tint treatment. The shipped active nav (see `.wp-nav-item.is-active` in app/globals.css) uses the **solid Heroicons variant + neutral elevated fill + a 3px neutral-fg left-edge bar** — no accent tint, no hue change. Rewrite once the active-state direction is finalized. --> The active nav uses duotone icon + background tint; the primary CTA gets the saturated accent. Everywhere else is neutral.
+1. **One accent per screen.** A page may use the accent color in exactly one place — the primary CTA, or the active nav item, but not both at the same focal weight. The shipped active-nav treatment (`.wp-nav-item.is-active` in `app/globals.css`) is the **solid Heroicons variant + `--wp-bg-elevated` fill + 3px `--wp-fg` left-edge bar** — no accent tint, no hue change. The primary CTA gets the deep-slate (light) / bone (dark) accent fill with `--wp-on-accent` text. Everywhere else is neutral.
 2. **No nested cards more than one level deep.** A card may contain a list, a form, or a table — never another card. If you feel the need to nest, you need a divider and spacing instead.
 3. **Every page opens with a quiet `h1` (`display` token) followed by a 1-sentence lede in the secondary text color.** Then `s-7` (48px) of breathing room before the first card. No banners, no breadcrumbs above the `h1` on top-level pages.
 4. **Mono is for facts, sans is for prose.** A port number, agent ID, file path, or pairing code is mono. A description of what that code means is sans. Never the reverse, never both at once.
@@ -325,9 +294,9 @@ The mobile top-nav is a single horizontal bar at 56px height with the WebPilot w
 
 Beyond raw color swaps, the two modes differ in feel:
 
-- **Shadows are louder in light mode, quieter in dark.** Light mode leans on the two-layer soft shadow to lift cards off a white-ish canvas; dark mode relies more on background tone-step and uses shorter, sharper shadows for crispness.
-- **Borders are more present in light mode (~8% opacity), barely visible in dark (~12% of foreground, which is a much smaller absolute contrast against a near-black canvas).** Borders never disappear entirely in dark — that flattens depth — but they whisper.
-- **Backgrounds get more layered in dark mode.** Light mode is mostly one canvas + one card tone. Dark mode uses three tone steps (canvas / panel / card) because subtle differentiation costs less attention there.
+- **Hairlines do the work in both modes; shadows are reserved for floating surfaces.** Cards on the canvas use `1px var(--wp-separator)` and nothing else, in both light and dark. Shadows (`elev-2` / `elev-3`) appear only on popovers, menus, and modals — surfaces that are genuinely floating above the page.
+- **Hairline opacity is tuned per mode.** Light mode `--wp-separator` is `rgba(26, 24, 21, 0.08)`; dark mode is `rgba(240, 237, 232, 0.10)`. Strong variants (`--wp-separator-strong`, used for input borders and header rules) sit at 0.14 / 0.16. Both modes keep the edge readable without making it a "ruled line"; the warm-neutral surfaces underneath are doing the heavier hierarchy work.
+- **Three tone steps in dark, three in light.** Both modes ship a canvas / card / elevated triad (light: `#FBFAF7` / `#FFFFFF` / `#F4F2EE`; dark: `#161412` / `#1F1D1A` / `#2A2724`). The dark triad is read as "background → card → hover", the light triad as "background → card → hover/selected". `research/SIMPLE.md` (around line 328) recommended keeping the dark layering; the shipped CSS does that, with the light side getting an equivalent three-step structure rather than the originally proposed single-canvas approach.
 - **Icons stay at Regular weight in both modes.** No "bolder in dark, lighter in light" tricks — we trust the color spec to handle perceived weight.
 - **Focus rings get slightly thicker in dark mode (2.5px vs 2px) because the accent-against-dark contrast feels visually thinner.** Same offset.
 
@@ -337,8 +306,8 @@ Beyond raw color swaps, the two modes differ in feel:
 
 - **Not neumorphism.** No soft inset-shadow controls, no extruded buttons. Our buttons are flat surfaces that lift on hover via background and `elev-1`.
 - **Not glassmorphism.** No backdrop-blur on cards or sidebars. We considered it; it dates instantly and tanks performance on lower-end machines this app must run well on.
-- **Not drop-shadow-everywhere.** Most elements are `elev-0`. Lift is reserved for things that are genuinely floating.
-- **Not hairline-everywhere.** We deliberately do not box every region. Background tone + spacing replaces ~70% of the borders a typical SaaS design would use.
+- **Not drop-shadow-everywhere.** Most elements are `elev-0`. Lift is reserved for things that are genuinely floating (popovers, menus, modals).
+- **Not box-every-region.** Hairline-everything applies to **card-shaped surfaces** — the regions that are conceptually a panel. We still do not box the page chrome, the sidebar, sections inside a card, or button groups at rest. The point is one consistent hairline language for panels, not a 1px grid of ruled rectangles everywhere.
 - **Not display-italic fonts, not serif accents, not mixed font families.** One sans, one mono, both Geist. The discipline is the point.
 - **Not monospace as a lead font.** Tempting for a developer tool, fights legibility for long-form copy in settings descriptions.
 - **Not bold-700 anywhere.** Medium (500) is our heaviest weight. Heavier than that reads as shouting against this much whitespace.
