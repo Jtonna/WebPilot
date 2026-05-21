@@ -24,7 +24,7 @@ import {
 import { getStatus } from '../lib/api';
 
 /**
- * AppShell — structural redesign chrome.
+ * AppShell — top-level app chrome (sidebar + main column).
  *
  * Sidebar is a two-section source list (Apple Mail / Reminders pattern):
  *
@@ -373,7 +373,7 @@ export default function AppShell({ children }) {
   // the dashboard from flashing in with a "Disconnected" banner during the
   // server-boot window (the renderer typically loads ~100ms after the
   // server's /health goes green, but the DB-backed /api/ui/status takes
-  // another beat to finish initializing). See Problem B in the v1.1.4 fix.
+  // another beat to finish initializing).
   if (!hasEverConnected) {
     const message = serverOk === false ? 'Starting server' : 'Connecting';
     return <ConnectingSplash message={message} />;

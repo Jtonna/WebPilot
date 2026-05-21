@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Site policy resolver (P2 — phase 4).
+ * Site policy resolver.
  *
  * Decides whether a given (agent, URL/domain) pair is allowed to be touched
  * by an MCP browser_* tool call. Backed by three tables in the shared SQLite
@@ -284,7 +284,7 @@ function getRulesForAgent(agentId) {
 
 // ───────────────────────────────────────────────────────────────────────────
 // CRUD helpers — thin wrappers around the writes. The Sites page in the
-// webapp will call these via REST handlers in server.js (Phase 5).
+// webapp calls these via REST handlers in server.js.
 
 function setGlobalRule(domain, decision, source = 'user') {
   const normalized = normalizeDomain(domain);

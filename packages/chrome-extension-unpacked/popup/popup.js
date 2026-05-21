@@ -1,19 +1,19 @@
-/* WebPilot popup — minimal four-component layout.
+/* WebPilot popup — status-and-escape-hatch panel.
  *
- * P2 phase 6. The popup is a status-and-escape-hatch panel:
+ * Four components:
  *   1. Connection dot + label
  *   2. Current tab domain + state pill
  *   3. Block/Allow toggle (global rule for the domain)
  *   4. Open dashboard link
  *
- * All admin lives in the webapp (`/ui/`). The popup reads the paired API
- * key + server URL from chrome.storage (written by the existing pairing
- * flow in background.js) and hits two server endpoints:
+ * All admin lives in the webapp (`/ui/`). The popup reads installId +
+ * server URL from chrome.storage (written by background.js' auto-connect
+ * flow) and hits two server endpoints:
  *
  *   GET  /api/popup/state?tabUrl=<url>      — connection + current tab pill
  *   POST /api/popup/site-toggle             — flip the global rule
  *
- * Defensive rendering rule: we NEVER show a partially-bound row. Either we
+ * Defensive rendering rule: never show a partially-bound row. Either we
  * have everything we need to draw the pill + toggle button (`currentTab`
  * with a known `state` and a `decision`), or the entire tab section stays
  * hidden and the skip surface carries a human-readable reason. No dashes,

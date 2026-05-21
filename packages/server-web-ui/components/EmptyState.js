@@ -1,11 +1,9 @@
 'use client';
 
 /**
- * EmptyState — the single canonical "this list/section has nothing in it
- * yet" block. Consolidates the seven hand-rolled
- * `<div className="wp-card"><div className="wp-empty" style={{ padding: 0 }}>…`
- * copies that were sprinkled across the dashboard, formatters, pairings,
- * profiles, agents and sites pages.
+ * EmptyState — the canonical "this list/section has nothing in it yet"
+ * block used across the dashboard, formatters, pairings, profiles, agents
+ * and sites pages.
  *
  * Two visual variants:
  *   - "card"  (default) — wraps the message in `.wp-card` so it sits flush

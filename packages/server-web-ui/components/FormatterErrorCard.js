@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 
-// Repo URL is canonical — confirmed via packages/server-web-ui/app/settings/page.js
-// which already links to this repo's issues page. P1 #1.
+// Canonical issues URL — kept in sync with the link on the Settings page.
 const REPO_ISSUES_NEW_URL = 'https://github.com/Jtonna/WebPilot/issues/new';
 
 // Truncation budgets:
@@ -79,8 +78,8 @@ function buildIssueUrl(formatter) {
  * Props:
  *   - formatter: { name, lastError, lastErrorAt, errorCount, ... } from
  *     /api/ui/status `actionItems[]` (type === 'formatter_error').
- *     `lastError` carries the DB incident `id` (P2 phase 3) used for
- *     per-incident dismiss.
+ *     `lastError` carries the DB incident `id` used for per-incident
+ *     dismiss.
  *   - onDismiss({ incidentId, name }) → Promise<void> — caller wires it to
  *     dismissIncident() + refresh(). The card disables both buttons while
  *     the dismiss resolves.

@@ -1,18 +1,13 @@
 'use strict';
 
 /**
- * Paired-keys store — SQLite-backed (P2 — phase 2).
+ * Paired-keys store — SQLite-backed.
  *
- * Replaces the JSON-file implementation that used to read/write
- * `<dataDir>/config/paired-keys.json` and `<dataDir>/config/pending-pairings.json`
- * on every call. Now backed by the `agents` and `pairings` tables in the
- * shared SQLite DB (see `src/db/connection.js` + `src/db/schema.sql`).
- *
- * The exported API surface is unchanged from the JSON-backed version — every
- * caller in server.js / mcp-handler.js continues to work without edits. The
- * legacy helpers `loadKeys`, `saveKeys`, `invalidateCache` are preserved as
- * thin DB-backed shims so any external tooling that imported them still
- * compiles. They are no longer the primary code path.
+ * Backed by the `agents` and `pairings` tables in the shared SQLite DB
+ * (see `src/db/connection.js` + `src/db/schema.sql`). `loadKeys`,
+ * `saveKeys`, and `invalidateCache` are preserved as thin DB-backed
+ * shims for any external tooling that imported them; they are not the
+ * primary code path.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * API key storage / hashing
@@ -73,7 +68,7 @@ let _pepperCache = null;
  * disclosure — a leaked DB file alone no longer yields the pepper an
  * attacker would need to brute-force the api_key_hash column. The proper
  * cross-platform answer is OS-native secret storage (DPAPI / Keychain /
- * libsecret via node-keytar) — see flagged finding in the audit report.
+ * libsecret via node-keytar).
  */
 function getPepperFilePath() {
   return path.join(getDataDir(), 'secret', 'api-key.pepper');
@@ -289,12 +284,13 @@ function rowToPairingEntry(row) {
 
 /**
  * Resolve an agent row from either a plaintext API key or its hash.
- * Callers like `renameKey`, `revokeKey`, `updateProfileBinding`, `touchKey`
- * receive the plaintext key from the caller in the legacy code path, but
- * the legacy in-memory cache also handed out plaintext keys via listKeys,
- * so some UI code paths may pass the hash by mistake. Accept both — hash
- * the input, and if no row matches, fall back to treating the input as a
- * hash directly.
+ *
+ * Callers like `renameKey`, `revokeKey`, `updateProfileBinding`,
+ * `touchKey` may pass either form: the plaintext key (from a fresh
+ * approve / add) OR the hash (round-tripped via `listKeys`, which exposes
+ * the hash as `key` for lookup paths where the plaintext is unavailable).
+ * Accept both — hash the input, and if no row matches, fall back to
+ * treating the input as a hash directly.
  */
 function resolveAgentRow(keyOrHash) {
   if (typeof keyOrHash !== 'string' || keyOrHash.length === 0) return null;
@@ -313,12 +309,11 @@ function resolveAgentRow(keyOrHash) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Legacy shims — the JSON-backed module exposed loadKeys / saveKeys /
-// invalidateCache to a couple of external call sites. Those call sites have
-// since been removed (the only require'r is server.js, and it only uses the
-// high-level API). The shims are kept so a stale import doesn't crash:
-// loadKeys returns the same shape `listKeys` returns; saveKeys/invalidateCache
-// are now no-ops with a log line.
+// Legacy shims — loadKeys / saveKeys / invalidateCache used to back the
+// JSON store. The only in-tree caller is server.js, which uses the
+// high-level API; the shims are kept so a stale external import doesn't
+// crash. loadKeys returns the same shape as `listKeys`;
+// saveKeys / invalidateCache are no-ops that log a warning.
 
 function loadKeys() {
   return listKeys();
@@ -439,7 +434,7 @@ function touchKey(apiKey) {
 /**
  * Soft-delete: mark the agent row as 'revoked'. listKeys / validateKey
  * filter revoked rows out, so the agent is functionally gone but we keep
- * a revocation audit trail (per the open question in the design doc).
+ * the row as a revocation audit trail.
  */
 function revokeKey(apiKey) {
   const row = resolveAgentRow(apiKey);

@@ -10,7 +10,7 @@
 //
 // Self-check: ensures both packages emit identical JSON for identical inputs.
 // If you edit this template, re-run by importing in a node REPL and comparing
-// outputs. (Once a test framework is in place, replace with a snapshot test.)
+// outputs.
 
 export const MCP_CLIENT_TYPE = 'sse';
 

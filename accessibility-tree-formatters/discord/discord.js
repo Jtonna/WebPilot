@@ -2062,7 +2062,8 @@ module.exports = function formatDiscord(nodes) {
     lines.push('Discord | ' + headerLabel + ' (DM)');
     lines.push('');
 
-    // Only show UNREAD DMs in sidebar (fix: filter to unread only)
+    // Only show UNREAD DMs in the sidebar — read conversations clutter the
+    // DM-conversation view without adding information the agent needs.
     var allDmItems = extractDmList();
     var unreadDmItems = [];
     for (var i = 0; i < allDmItems.length; i++) {

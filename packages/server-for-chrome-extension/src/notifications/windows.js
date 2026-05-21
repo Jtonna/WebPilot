@@ -34,7 +34,7 @@ function notify(payload) {
     const url = payload && payload.url ? payload.url : '';
     const sound = payload && payload.sound === false ? false : true;
 
-    // Toast body: include URL inline as plain text per spec (clickable launch is v1.5)
+    // Toast body: include URL inline as plain text (not clickable).
     const bodyText = url ? body + '\n' + url : body;
 
     const xmlTitle = xmlEscape(title);

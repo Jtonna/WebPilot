@@ -9,7 +9,7 @@ let tray = null;
 let serverChild = null;
 
 // ---------------------------------------------------------------------------
-// Path resolvers (unchanged contract from prior main.js)
+// Path resolvers
 // ---------------------------------------------------------------------------
 
 function getServerBinaryPath() {
@@ -26,13 +26,10 @@ function getDataDir() {
   // - macOS:   ~/Library/Application Support/WebPilot
   // - Linux:   ~/.config/WebPilot (or $XDG_CONFIG_HOME/WebPilot)
   // This path survives upgrades because it lives OUTSIDE the install
-  // dir that electron-builder wipes during a version bump. We pass the
-  // same value to the spawned daemon via WEBPILOT_DATA_DIR so both
-  // processes agree on the data location.
-  //
-  // (Dev mode previously used %LOCALAPPDATA%\WebPilot; we now align dev
-  // with prod so behaviour is consistent and you can test the upgrade
-  // path locally.)
+  // dir that electron-builder wipes during a version bump. The same value
+  // is passed to the spawned daemon via WEBPILOT_DATA_DIR so both
+  // processes agree on the data location. Dev and prod use the same path
+  // so the upgrade flow can be tested locally.
   return app.getPath('userData');
 }
 
@@ -126,9 +123,7 @@ function createWindow() {
     title: 'WebPilot',
     webPreferences: {
       // No preload: the splash is pure CSS and the dashboard runs against
-      // its own server; neither needs an IPC bridge. The legacy onboarding
-      // Next.js bundle + preload.js were removed once main.js switched to
-      // the splash -> /ui/ handoff model.
+      // its own HTTP server; neither needs an IPC bridge.
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -282,6 +277,6 @@ if (!gotLock) {
     killServer();
   });
 
-  // The previous main.js had `window-all-closed -> app.quit()` here.
-  // Removed intentionally: closing the last window now means hide-to-tray.
+  // Intentionally no `window-all-closed` handler: closing the last window
+  // means hide-to-tray, not quit. Only tray Exit (or `before-quit`) quits.
 }

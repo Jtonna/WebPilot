@@ -10,13 +10,12 @@ class SizeManagedWriter {
     this.logPath = logPath;
     // Truncate on startup (fresh each run)
     fs.writeFileSync(logPath, '', 'utf8');
-    // Logs no longer contain API-key prefixes (Fix 5 — replaced with
-    // opaque per-request correlation IDs). They DO still contain agent
-    // names, profile names, URLs, and other operator-visible context.
-    // Restrict perms so other local users cannot tail it. Best-effort on
-    // Windows (NTFS ACLs would be the strictly correct path; fs.chmodSync
-    // only maps the read-only bit there). On POSIX this is owner-only
-    // read/write.
+    // Restrict perms so other local users cannot tail this log. Logs
+    // contain agent names, profile names, URLs, and other operator-visible
+    // context (not API-key prefixes — those are replaced with opaque
+    // per-request correlation IDs). Best-effort on Windows (NTFS ACLs
+    // would be the strictly correct path; fs.chmodSync only maps the
+    // read-only bit there). On POSIX this is owner-only read/write.
     try { fs.chmodSync(logPath, 0o600); } catch (_e) { /* non-fatal */ }
     this.bytesWritten = 0;
   }

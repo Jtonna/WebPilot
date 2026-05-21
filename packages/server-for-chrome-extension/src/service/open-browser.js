@@ -22,8 +22,6 @@
  *   server keeps running regardless.
  *
  * Logging prefix: `[browser-open]` for grep-ability.
- *
- * Wave 6 H5.
  */
 
 const http = require('node:http');

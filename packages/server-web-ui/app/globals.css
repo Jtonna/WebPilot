@@ -1,5 +1,5 @@
 /* ===========================================================================
- * WebPilot — structural redesign, warm-monochrome palette.
+ * WebPilot — warm-monochrome design system.
  *
  * Theme (toggleable via [data-theme] on <html>):
  *   - light (default), dark, or unset (= system via prefers-color-scheme).
@@ -464,10 +464,10 @@ hr {
 
 /* Active: neutral elevated fill, primary-fg text, 3px neutral-fg left edge,
    600-weight label. Three value-only strengtheners stacked — no hue change
-   (warm-monochrome restraint, dot-only color, hairline-everything per
-   docs/DESIGN_AND_UX.md). Solid Heroicons variant comes from JS. The left edge is
-   a pseudo-element so it sits flush at the row's left side regardless
-   of padding. */
+   to preserve the warm-monochrome restraint (dot-only color, hairline
+   everywhere). Solid Heroicons variant comes from JS. The left edge is a
+   pseudo-element so it sits flush at the row's left side regardless of
+   padding. */
 .wp-nav-item.is-active {
   background-color: var(--wp-bg-elevated);
   color: var(--wp-fg);

@@ -9,11 +9,12 @@
  * `<name>.json.imported.<ISO-timestamp>` so we never re-import on the next
  * boot and the user keeps a recovery copy.
  *
- * Phase coverage:
- *   - Phase 2: paired-keys.json → `agents`; pending-pairings.json → `pairings`.
- *   - Phase 3: formatter-logs.json → `formatter_incidents`.
- *   - Phase 7 (THIS COMMIT): extension-installs.json → `extension_installs`;
- *                            network.enabled flag file → `config.network_enabled`.
+ * Source → destination mapping:
+ *   - paired-keys.json       → `agents`
+ *   - pending-pairings.json  → `pairings`
+ *   - formatter-logs.json    → `formatter_incidents`
+ *   - extension-installs.json → `extension_installs`
+ *   - network.enabled flag file → `config.network_enabled` row
  *
  * Idempotency: each branch checks whether its destination table is already
  * populated and skips the import if so, unless `--reimport` was passed on the
@@ -367,8 +368,7 @@ function importPairedKeysAndPairings(detected) {
 /**
  * Import formatter-logs.json into the `formatter_incidents` table.
  *
- * JSON shape (the legacy ring-buffer flush format — see the pre-Phase-3
- * formatter-logs.js):
+ * Legacy JSON shape (ring-buffer flush format):
  *   {
  *     writtenAt: '<ISO>',
  *     formatters: {
@@ -392,7 +392,7 @@ function importPairedKeysAndPairings(detected) {
  * dismisses don't re-surface as fresh action items on the dashboard.
  *
  * Success/error counters and recentOutcomes are NOT migrated — those are
- * in-memory uptime stats post-Phase-3.
+ * in-memory uptime stats now.
  *
  * @returns {{ incidents: number, skippedReason?: string }}
  */
@@ -670,8 +670,6 @@ function importNetworkEnabledFlag(detected) {
  * Safety: we only run the purge if the DB already has agents (i.e. the
  * import has already happened). If the DB is empty we leave the archives
  * alone — they may still be the only copy of the keys.
- *
- * See QOL security audit Fix 4.
  */
 function purgeLegacyPairedKeysArchives() {
   const dataDir = getDataDir();
@@ -785,7 +783,7 @@ function runImportFromJsonStores() {
   let importedAgents = 0;
   let importedPairings = 0;
 
-  // ─── Phase 2: paired-keys + pending-pairings ────────────────────────────
+  // ─── paired-keys + pending-pairings ─────────────────────────────────────
   try {
     const result = importPairedKeysAndPairings(detected);
     importedAgents = result.agents;
@@ -804,7 +802,7 @@ function runImportFromJsonStores() {
     // Do NOT rename source files on failure — leave them for retry.
   }
 
-  // ─── Phase 3: formatter incidents ───────────────────────────────────────
+  // ─── formatter incidents ────────────────────────────────────────────────
   let importedIncidents = 0;
   try {
     const result = importFormatterIncidents(detected);
@@ -822,7 +820,7 @@ function runImportFromJsonStores() {
     if (e && e.stack) console.error(e.stack);
   }
 
-  // ─── Phase 7: extension-installs ────────────────────────────────────────
+  // ─── extension-installs ─────────────────────────────────────────────────
   let importedInstalls = 0;
   try {
     const result = importExtensionInstalls(detected);
@@ -840,7 +838,7 @@ function runImportFromJsonStores() {
     if (e && e.stack) console.error(e.stack);
   }
 
-  // ─── Phase 7: network.enabled flag file → config row ────────────────────
+  // ─── network.enabled flag file → config row ─────────────────────────────
   let importedNetworkFlag = false;
   try {
     const result = importNetworkEnabledFlag(detected);

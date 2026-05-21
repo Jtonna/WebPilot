@@ -2,9 +2,8 @@
 
 /**
  * SectionToolbar — the "label / control on the left, primary action on the
- * right" strip that sits between a section head and its body. Replaces
- * three near-identical inline flex blocks that lived on the sites + agents
- * pages.
+ * right" strip that sits between a section head and its body. Used on the
+ * sites + agents pages.
  *
  * Variants:
  *   - "plain" (default) — bare flex strip with `padding: 0 var(--s-2)` and

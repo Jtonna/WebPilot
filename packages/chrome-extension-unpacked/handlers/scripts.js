@@ -13,7 +13,7 @@ export const persistentScripts = new Map();
 // Defensive cap on injectable/executable JS bodies. The MCP server already
 // caps fetched scripts at 5 MB; this is the per-extension last-line guard
 // so a misbehaving / hijacked server can't push a payload large enough to
-// exhaust the service-worker heap. See QOL security audit X2.
+// exhaust the service-worker heap.
 const MAX_SCRIPT_BYTES = 5 * 1024 * 1024;
 
 /**

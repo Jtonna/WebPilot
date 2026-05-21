@@ -1,14 +1,12 @@
 'use strict';
 
 /**
- * formatter-logs.js — DB-backed formatter incident log + in-memory hot cache
- * (P2 — phase 3).
+ * DB-backed formatter incident log + in-memory hot cache.
  *
- * Replaces the previous in-memory ring buffer + periodic JSON flush
- * implementation. Every error becomes a row in the `formatter_incidents`
- * SQLite table (durable across server restart). A per-formatter in-memory
- * cache holds the 10 most recent incidents, hydrated lazily from the DB,
- * for fast reads from the dashboard's Action Items list and the
+ * Every error becomes a row in the `formatter_incidents` SQLite table
+ * (durable across server restart). A per-formatter in-memory cache holds
+ * the 10 most recent incidents, hydrated lazily from the DB, for fast
+ * reads from the dashboard's Action Items list and the
  * `webpilot_dev_get_formatter_logs` MCP tool.
  *
  * Design notes:
@@ -20,24 +18,20 @@
  *   - Per-incident dismiss: recordDismiss(incidentId, dismissedBy) sets
  *     dismissed_at on a single row. recordDismissAll(formatterName) is the
  *     bulk version for the dashboard's "Dismiss all" button.
- *   - Success counts stay in-memory only. Per the P2 design, the DB audit
- *     trail is for errors specifically; recording every successful invocation
- *     would be high-volume noise.
- *   - Health rule unchanged: HEALTHY if total invocations < 3, OR if the
- *     last 10 invocations are all-success. UNHEALTHY otherwise. A formatter
- *     whose recent incidents are ALL dismissed counts as healthy too, so
+ *   - Success counts stay in-memory only. The DB audit trail is for errors
+ *     specifically; recording every successful invocation would be
+ *     high-volume noise.
+ *   - Health rule: HEALTHY if total invocations < 3, OR if the last 10
+ *     invocations are all-success. UNHEALTHY otherwise. A formatter whose
+ *     recent incidents are ALL dismissed counts as healthy too, so
  *     dismissing makes it drop off the dashboard until the next error.
  *
- * Exports (preserved API for callers that haven't changed):
+ * Exports:
  *   - recordSuccess, recordError, hasFormatter, getStatus, getLogs,
- *     listAll, flush (no-op now), _resetForTests, events (EventEmitter).
- *
- * Intentional signature change (per the P2 design):
- *   - recordDismiss(incidentId, dismissedBy = 'user')  — was (formatterName).
- *     The old "dismiss the whole formatter" semantic is gone; each incident
- *     row gets its own dismiss.
- *   - recordDismissAll(formatterName, dismissedBy = 'user')  — NEW. Bulk
- *     dismiss for the dashboard header's "Dismiss all" action.
+ *     listAll, flush (no-op), _resetForTests, events (EventEmitter).
+ *   - recordDismiss(incidentId, dismissedBy = 'user') — single-row dismiss.
+ *   - recordDismissAll(formatterName, dismissedBy = 'user') — bulk dismiss
+ *     for the dashboard header's "Dismiss all" action.
  *
  * Pruning: cleanupDismissedIncidents(maxAgeDays = 90) mirrors paired-keys'
  * cleanupOldPairings — server.js calls it at boot and daily.

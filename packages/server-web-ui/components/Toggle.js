@@ -18,17 +18,15 @@ import { useId } from 'react';
  *   checked   — boolean, controlled.
  *   onChange  — (next: boolean) => void.
  *   label     — string. Rendered to the left of the switch.
- *   title     — optional string. Native tooltip on the label (used here
- *               for the longer "On / Off" explainer that no longer lives
- *               in a paragraph).
+ *   title     — optional string. Native tooltip on the label, used for the
+ *               longer "On / Off" explainer.
  *   disabled  — boolean.
  *   id        — optional. Auto-generated otherwise.
  *   ariaLabel — optional. Applied to the hidden checkbox input as
  *               `aria-label`. Use this when the toggle is rendered
  *               without a visible `label` prop (e.g. inside a wp-inset-row
  *               where the row title supplies the visible context) so the
- *               control still has an accessible name. Mirrors the prop the
- *               retired local `Switch` component exposed in settings/.
+ *               control still has an accessible name.
  */
 export default function Toggle({ checked, onChange, label, title, disabled, id, ariaLabel }) {
   const generatedId = useId();

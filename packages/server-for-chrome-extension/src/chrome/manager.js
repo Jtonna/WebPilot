@@ -15,8 +15,6 @@ const { getDefaultChromePath, getDefaultUserDataDir } = require('./paths');
  * user-data-dir along with whether it has the --silent-debugger-extension-api
  * flag. getStatus() performs a cheap PID liveness check via
  * `process.kill(pid, 0)` and only triggers a full refresh on cache miss.
- *
- * This module stands alone — Wave 2 will wire it into the MCP handler.
  */
 class ChromeManager {
   constructor(opts) {
@@ -181,10 +179,9 @@ class ChromeManager {
    * Idempotent: ensure Chrome is running with the flag and all requiredProfiles
    * are open.
    *
-   * Algorithm (per spec 4.1):
+   * Algorithm:
    *   1. getStatus() — fast path
-   *   2. if running && hasFlag — assume sufficient (Wave 2 will additionally
-   *      verify each required profile has an extension WebSocket connected)
+   *   2. if running && hasFlag — assume sufficient
    *   3. if running && !hasFlag — getActiveProfiles → closeAll → launch active ∪ required
    *   4. if !running — launch required profiles
    *
@@ -199,7 +196,7 @@ class ChromeManager {
 
     const status = await this.getStatus();
 
-    // Case 2: running with flag — Wave 2 will add per-profile WS check; for now, no-op.
+    // Case 2: running with flag — treat as sufficient and no-op.
     if (status.running && status.hasFlag) {
       log('manager', 'ensureReady — already running with flag, no action', { browserPid: status.browserPid });
       return {

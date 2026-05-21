@@ -11,7 +11,7 @@ import { createSequencedFetcher, getStatus, createProfile } from '../../lib/api'
 import { createUiEventsClient } from '../../lib/ws';
 
 /**
- * Profiles — per UX §Profiles.
+ * Profiles — Chrome-profile management page.
  *
  * Two sections:
  *   1. Known profiles    — sorted active → ready → needs_setup, then by dir

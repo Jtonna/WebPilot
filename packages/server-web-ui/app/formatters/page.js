@@ -20,10 +20,9 @@ import { formatRelativeTime } from '../../lib/format';
  * per-formatter status panel + recent error ring-buffer entries.
  *
  * Refresh strategy: REST poll every 30s. The server doesn't broadcast a
- * `formatter_logs_updated` event yet (Wave B didn't ship one), so the
- * cheapest way to surface a freshly-flipped `unhealthy` is to re-fetch on
- * a quiet interval. The endpoint is trivial and localhost-only, so the
- * polling cost is negligible.
+ * `formatter_logs_updated` event, so the cheapest way to surface a freshly-
+ * flipped `unhealthy` is to re-fetch on a quiet interval. The endpoint is
+ * trivial and localhost-only, so the polling cost is negligible.
  */
 
 const POLL_INTERVAL_MS = 30 * 1000;

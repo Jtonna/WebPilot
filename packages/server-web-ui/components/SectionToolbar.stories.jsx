@@ -7,7 +7,7 @@ const meta = {
     docs: {
       description: {
         component:
-          '"Label on the left, primary action on the right" strip that sits between a section head and its body. Replaces three near-identical inline flex blocks that lived on the sites + agents pages. The "card" variant wraps in .wp-card with thicker padding for standalone CTAs (the agents pair-bar).',
+          '"Label on the left, primary action on the right" strip that sits between a section head and its body. Used on the sites + agents pages. The "card" variant wraps in .wp-card with thicker padding for standalone CTAs (the agents pair-bar).',
       },
     },
   },

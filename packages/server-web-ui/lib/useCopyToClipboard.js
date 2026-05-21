@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * useCopyToClipboard — collapses the 4 near-identical clipboard impls in this
- * UI (AgentRow's Copy config, Settings paths, ProfileSetupModal's two copy
- * widgets, and PairAgentModal's larger handleCopy flow).
+ * useCopyToClipboard — shared clipboard hook used by AgentRow's Copy config,
+ * Settings paths, ProfileSetupModal's copy widgets, and PairAgentModal's
+ * handleCopy flow.
  *
  * Returns a tuple [state, copy] where `state` is one of:
  *   'idle' | 'copied' | 'error'

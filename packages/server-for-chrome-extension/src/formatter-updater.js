@@ -31,8 +31,8 @@ function init(manager) {
 //
 // Pre-signing releases (no signed-manifest.json on the branch) are
 // handled fail-skip: log a warning, leave the on-disk formatters alone,
-// and try again next tick. This keeps users on 1.1.8 from getting
-// stuck if they install before the first signed release ships.
+// and try again next tick. This keeps existing installs from getting
+// stuck if they predate the first signed release.
 async function checkForUpdates() {
   const formatterDir = getFormatterDir();
   const localManifestPath = path.join(formatterDir, 'manifest.json');

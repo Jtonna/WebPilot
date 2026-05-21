@@ -22,7 +22,7 @@ function shortPairingId(id) {
  *   [short pairing id · time ]
  *   [optional new-profile name input expanded under the dropdown]
  *
- * Phase 2 refresh:
+ * Behaviour:
  *   - "+ New sandbox profile" expands an inline input beneath the dropdown.
  *   - Approve label flips to "Approve and create" when __new__ is selected.
  *   - Deny is a ghost-danger button (transparent bg, danger text, danger

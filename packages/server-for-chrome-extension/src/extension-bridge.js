@@ -46,10 +46,9 @@ function createExtensionBridge() {
     // Accept either a profileId string or a ws instance (for ws.on('close')).
     //
     // Critical contract: this MUST only act on the ONE entry that matches.
-    // The old version's fallback (`!removedProfileId` branch) iterated EVERY
-    // pending command and rejected them all on any anonymous disconnect —
-    // an extension that opened a WS and dropped before completing hello would
-    // wipe out every other profile's in-flight commands. See server I12.
+    // An anonymous-disconnect fallback that iterates every pending command
+    // would wipe out every other profile's in-flight commands when an
+    // extension opens a WS and drops before completing hello.
     let removedProfileId = null;
     if (typeof profileIdOrWs === 'string') {
       if (connections.has(profileIdOrWs)) {

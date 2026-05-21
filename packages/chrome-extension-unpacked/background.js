@@ -57,12 +57,6 @@ let _whitelistReady = new Promise((resolve) => {
   });
 });
 
-// NOTE: `pairingRequiredCache` and the related SET/GET_PAIRING_REQUIRED
-// messaging used to live here. With pairing config owned by the web UI it
-// became a zombie — the extension was sending `set_pairing_required` on
-// every reconnect from a stale local cache (the popup no longer has any UI
-// to mutate it). Removed entirely. See QOL review extension/C1.
-
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
@@ -243,10 +237,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleConfigUpdate(message.config);
       break;
 
-    // GET_STATUS removed in P2 phase 7: the new minimal popup polls the
-    // server's REST surface directly for connection state; it no longer asks
-    // the service worker for it. No remaining caller in the extension.
-
     case 'CONNECT_REQUEST':
       chrome.storage.local.get(['webpilot.installId', 'serverUrl'], (result) => {
         const installId = result['webpilot.installId'];
@@ -263,10 +253,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
-    // DISCONNECT removed in P2 phase 7: the new minimal popup has no
-    // disconnect affordance. The old popup's user-initiated disconnect path
-    // is gone — connection lifecycle is automatic from the user's POV.
-
     case 'RECONNECT':
       manuallyDisconnected = false;
       isEnabled = true;
@@ -279,7 +265,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       manuallyDisconnected = false;
       disconnectWebSocket();
       // Also clear the stored profile identification so the user is forced
-      // back through the identify flow on next connect. See QOL extension C2/C3.
+      // back through the identify flow on next connect.
       // NOTE: `webpilot.installId` is intentionally NOT cleared — it is bound
       // to the extension installation, not the pairing config, and persists
       // across config resets so the server's installId->profileId mapping
@@ -301,18 +287,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    // The following handlers were removed in P2 phase 7. The new minimal
-    // popup (Phase 6) does not send any of these messages — profile re-bind
-    // happens in the webapp, the formatter-update check moved to the
-    // server-side hourly auto-updater + UI button, and there is no popup UI
-    // for retry-auto-connect anymore (the worker handles reconnect itself):
-    //   - RESET_PROFILE_ID
-    //   - RETRY_AUTO_CONNECT
-    //   - GET_PROFILE_IDENTITY
-    //   - SET_PROFILE_ID
-    //   - CHECK_FORMATTER_UPDATES
-    // SET_PAIRING_REQUIRED / GET_PAIRING_REQUIRED were removed earlier (web
-    // UI owns this) — see QOL review extension/C1.
   }
   return true;
 });
@@ -410,8 +384,7 @@ function connectWebSocket() {
         // Defensive: cap frame size and reject non-object payloads before
         // dispatch. Even though the WS is gated server-side to localhost
         // (or LAN in --network), a misbehaving / hijacked server should not
-        // be able to crash the service worker with a malformed frame. See
-        // QOL security audit X1.
+        // be able to crash the service worker with a malformed frame.
         const raw = typeof event.data === 'string' ? event.data : '';
         if (!raw || raw.length > 8 * 1024 * 1024) {
           console.log('[ws:msg] dropping oversized or empty frame');
@@ -444,9 +417,8 @@ function connectWebSocket() {
             'webpilot.knownProfiles': knownProfiles,
             'webpilot.profileId': null
           });
-          // The popup picker has moved to the webapp's /pairings flow in
-          // Phase 6 — the IDENTIFY_REQUIRED broadcast had no remaining
-          // listener and was removed in P2 phase 7.
+          // The profile picker lives in the webapp's /pairings flow; the
+          // extension just stashes the list and logs.
           console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
           return;
         }
@@ -652,9 +624,8 @@ function updateConnectionStatus(status, error = null, errorType = null) {
   connectionStatus = status;
   connectionError = error;
   connectionErrorType = errorType;
-  // The CONNECTION_STATUS_CHANGED broadcast was removed in P2 phase 7. The
-  // new minimal popup polls the server for connection state and does not
-  // subscribe to chrome.runtime messages from the service worker.
+  // No broadcast: the popup polls the server for connection state and does
+  // not subscribe to chrome.runtime messages from the service worker.
 }
 
 // Command routing
@@ -817,7 +788,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.whitelistedDomains) {
       restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
-    // pairingRequired key intentionally not mirrored — see F3 removal note.
   }
 });
 

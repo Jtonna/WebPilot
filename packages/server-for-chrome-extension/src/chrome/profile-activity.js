@@ -8,9 +8,9 @@ const { log, error } = require('./logger');
  * Returns an array of profile directory names that have any file inside
  * `<userDataDir>/<profileDir>/` modified within the last `withinSeconds` seconds.
  *
- * Empirically (spec section 2.5), active Chrome profiles write to
- * `SharedStorage-wal` etc. constantly — ~9-13 writes per minute. Inactive
- * profiles have no recent writes.
+ * Empirically, active Chrome profiles write to `SharedStorage-wal` etc.
+ * constantly — ~9-13 writes per minute. Inactive profiles have no
+ * recent writes.
  *
  * We scan only the immediate children + a few well-known hot files to avoid
  * descending into massive Cache/ subtrees.

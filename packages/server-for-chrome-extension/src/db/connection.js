@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * SQLite connection singleton for WebPilot's server (P2 — phase 1).
+ * SQLite connection singleton for WebPilot's server.
  *
  * Opens `<dataDir>/webpilot.db` via better-sqlite3, sets the recommended
  * PRAGMAs (WAL journal, foreign-keys ON, synchronous=NORMAL), and applies the
@@ -14,9 +14,9 @@
  * single-process resource — that matches WebPilot's runtime model exactly.
  *
  * IMPORTANT pkg risk: better-sqlite3 ships a native binding (.node file). The
- * @yao-pkg/pkg toolchain has historically been finicky with native modules.
- * See package.json's `pkg.assets` and the TODO there. Phase 1 does NOT verify
- * the pkg-compiled binary — that's Phase 7 cleanup.
+ * @yao-pkg/pkg toolchain has historically been finicky with native modules;
+ * see package.json's `pkg.assets` and the native-binding resolution block
+ * below for how we pass the binding path explicitly.
  */
 
 const path = require('node:path');
@@ -29,14 +29,13 @@ const { getDataDir } = require('../service/paths');
 //
 // @yao-pkg/pkg cannot bundle the native `.node` binding into its snapshot,
 // so the post-build step (scripts/copy-native-deps.js) drops
-// `better_sqlite3.node` next to the pkg-compiled `.exe`. In v12.x, the
-// loader's auto-discovery (`require('bindings')(...)`) walks the snapshot
-// filesystem and fails because the .node sits OUTSIDE the snapshot. The
-// `BETTER_SQLITE3_BINDING_PATH` env var we used in earlier attempts was
-// never read by better-sqlite3 — it only honours the `nativeBinding`
-// constructor option (see node_modules/better-sqlite3/lib/database.js,
-// commit 12.x). We therefore pass the resolved sibling path explicitly
-// when constructing the Database below.
+// `better_sqlite3.node` next to the pkg-compiled `.exe`. The loader's
+// auto-discovery (`require('bindings')(...)`) walks the snapshot
+// filesystem and fails because the .node sits OUTSIDE the snapshot.
+// better-sqlite3 only honours the `nativeBinding` constructor option
+// (see node_modules/better-sqlite3/lib/database.js) — env vars like
+// `BETTER_SQLITE3_BINDING_PATH` are NOT read. We therefore pass the
+// resolved sibling path explicitly when constructing the Database below.
 //
 // In dev (running under node.exe), `getBundledBindingPath()` returns null
 // and better-sqlite3 resolves the binding from node_modules normally.

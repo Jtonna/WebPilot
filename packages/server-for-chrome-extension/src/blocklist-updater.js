@@ -1,16 +1,16 @@
 'use strict';
 
 /**
- * Baseline blocklist auto-updater (P2 — phase 4).
+ * Baseline blocklist auto-updater.
  *
- * Mirrors `formatter-updater.js`. Fetches a small JSON manifest from this
- * repo's `baseline-blocklists/` directory via GitHub raw, compares its
- * `version` against the row in `baseline_blocklist_meta`, and, if newer,
- * fetches each referenced hosts.txt-style list and replaces every
- * `global_site_rules` row with `source='baseline'` in a single transaction.
- * User-set rows (`source='user'`) are never touched.
+ * Fetches a small JSON manifest from this repo's `baseline-blocklists/`
+ * directory via GitHub raw, compares its `version` against the row in
+ * `baseline_blocklist_meta`, and, if newer, fetches each referenced
+ * hosts.txt-style list and replaces every `global_site_rules` row with
+ * `source='baseline'` in a single transaction. User-set rows
+ * (`source='user'`) are never touched.
  *
- * Supply-chain integrity (added 2026-05-20):
+ * Supply-chain integrity:
  *   - Every fetch tick pulls `signed-manifest.json` + `signed-manifest.json.sig`
  *     from the remote first and verifies the Ed25519 signature against
  *     the bundled `PUBKEY.pem`.
@@ -23,16 +23,15 @@
  *     the signing infrastructure), we fail-skip: no DB writes, no
  *     blocklist changes, try again next tick.
  *
- * Resilience tier (per the user's request, smoke-test 2026-05-17):
+ * Resilience tier:
  *   - Try remote fetch first.
  *   - On success, write the parsed content to a LOCAL CACHE under
  *     `<dataDir>/baseline-blocklists/` (manifest.json + each list file
  *     + the signed manifest + signature so the next boot can re-verify
  *     without the network).
- *   - On remote failure (network down, GitHub 404 because the branch
- *     hasn't merged to main, etc.), READ FROM THE LOCAL CACHE — and
- *     re-verify the cached signature before using it. A cache that
- *     doesn't verify is treated as if it weren't there.
+ *   - On remote failure (network down, GitHub 404, etc.), READ FROM THE
+ *     LOCAL CACHE — and re-verify the cached signature before using it.
+ *     A cache that doesn't verify is treated as if it weren't there.
  *   - If neither remote nor local cache is available, write an empty
  *     placeholder manifest so subsequent boots see a predictable state
  *     (instead of repeatedly thrashing the network on every restart). The

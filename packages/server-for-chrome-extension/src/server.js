@@ -222,7 +222,7 @@ function mountWebUiStatic(app) {
   }
 
   // Manual file handler — replaces `express.static` so that pkg snapshot
-  // reads go through `fs.readFileSync` (which pkg patches). See QOL fix-up F8.
+  // reads go through `fs.readFileSync` (which pkg patches).
   app.get(/^\/ui($|\/.*)/, (req, res) => {
     const filePath = _resolveWebUiFile(dir, req.path);
     if (!filePath) {
@@ -251,8 +251,7 @@ function mountWebUiStatic(app) {
 
 /**
  * Validate a profile-directory name supplied by a UI client before passing it
- * into a Chrome `--profile-directory=` arg and a filesystem path. See QOL
- * review C1.
+ * into a Chrome `--profile-directory=` arg and a filesystem path.
  *
  * Rules:
  *  - non-empty string after trim
@@ -353,8 +352,7 @@ function validateProfileName(name, userDataDir) {
 // package-level `dev` script does the same for direct invocation. We
 // deliberately do NOT consult `NODE_ENV` or `npm_lifecycle_event` — both
 // can be inherited from a parent process and would otherwise widen the
-// blast radius of a dev-only bypass into shipped environments. See QOL
-// security audit S4 (Fix 2).
+// blast radius of a dev-only bypass into shipped environments.
 const IS_DEV_MODE = process.env.WEBPILOT_DEV === '1';
 
 if (IS_DEV_MODE) {
@@ -370,7 +368,6 @@ if (IS_DEV_MODE) {
 // every dev-mode-bypass path must refuse to loosen its gate, because a
 // remote attacker could otherwise reach UI / mutating endpoints via the
 // network-mode listener simply because the operator left WEBPILOT_DEV set.
-// See QOL security audit S4.
 function _isDevBypassSafe(hostBinding) {
   if (!IS_DEV_MODE) return false;
   return hostBinding === '127.0.0.1' || hostBinding === 'localhost';
@@ -388,7 +385,7 @@ function makeUiAuth(hostBinding /* '127.0.0.1' | '0.0.0.0' */) {
     }
     // Dev-mode bypass is intentionally NEVER honored when the server is bound
     // to 0.0.0.0 — that would convert a developer-convenience opt-in into a
-    // remote auth-bypass. See QOL security audit S4.
+    // remote auth-bypass.
     if (_isDevBypassSafe(hostBinding)) {
       console.log(`[ui-auth] DEV MODE (loopback bind) — allowing non-local ${req.method} ${req.url} from ${remote}`);
       try { res.setHeader('X-WebPilot-Dev-Bypass', '1'); } catch (_e) { /* ignore */ }
@@ -495,7 +492,7 @@ function mountWebUiRoutes(app, deps) {
       // tagged `type: 'formatter_error'` so the UI can discriminate it from
       // pairing rows (which are surfaced via `pendingPairings` and rendered
       // with PairingPromptCard). The UI consumes both lists in its Action
-      // Items section. See P1 #1.
+      // Items section.
       let formatterActionItems = [];
       try {
         const statusMap = formatterLogs.listAll();
@@ -528,7 +525,7 @@ function mountWebUiRoutes(app, deps) {
 
       res.json({
         // Exposed so the UI can render .mcp.json snippets with the live port
-        // (no hardcoded default). See Wave 6 H6.
+        // (no hardcoded default).
         port: port || null,
         chrome: chromeStatus,
         profiles,
@@ -536,14 +533,14 @@ function mountWebUiRoutes(app, deps) {
         // per-profile `webPilotStatus` field on each entry in `profiles`.
         connectedProfiles,
         pendingPairings: pairedKeys.listPendingPairings(),
-        // New (P1 #1): formatter errors surface as discriminated action items
+        // Formatter errors surface as discriminated action items
         // alongside pending pairings on the dashboard.
         actionItems: formatterActionItems,
         pairedAgents: pairedKeys.listKeys(),
         networkMode: (() => {
-          // P2 phase 7: prefer DB row; fall back to legacy flag file only if
-          // the row is absent (first-boot-before-migration path). The DB
-          // becomes the source of truth once migration runs.
+          // Prefer DB row; fall back to legacy flag file only if the row is
+          // absent (first-boot-before-migration path). The DB is the source
+          // of truth once migration runs.
           try {
             const row = require('./db/connection').getDb()
               .prepare('SELECT value FROM config WHERE key = ?')
@@ -558,7 +555,7 @@ function mountWebUiRoutes(app, deps) {
           } catch (e) { return false; }
         })(),
         // Surfaces the canonical filesystem locations the Settings page and
-        // ProfileSetupModal need to render copyable absolute paths. See Phase 3 C.
+        // ProfileSetupModal need to render copyable absolute paths.
         paths: {
           dataDir: getDataDir(),
           logPath: getLogPath(),
@@ -566,11 +563,10 @@ function mountWebUiRoutes(app, deps) {
         },
         // Server-persisted notification preferences. Source of truth for the
         // Settings page; the daemon also consults this when firing pairing
-        // notifications. See Phase 3 B.
+        // notifications.
         notifications: notificationsSettings.getSettings(),
-        // Baseline blocklist summary (P2 phase 4). The webapp Sites page
-        // (Phase 5) reads from this. Shape: { enabled, version, lastFetchedAt,
-        // domainCount }.
+        // Baseline blocklist summary read by the webapp Sites page.
+        // Shape: { enabled, version, lastFetchedAt, domainCount }.
         baselineBlocklist: (() => {
           try { return blocklistUpdater.getStatus(); }
           catch (e) {
@@ -816,8 +812,8 @@ function mountWebUiRoutes(app, deps) {
       const key = req.params.key;
       const body = req.body || {};
       const profileIdRaw = body.profileId;
-      // Log the agent identity via agent-name lookup (not the api_key_hash
-      // prefix) — see Fix 5 in QOL security audit.
+      // Log the agent identity via agent-name lookup, NOT the api_key_hash
+      // prefix — avoids leaking key material into log streams.
       let agentLabel = '(unknown)';
       try {
         const entry = pairedKeys.validateKey(key);
@@ -878,7 +874,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // ---- Pairings history (Phase 3 A) ----
+  // ---- Pairings history ----
   // GET /api/ui/pairings/history?cursor=<isoTimestamp>&limit=<n>
   // GET /api/ui/pairings/history?before=<isoTimestamp>&limit=<n>  (alias)
   //
@@ -948,7 +944,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // ---- Formatters observability (Wave B) ----
+  // ---- Formatters observability ----
   //
   // Returns the list of registered formatters with their per-formatter
   // manifest metadata fused with the runtime health/log status from
@@ -995,8 +991,8 @@ function mountWebUiRoutes(app, deps) {
 
   // POST /api/ui/incidents/:id/dismiss
   //
-  // Per-incident dismiss (P2 phase 3). Each formatter_incidents row gets its
-  // own dismiss; the legacy "dismiss the whole formatter" semantic is gone.
+  // Per-incident dismiss. Each formatter_incidents row gets its own
+  // dismiss; the older "dismiss the whole formatter" semantic is gone.
   // Sets dismissed_at on the row and emits a `changed` event so the
   // dashboard WebSocket subscriber re-renders.
   app.post('/api/ui/incidents/:id/dismiss', auth, express.json(), (req, res) => {
@@ -1056,7 +1052,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // ---- Notification settings (Phase 3 B) ----
+  // ---- Notification settings ----
   app.get('/api/ui/settings/notifications', auth, (req, res) => {
     try {
       const settings = notificationsSettings.loadSettings();
@@ -1086,7 +1082,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // ---- Chrome restart / launch (Phase 3 D1+D2) ----
+  // ---- Chrome restart / launch ----
   // POST /api/ui/chrome/restart
   //
   // Calls chromeManager.ensureReady — handles all three cases (running with
@@ -1130,7 +1126,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // ---- Server restart (Phase 3 D3) ----
+  // ---- Server restart ----
   // Identical spawn-and-exit semantics as POST /api/ui/settings/network-mode.
   app.post('/api/ui/server/restart', auth, mutatingAuth, express.json(), (req, res) => {
     try {
@@ -1170,7 +1166,7 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // --- Sites admin routes (P2 phase 5) ---
+  // --- Sites admin routes ---
   //
   // Webapp Sites page CRUD over the site-policy tables. Reads + writes are
   // localhost-only (auth) and writes go through mutatingAuth for the same
@@ -1458,18 +1454,18 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   let publicHost = initialPublicHost;
   let pairingRequired = true; // default: pairing required
 
-  // SQLite foundation (P2 — phase 1). Stand up the DB BEFORE any stateful
-  // module loads, so later phases can swap their JSON reads/writes for DB
-  // queries without re-ordering boot. The migration call is a Phase-1 stub
-  // that only logs what it would import — see src/db/migration.js.
+  // Stand up SQLite before any stateful module loads so paired-keys,
+  // formatter-logs, extension-installs, etc. find the DB ready when they
+  // initialize. Migration imports the legacy JSON stores on first boot;
+  // see src/db/migration.js.
   try {
-    console.log('[server] initializing SQLite (P2 phase 1)…');
+    console.log('[server] initializing SQLite…');
     require('./db/connection').init();
     require('./db/migration').runImportFromJsonStores();
   } catch (e) {
     console.error('[server] SQLite init failed:', e && e.message);
-    // Non-fatal for phase 1 — no module uses the DB yet. Once Phase 2 lands
-    // and paired-keys depends on the DB, this should rethrow.
+    // TODO: once the DB is mandatory across all stateful modules, rethrow
+    // here instead of swallowing.
   }
 
   const app = express();
@@ -1534,8 +1530,8 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         remoteAddr === '127.0.0.1' ||
         remoteAddr === '::1' ||
         remoteAddr === '::ffff:127.0.0.1';
-      // Origin gate (QOL security audit S2). The web UI is served at
-      // /ui from this same daemon, so legitimate UI WS upgrades carry
+      // Origin gate. The web UI is served at /ui from this same daemon,
+      // so legitimate UI WS upgrades carry
       // Origin: http://localhost:<port> or http://127.0.0.1:<port>.
       // Any other Origin is a webpage trying to ride the loopback bind
       // — reject without socket allocation.
@@ -1580,8 +1576,8 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // extension_installs row binds (installId -> profileId), which the
     // bridge uses for routing only.
     //
-    // Origin gate (QOL security audit S1): browser tabs running arbitrary web
-    // pages can open WebSockets to 127.0.0.1:3456. Their `Origin` is the
+    // Origin gate: browser tabs running arbitrary web pages can open
+    // WebSockets to 127.0.0.1:3456. Their `Origin` is the
     // page's http(s) origin. Legitimate WebPilot connections come from the
     // extension's service worker, which sends `Origin: chrome-extension://<id>`
     // or no Origin at all (Node ws clients, curl, etc.). Reject anything
@@ -1890,10 +1886,9 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
   // Bridge formatter-logs `changed` events to the UI WebSocket so the
   // dashboard's Action Items list updates in realtime when an error is
-  // recorded or a user dismisses a formatter. See P1 #1; formatter-logs.js
-  // exports `events` (an EventEmitter) for this purpose — chose EventEmitter
-  // over a constructor-time callback because it lets the module stay
-  // stateless w.r.t. its subscribers.
+  // recorded or a user dismisses a formatter. formatter-logs.js exports
+  // `events` (an EventEmitter) — preferred over a constructor-time
+  // callback so the module stays stateless w.r.t. its subscribers.
   try {
     formatterLogs.events.on('changed', (payload) => {
       try {
@@ -1929,7 +1924,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     3600000
   );
 
-  // Baseline-blocklist auto-updater (P2 phase 4). Fetches the curated
+  // Baseline-blocklist auto-updater. Fetches the curated
   // financial-institutions list from the WebPilot repo, replaces every
   // `source='baseline'` row in `global_site_rules` if the manifest version
   // bumped. User-set rules are never touched. Boot fetch is delayed a few
@@ -2029,7 +2024,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }
   }, 24 * 60 * 60 * 1000);
 
-  // Dismissed-incident pruning (P2 phase 3). Drop rows where
+  // Dismissed-incident pruning. Drop rows where
   // dismissed_at < now() - 90d so the audit table doesn't grow without
   // bound. Mirrors the cleanupOldPairings cadence: one boot pass + a daily
   // setInterval. Undismissed rows are NEVER pruned.
@@ -2104,7 +2099,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // Returns { installId, profileId } on success, or null on failure.
     // Supports X-Install-Id header (preferred) or `installId` query param.
     //
-    // Origin gate (QOL security audit S3): the popup endpoints are designed
+    // Origin gate: the popup endpoints are designed
     // to be called from the extension popup (origin chrome-extension://…).
     // If a request carries a webpage Origin (http(s)://…), refuse it — that
     // would be a malicious site running in any Chrome profile trying to
@@ -2244,7 +2239,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
       const policy = sitePolicyPopup.isAllowed(null, normalized);
       const newState = _statePillFromPolicy(policy);
       // Tell the webapp Sites page (and any other UI consumer) the rule list
-      // changed. Same event name Phase 5's Sites admin routes emit.
+      // changed. Same event name the Sites admin routes emit.
       try {
         broadcastUiEvent({ type: 'sites_changed', reason: 'popup_toggle' });
       } catch (_e) { /* non-fatal */ }
@@ -2265,10 +2260,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     broadcastUiEvent,
     hostBinding: host,
     setNetworkMode: ({ enabled }) => {
-      // Persist + restart-spawn approach (Section 4.6).
-      // P2 phase 7: write to the DB (`config.network_enabled`) instead of the
-      // legacy flag file. The replacement daemon boots and reads the DB row
-      // in index.js, so the new binding takes effect across the restart.
+      // Persist + restart-spawn approach: write to the DB
+      // (`config.network_enabled`). The replacement daemon boots and reads
+      // the DB row in index.js, so the new binding takes effect across
+      // the restart.
       try {
         const nowIso = new Date().toISOString();
         require('./db/connection').getDb().prepare(

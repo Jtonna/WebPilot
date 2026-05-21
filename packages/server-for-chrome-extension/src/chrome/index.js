@@ -2,7 +2,6 @@
 
 /**
  * Public entry point for the Chrome management module.
- * Wave 2 will wire this into mcp-handler.js's browser_create_tab readiness gate.
  */
 
 const { ChromeManager, createChromeManager } = require('./manager');

@@ -7,7 +7,7 @@ const formatterLogs = require('./formatter-logs');
 const sitePolicy = require('./site-policy');
 
 // Tools that operate on an existing tab_id and therefore need a per-call
-// current-URL policy check (checkpoint B in the design doc).
+// current-URL policy check (checkpoint B in the site-policy gate).
 const TAB_ID_TOOLS = new Set([
   'browser_click',
   'browser_type',
@@ -42,8 +42,6 @@ const MAX_SCRIPT_FETCH_BYTES = 5 * 1024 * 1024;
  * second TOCTOU lookup at the kernel layer can't redirect us to 127.0.0.1
  * because we hand `fetch` an IP, not a hostname. Post-redirect targets get
  * the same treatment.
- *
- * See QOL security audit S6.
  */
 function _formatIpForUrl(address, family) {
   if (family === 6) return `[${address}]`;
@@ -267,10 +265,10 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
   /**
    * Resolve which Chrome profile this tool call should target.
    *
-   * Per-agent routing (Wave 7 J2): each paired-keys entry carries a `profileId`
-   * field (added in Wave 5 G2). When the API key resolves to an entry with a
-   * string `profileId`, route to that profile. Legacy entries (pre-G2) have
-   * `profileId: null` and fall back to the server-wide `managedProfile`.
+   * Per-agent routing: each paired-keys entry carries a `profileId` field.
+   * When the API key resolves to an entry with a string `profileId`, route
+   * to that profile. Legacy entries with `profileId: null` fall back to the
+   * server-wide `managedProfile`.
    *
    * The caller (handleToolCall) already has `apiKey` available because the auth
    * gate at the top of processMessage resolved it from session/args.
@@ -890,8 +888,8 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         params.name === 'webpilot_get_formatter_info' ||
         params.name === 'webpilot_dev_get_formatter_logs';
       // Resolved API key for the call. Used for both auth and per-agent
-      // profile routing (Wave 7 J2). For auth-exempt tools that don't carry a
-      // key, this stays null and resolveTargetProfile() falls back gracefully.
+      // profile routing. For auth-exempt tools that don't carry a key, this
+      // stays null and resolveTargetProfile() falls back gracefully.
       const effectiveKey = session.mcpApiKey || params.arguments?.api_key || null;
       if (!noAuthRequired && isPairingRequired()) {
         if (!effectiveKey || !pairedKeys.validateKey(effectiveKey)) {
@@ -915,7 +913,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         console.log(`[mcp:intent] ${params.name}: ${params.arguments.intent}`);
       }
 
-      // Site-policy gate (P2 phase 4). Runs AFTER auth so we have the agent
+      // Site-policy gate. Runs AFTER auth so we have the agent
       // identity available for per-agent overrides, and BEFORE the tool
       // dispatches so a blocked site never reaches the extension. A null
       // return means "allowed — proceed". A non-null return is the full MCP
@@ -1269,7 +1267,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
   }
 
   // ----------------------------------------------------------------------
-  // Site-policy gate (P2 phase 4).
+  // Site-policy gate.
   //
   // Two checkpoints:
   //   A. `browser_create_tab` — gate on args.url before the create_tab
@@ -1287,7 +1285,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
   /**
    * Wrap a JSON-rpc result-shaped MCP envelope around a "blocked by policy"
-   * response. The body matches the design doc:
+   * response. Body shape:
    *   { ok: false, error: 'site blocked by policy', domain, policySource,
    *     [tabId, tabWillCloseAt, tabCloseInSeconds] }
    */
@@ -1338,8 +1336,8 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * publishes a tabs list; we reuse the same RPC rather than introduce a
    * separate "get one tab" command. The call adds a single extra
    * roundtrip per checkpoint-B tool call — acceptable for v1; if it shows
-   * up as a hot spot, Phase 6 can have the extension cache the active URL
-   * on every page state change.
+   * up as a hot spot, the extension could cache the active URL on every
+   * page state change.
    */
   async function _resolveTabUrl(profileId, tabId) {
     if (!profileId || typeof tabId !== 'number') return null;
@@ -1487,7 +1485,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       // Fire a server-side native notification if a fresh pending entry was just created.
       // Lazy-require so this code keeps working before the notifications module lands.
       if (result.created && result.status === 'pending') {
-        // Honor user preferences (Phase 3 B). If systemNotifications is off,
+        // Honor user preferences. If systemNotifications is off,
         // skip the toast entirely; if sound is off, pass sound:false.
         let prefs = { systemNotifications: true, sound: true };
         try {

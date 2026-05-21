@@ -7,7 +7,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Canonical "this list/section is empty" block. Replaces the seven hand-rolled wp-card + wp-empty copies that lived on the dashboard, formatters, pairings, profiles, agents and sites pages. Two variants — "card" (default) for standalone empty sections, "bare" for use inside wp-inset-groups where the parent already supplies the card surface.',
+          'Canonical "this list/section is empty" block used across the dashboard, formatters, pairings, profiles, agents and sites pages. Two variants — "card" (default) for standalone empty sections, "bare" for use inside wp-inset-groups where the parent already supplies the card surface.',
       },
     },
   },

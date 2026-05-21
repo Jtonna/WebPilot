@@ -1,8 +1,8 @@
 // Minimal WebSocket client for live UI events.
 //
-// Connects to `/api/ui/events` on the WebPilot server. The endpoint does
-// not exist yet — this client handles connection failure gracefully so
-// the UI is still usable while Wave 2 wires the server side.
+// Connects to `/api/ui/events` on the WebPilot server and handles connection
+// failure gracefully so the UI remains usable when the endpoint is
+// unavailable.
 
 const DEFAULT_PATH = '/api/ui/events';
 

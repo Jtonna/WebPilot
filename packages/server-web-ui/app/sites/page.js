@@ -23,7 +23,7 @@ import { createUiEventsClient } from '../../lib/ws';
 import { formatRelativeTime } from '../../lib/format';
 
 /**
- * Sites — admin surface for the WebPilot site policy model (P2 phase 5).
+ * Sites — admin surface for the WebPilot site policy model.
  *
  * Three sections:
  *   1. Baseline blocklist  — small card: enabled toggle + version + last fetch

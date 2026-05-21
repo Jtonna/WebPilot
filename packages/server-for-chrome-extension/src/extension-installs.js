@@ -1,30 +1,22 @@
 'use strict';
 
 /**
- * extension-installs.js — SQLite-backed (P2 — phase 7).
+ * extension-installs.js — SQLite-backed store for the per-install UUID
+ * (`installId`) minted by the Chrome extension on
+ * `chrome.runtime.onInstalled`, mapped to the Chrome `profileId`
+ * (profile-directory name) the server resolved for that install. Rows
+ * live in `extension_installs` (see `src/db/schema.sql`).
  *
- * Replaces the JSON-file implementation that used to read/write
- * `<dataDir>/config/extension-installs.json`. Now backed by the
- * `extension_installs` table (see `src/db/schema.sql`).
- *
- * Persistent server-side store mapping a per-install UUID (`installId`) minted
- * by the Chrome extension on `chrome.runtime.onInstalled` to the Chrome
- * `profileId` (profile-directory name) the server resolved for that install.
- *
- * The exported API surface is unchanged from the JSON-backed version so every
- * existing caller in server.js continues to compile without edits:
- *   - loadInstalls()
- *   - saveInstalls(data)               -- still exported as a compat shim; not the
- *                                          primary code path. Performs a full
- *                                          replace of the table contents.
+ * Exports:
+ *   - loadInstalls() — full snapshot; used by server.js for the status page.
+ *   - saveInstalls(data) — compat shim that does a full table replace.
  *   - getProfileForInstall(installId)
  *   - setProfileForInstall(installId, profileId)
  *   - cleanupStaleInstalls(maxAgeDays)
  *
- * Why we kept the legacy `loadInstalls` / `saveInstalls` exports: server.js
- * snapshots the whole map for status-page rendering. Removing them would
- * have required a bigger surgery into that endpoint; the shims keep the
- * Phase-7 cleanup mechanical.
+ * Why `loadInstalls` / `saveInstalls` are still exported: server.js
+ * snapshots the whole map for status-page rendering. The shims keep that
+ * endpoint mechanical instead of forcing a wider refactor.
  */
 
 const dbModule = require('./db/connection');

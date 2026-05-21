@@ -16,9 +16,8 @@
  *   - "info"        info dot
  *   - "unknown"     muted-fg dot (fallback)
  *
- * The `label` span is re-keyed on state change so the same one-line fade
- * keyframe that `ProfileStatusBadge` used to play continues to work
- * (`.wp-pill-label` runs an opacity animation on mount).
+ * The `label` span is re-keyed on state change so `.wp-pill-label`'s mount
+ * opacity keyframe replays on every state transition.
  */
 export default function Pill({ state = 'unknown', label }) {
   return (

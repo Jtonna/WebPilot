@@ -12,13 +12,12 @@ import { useCopyToClipboard } from '../lib/useCopyToClipboard';
  * ProfileSetupModal — walkthrough for loading the WebPilot unpacked extension
  * into a specific Chrome profile.
  *
- * Per UX §Profiles modal: 480px wide, four numbered steps, primary `Done`.
+ * Layout: 480px wide, four numbered steps, primary `Done`. Built on the
+ * shared <Modal> base for backdrop, Esc, and exit animation.
  *
  * Step 3 renders the real extension path passed from /api/ui/status. When the
  * server can't resolve a path (pkg install layout we don't recognize), we show
  * a fallback hint pointing the user at the install's resources directory.
- *
- * Migrated to use the shared <Modal> base for backdrop, Esc, and exit anim.
  */
 const EXTENSIONS_URL = 'chrome://extensions/';
 

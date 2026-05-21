@@ -1,8 +1,8 @@
 /* WebPilot — minimal extension popup.
  *
- * P2 phase 6. The popup has four jobs: show connection state, show the
- * current tab's policy pill, toggle the global rule for that domain, and
- * link to the dashboard. Everything else moved to the webapp.
+ * The popup has four jobs: show connection state, show the current tab's
+ * policy pill, toggle the global rule for that domain, and link to the
+ * dashboard. Everything else lives in the webapp.
  *
  * Theme tokens mirror packages/server-web-ui/app/globals.css (warm-monochrome
  * palette, dark variant under [data-theme="dark"]) so the popup reads as

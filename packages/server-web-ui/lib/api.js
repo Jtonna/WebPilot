@@ -118,7 +118,7 @@ export function setNetworkMode(enabled) {
   });
 }
 
-// Pairings history (Phase 3 A). Cursor-paginated.
+// Pairings history. Cursor-paginated.
 //
 //   getPairingHistory({ cursor, limit }) -> { entries, nextCursor }
 //
@@ -132,7 +132,7 @@ export function getPairingHistory({ cursor = null, limit = 50 } = {}) {
   return apiFetch(`/api/ui/pairings/history${qs ? `?${qs}` : ''}`);
 }
 
-// Notification settings (Phase 3 B).
+// Notification settings.
 export function getNotificationSettings() {
   return apiFetch('/api/ui/settings/notifications');
 }
@@ -144,8 +144,8 @@ export function setNotificationSettings(partial) {
   });
 }
 
-// Chrome action (Phase 3 D). One endpoint handles "restart with flag" and
-// "launch fresh" via chromeManager.ensureReady.
+// Chrome action. One endpoint handles "restart with flag" and "launch fresh"
+// via chromeManager.ensureReady.
 export function restartChrome() {
   return apiFetch('/api/ui/chrome/restart', {
     method: 'POST',
@@ -153,9 +153,9 @@ export function restartChrome() {
   });
 }
 
-// Server restart (Phase 3 D3). Fire-and-forget — the response may arrive
-// before the daemon exits, or the connection may drop mid-request. Callers
-// should not rely on the resolved value.
+// Server restart. Fire-and-forget — the response may arrive before the daemon
+// exits, or the connection may drop mid-request. Callers should not rely on
+// the resolved value.
 export function restartServer() {
   return apiFetch('/api/ui/server/restart', {
     method: 'POST',
@@ -163,7 +163,7 @@ export function restartServer() {
   });
 }
 
-// Formatters observability (Wave B).
+// Formatters observability.
 //
 // `getFormatters()` returns `{ formatters: [...] }` where each item fuses the
 // per-formatter manifest (name, version, source, match, workflows) with the
@@ -183,11 +183,10 @@ export function getFormatterLogs(name, limit = 50) {
   );
 }
 
-// Dismiss a single formatter incident from the dashboard's action-items list
-// (P2 phase 3). Per the design, dismiss is now per-incident — each row in
-// `formatter_incidents` gets its own dismiss timestamp. The Action Items
-// entry exposes the latest undismissed incident's id under
-// `lastError.id`; pass that here.
+// Dismiss a single formatter incident from the dashboard's action-items list.
+// Dismiss is per-incident — each row in `formatter_incidents` gets its own
+// dismiss timestamp. The Action Items entry exposes the latest undismissed
+// incident's id under `lastError.id`; pass that here.
 export function dismissIncident(incidentId) {
   return apiFetch(`/api/ui/incidents/${encodeURIComponent(incidentId)}/dismiss`, {
     method: 'POST',
@@ -195,8 +194,8 @@ export function dismissIncident(incidentId) {
   });
 }
 
-// Bulk-dismiss every undismissed incident for a formatter (P2 phase 3).
-// Wired to the Action Items header's "Dismiss all from <formatter>" button.
+// Bulk-dismiss every undismissed incident for a formatter. Wired to the
+// Action Items header's "Dismiss all from <formatter>" button.
 export function dismissAllForFormatter(name) {
   return apiFetch(`/api/ui/formatters/${encodeURIComponent(name)}/dismiss-all`, {
     method: 'POST',
@@ -205,7 +204,7 @@ export function dismissAllForFormatter(name) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Sites (P2 phase 5)
+// Sites
 //
 // CRUD over the site-policy tables (global_site_rules and
 // agent_site_overrides) plus the baseline-pack on/off toggle.
@@ -287,7 +286,7 @@ export function toggleBaselineBlocklist(enabled) {
 //
 // The fetcher returns `{ data, isStale, seq }`. `isStale === true` means
 // another `fetch()` was started while this one was in flight; the caller
-// should discard `data` and NOT commit it to state. See QOL Wave 6 H2.
+// should discard `data` and NOT commit it to state.
 export function createSequencedFetcher() {
   let nextSeq = 0;
   let latestStartedSeq = 0;

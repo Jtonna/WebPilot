@@ -5,7 +5,8 @@ import Modal from './Modal';
 
 /**
  * Apple-style confirmation modal. Centered card with a soft backdrop blur,
- * opacity + small scale entrance (0.96 → 1) over 220ms.
+ * opacity + small scale entrance (0.96 → 1) over 220ms. Replaces
+ * window.confirm() in the web UI.
  *
  * Behavior:
  *   - Backdrop click cancels; Escape cancels; Enter confirms.
@@ -13,15 +14,11 @@ import Modal from './Modal';
  *     class. The component keeps the modal mounted until the keyframe
  *     finishes (see <Modal>).
  *
- * Replaces window.confirm() usage in the web UI — see QOL fix-up F7.
- *
- * Migrated to use the shared <Modal> base component for backdrop, keyboard
- * dismiss, and exit-animation lifecycle. ConfirmModal still owns the
- * Enter-to-confirm shortcut and the latch-props-across-exit behavior so the
- * card doesn't blank out mid-animation when the parent clears body/title.
- * Exit duration unified to 240ms to match the other modals in this app —
- * the previous 170ms value was a leftover and gave ConfirmModal a slightly
- * snappier-than-everything-else feel.
+ * Built on the shared <Modal> base for backdrop, keyboard dismiss, and exit-
+ * animation lifecycle. ConfirmModal owns the Enter-to-confirm shortcut and
+ * latches its props across exit so the card doesn't blank out mid-animation
+ * when the parent clears body/title. Exit duration is 240ms to match other
+ * modals in this app.
  */
 export default function ConfirmModal({
   open,

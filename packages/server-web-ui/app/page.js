@@ -15,7 +15,7 @@ import { createUiEventsClient } from '../lib/ws';
 import { profileOptions } from '../lib/format';
 
 /**
- * Dashboard — per UX §Dashboard.
+ * Dashboard — landing page for the web UI.
  *
  * Sections:
  *   1. Action items     — inline pending pairings (PairingPromptCard).
@@ -66,7 +66,7 @@ export default function HomePage() {
       client.subscribe('extension_connected', () => !cancelled && refresh()),
       client.subscribe('extension_disconnected', () => !cancelled && refresh()),
       // Formatter health flips — surface new errors and clear dismissed rows
-      // in realtime. See P1 #1.
+      // in realtime.
       client.subscribe('formatter_status_changed', () => !cancelled && refresh()),
     ];
     return () => {
@@ -105,9 +105,9 @@ export default function HomePage() {
   async function handleDismissFormatter({ incidentId, name }) {
     setBusy(true);
     try {
-      // P2 phase 3: dismiss is per-incident. If the card lacks an incident id
-      // (e.g. the row was synthesized in a DB-down fallback), fall back to
-      // the bulk endpoint so the user can still clear the card from the list.
+      // Dismiss is per-incident. If the card lacks an incident id (e.g. the
+      // row was synthesized in a DB-down fallback), fall back to the bulk
+      // endpoint so the user can still clear the card from the list.
       if (incidentId != null) {
         await dismissIncident(incidentId);
       } else {
@@ -151,9 +151,9 @@ export default function HomePage() {
   }
 
   const pendingPairings = status?.pendingPairings ?? [];
-  // New action-item variant: unhealthy formatters. The server discriminates
-  // these via `type: 'formatter_error'`; we filter defensively here so
-  // unknown future variants do not blow up the render. See P1 #1.
+  // Action-item variant: unhealthy formatters. The server discriminates these
+  // via `type: 'formatter_error'`; we filter defensively here so unknown
+  // future variants do not blow up the render.
   const formatterActionItems = (status?.actionItems ?? []).filter(
     (it) => it && it.type === 'formatter_error'
   );

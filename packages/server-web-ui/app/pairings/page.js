@@ -18,7 +18,7 @@ import { createUiEventsClient } from '../../lib/ws';
 import { formatRelativeTime, profileLabel, profileOptions } from '../../lib/format';
 
 /**
- * Pairings — per UX §Pairings.
+ * Pairings — pending approvals + decision history.
  *
  * Two sections:
  *   1. Awaiting review — identical inline approve/deny card as Dashboard.
