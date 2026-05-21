@@ -59,7 +59,33 @@ packages/
 
 **Per-agent profile routing:** each paired agent is bound to one Chrome profile. Tool calls route to that profile via the agent's API key. The Agents page can re-bind an agent in-place — no socket teardown.
 
-**Site-specific formatters** live in [`accessibility-tree-formatters/`](accessibility-tree-formatters/). Each is a small JS module with a `manifest.json` that transforms a site's a11y tree into something agent-friendly. Bundled: `discord`, `threads`, `zillow`. The server pulls fresh copies from GitHub on startup; custom formatters go in `<dataDir>/custom-formatters/` and survive auto-updates. Some formatters expose composite operations as **workflows** — server-side multi-step actions invoked via `webpilot_run_workflow` (e.g. Discord's `send_message` does fetch-tree + locate + click + type + Enter in one call).
+**Site-specific formatters** live in [`accessibility-tree-formatters/`](accessibility-tree-formatters/). Each is a small JS module with a `manifest.json` that transforms a site's a11y tree into something agent-friendly. Bundled: `discord`, `threads`, `zillow`. The server pulls fresh copies from GitHub on startup. Bundled formatters are cryptographically signed (Ed25519); the daemon refuses to apply any update whose signature doesn't verify against the bundled `PUBKEY.pem`. Some formatters expose composite operations as **workflows** — server-side multi-step actions invoked via `webpilot_run_workflow` (e.g. Discord's `send_message` does fetch-tree + locate + click + type + Enter in one call).
+
+### Custom formatters (sideloading)
+
+You can ship your own formatter for any site without going through the repo. Drop your files into `<userData>/custom-formatters/`:
+
+| Platform | Path |
+|----------|------|
+| Windows  | `%APPDATA%\@webpilot\onboarding\custom-formatters\` |
+| macOS    | `~/Library/Application Support/@webpilot/onboarding/custom-formatters/` |
+| Linux    | `~/.config/@webpilot/onboarding/custom-formatters/` (or `$XDG_CONFIG_HOME/@webpilot/onboarding/custom-formatters/`) |
+
+Add an entry to `custom-formatters/manifest.json` under `platforms`:
+
+```json
+{
+  "version": "1",
+  "platforms": {
+    "mysite": {
+      "match": "mysite.com",
+      "entry": "mysite/formatter.js"
+    }
+  }
+}
+```
+
+Then call `webpilot_get_formatter_info` (or restart the daemon) to pick up the change. **Custom formatters do not require a signature** — signing only gates the remote auto-update channel, not files you place locally. They also persist across upgrades and are never overwritten by the auto-updater. See [`accessibility-tree-formatters/DEV_GUIDE.md`](accessibility-tree-formatters/DEV_GUIDE.md) for the formatter API + workflow shape.
 
 Full architecture index: [`docs/INDEX.md`](docs/INDEX.md).
 
