@@ -91,6 +91,15 @@ function init() {
   const existed = fs.existsSync(dbPath);
   console.log(`[db] opening ${dbPath} (existed=${existed})`);
 
+  // Best-effort tighten perms on the dataDir itself BEFORE opening the DB,
+  // so any file better-sqlite3 creates inherits a private parent.
+  // On POSIX this is 0o700 (owner rwx, group/other none). On Windows
+  // fs.chmodSync only maps the broad read-only bit — Windows ACLs would be
+  // strictly correct, but adding that without a native binding is impossible.
+  // The owner-only intent is honoured by most NTFS volumes where the user
+  // profile dir already inherits restrictive ACLs from %APPDATA%.
+  try { fs.chmodSync(dataDir, 0o700); } catch (_e) { /* non-fatal on Windows */ }
+
   // In pkg-binary mode, the native .node binding sits as a loose file next
   // to the exe (see getBundledBindingPath above). Pass it explicitly via
   // the `nativeBinding` option — auto-discovery via `require('bindings')`
@@ -130,6 +139,18 @@ function init() {
   } catch (e) {
     console.error('[db] schema exec failed:', e && e.message);
     throw e;
+  }
+
+  // Restrict perms on the DB file (and its WAL/SHM sidecars when they exist).
+  // The DB contains api_key_hash columns, optional plaintext apiKey blobs in
+  // pairings.metadata_json (until consumed), and the `config` table — none of
+  // it should be readable by other local users. Best-effort on Windows where
+  // fs.chmodSync only maps the read-only attribute; on POSIX this is 0o600.
+  // Done after opening so the file definitely exists.
+  for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
+    try {
+      if (fs.existsSync(f)) fs.chmodSync(f, 0o600);
+    } catch (_e) { /* non-fatal */ }
   }
 
   _initialized = true;

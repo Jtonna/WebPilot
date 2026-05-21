@@ -21,24 +21,127 @@ const TAB_ID_TOOLS = new Set([
 // knows the tab is going away on its own.
 const AUTO_CLOSE_DELAY_MS = 5000;
 
+// Max script body — 5 MB is more than any reasonable injectable bundle and
+// keeps a malicious upstream from streaming until the daemon OOMs.
+const MAX_SCRIPT_FETCH_BYTES = 5 * 1024 * 1024;
+
+/**
+ * SSRF guard for browser_inject_script. The MCP server (running on the
+ * user's machine) is about to fetch an arbitrary URL on behalf of a paired
+ * agent. Without restrictions, an attacker that controls an agent (paired
+ * via the normal flow but later misused) could ask the daemon to fetch
+ * private addresses — 127.0.0.1, 10/8, 169.254/16 (cloud metadata
+ * endpoints, file shares, internal admin panels). Block them.
+ *
+ * We resolve the hostname against the literal forms only — DNS rebinding
+ * is a more involved attack the in-process `fetch` does not naturally
+ * defend against, and the realistic threat (a hostname that resolves to
+ * a private range) is the common case. A fuller defence would require a
+ * pinned DNS lookup + bracketed-IP fetch; that's a larger change and is
+ * captured in the audit's "Strategic flags".
+ *
+ * See QOL security audit S6.
+ */
+function _isPrivateOrLoopbackHost(hostname) {
+  if (typeof hostname !== 'string' || hostname.length === 0) return true;
+  const h = hostname.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  // Strip IPv6 brackets if present.
+  const bare = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
+  // IPv4 literal checks.
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(bare);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    return false;
+  }
+  // IPv6 literal checks (best-effort).
+  if (bare.includes(':')) {
+    if (bare === '::' || bare === '::1') return true;
+    if (bare.startsWith('fc') || bare.startsWith('fd')) return true; // ULA
+    if (bare.startsWith('fe80:') || bare.startsWith('fe80::')) return true; // link-local
+    return false;
+  }
+  return false;
+}
+
 async function fetchScriptFromUrl(url) {
   const parsedUrl = new URL(url);
   if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
     throw new Error(`Unsupported protocol: ${parsedUrl.protocol}`);
+  }
+  if (_isPrivateOrLoopbackHost(parsedUrl.hostname)) {
+    console.log(
+      `[mcp:inject_script] refusing fetch to private/loopback host "${parsedUrl.hostname}"`
+    );
+    throw new Error(
+      `Refusing to fetch script from private / loopback host "${parsedUrl.hostname}". ` +
+        `browser_inject_script may only fetch from public URLs.`
+    );
   }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
 
+    // Re-validate the final URL after redirects — `fetch` will happily
+    // follow a redirect into 127.0.0.1 unless we re-check.
+    try {
+      const finalUrl = new URL(response.url);
+      if (_isPrivateOrLoopbackHost(finalUrl.hostname)) {
+        throw new Error(
+          `Script fetch followed a redirect into private host "${finalUrl.hostname}"; refusing.`
+        );
+      }
+    } catch (e) {
+      // If response.url isn't parseable, fall through — the read below
+      // bounded by size still applies.
+    }
+
+    // Read with a hard byte cap so a malicious server can't stream
+    // gigabytes into the daemon.
+    const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+    if (reader) {
+      const decoder = new TextDecoder('utf-8');
+      let total = 0;
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_SCRIPT_FETCH_BYTES) {
+          try { await reader.cancel(); } catch (_e) { /* ignore */ }
+          throw new Error(
+            `Script exceeded ${MAX_SCRIPT_FETCH_BYTES} bytes — refusing to inject`
+          );
+        }
+        buf += decoder.decode(value, { stream: true });
+      }
+      buf += decoder.decode();
+      if (!buf.trim()) {
+        throw new Error('Fetched script is empty');
+      }
+      return buf;
+    }
+    // Fallback path (non-streaming fetch impl): read text + check size.
     const content = await response.text();
+    if (content.length > MAX_SCRIPT_FETCH_BYTES) {
+      throw new Error(
+        `Script exceeded ${MAX_SCRIPT_FETCH_BYTES} bytes — refusing to inject`
+      );
+    }
     if (!content?.trim()) {
       throw new Error('Fetched script is empty');
     }

@@ -10,6 +10,12 @@ class SizeManagedWriter {
     this.logPath = logPath;
     // Truncate on startup (fresh each run)
     fs.writeFileSync(logPath, '', 'utf8');
+    // Logs include API key prefixes (e.g. "key=abc12345...") for support
+    // triage. Even an 8-char prefix is sensitive — restrict perms so other
+    // local users cannot tail it. Best-effort on Windows (NTFS ACLs would
+    // be the strictly correct path; fs.chmodSync only maps the read-only
+    // bit there). On POSIX this is owner-only read/write.
+    try { fs.chmodSync(logPath, 0o600); } catch (_e) { /* non-fatal */ }
     this.bytesWritten = 0;
   }
 
@@ -45,6 +51,8 @@ class SizeManagedWriter {
       const tmpPath = this.logPath + '.tmp';
       fs.writeFileSync(tmpPath, retained, 'utf8');
       fs.renameSync(tmpPath, this.logPath);
+      // Re-assert restrictive perms after rotation (rename may inherit umask).
+      try { fs.chmodSync(this.logPath, 0o600); } catch (_e) { /* non-fatal */ }
 
       this.bytesWritten = Buffer.byteLength(retained, 'utf8');
     } catch (e) {

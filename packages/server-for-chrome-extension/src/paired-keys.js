@@ -39,8 +39,11 @@
  */
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const dbModule = require('./db/connection');
+const { getDataDir } = require('./service/paths');
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants (preserved from the JSON-backed implementation so behavior is
@@ -63,31 +66,110 @@ const UNUSED_KEY_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48h
 let _pepperCache = null;
 
 /**
- * Read the API-key pepper from the `config` table. If missing, generate a
- * fresh 32-byte random pepper, persist it, and return the new value. The
- * pepper is process-local cache after first access — it never changes for
- * the life of the database.
+ * Resolve the sidecar pepper file path: `<dataDir>/secret/api-key.pepper`.
  *
- * Exposed for tests (so they can pre-seed the pepper if they want a
- * deterministic hash); production callers should just use `hashApiKey()`.
+ * Storing the pepper in a dedicated 0o600 file (rather than in the same
+ * `webpilot.db` it peppers) is defence-in-depth against incidental DB
+ * disclosure — a leaked DB file alone no longer yields the pepper an
+ * attacker would need to brute-force the api_key_hash column. The proper
+ * cross-platform answer is OS-native secret storage (DPAPI / Keychain /
+ * libsecret via node-keytar) — see flagged finding in the audit report.
+ */
+function getPepperFilePath() {
+  return path.join(getDataDir(), 'secret', 'api-key.pepper');
+}
+
+/**
+ * Best-effort tighten the perms on the secret dir and the pepper file.
+ * POSIX: 0o700 / 0o600. Windows: chmodSync only maps the read-only bit,
+ * so this is informational on NTFS — the inherited %APPDATA% ACLs are
+ * already owner-restricted in practice.
+ */
+function _restrictSecretPerms(secretDir, secretFile) {
+  try { fs.chmodSync(secretDir, 0o700); } catch (_e) { /* non-fatal */ }
+  try { fs.chmodSync(secretFile, 0o600); } catch (_e) { /* non-fatal */ }
+}
+
+/**
+ * Read or create the API-key pepper. Storage layout:
+ *
+ *   - PRIMARY: `<dataDir>/secret/api-key.pepper` (32 random bytes, hex).
+ *     Written 0o600 on first daemon boot, never committed, never logged.
+ *   - LEGACY: `config.api_key_pepper` row inside `webpilot.db`. Older
+ *     installs minted the pepper there; we keep reading it as a fallback
+ *     so existing api_key_hash rows continue to validate. When we read
+ *     from the legacy row we ALSO write it out to the sidecar file so
+ *     subsequent boots use the hardened path.
+ *
+ * The pepper is process-cached after first access — it never changes for
+ * the life of the install. Exposed for tests; production callers should
+ * just use hashApiKey().
  *
  * @returns {string} hex-encoded pepper
  */
 function getOrCreateApiKeyPepper() {
   if (_pepperCache) return _pepperCache;
+
+  const pepperFile = getPepperFilePath();
+  const secretDir = path.dirname(pepperFile);
+
+  // 1) Sidecar file path — preferred.
+  try {
+    if (fs.existsSync(pepperFile)) {
+      const raw = fs.readFileSync(pepperFile, 'utf8').trim();
+      if (raw.length > 0) {
+        _pepperCache = raw;
+        // Re-assert perms in case they drifted (e.g. user copied the dir).
+        _restrictSecretPerms(secretDir, pepperFile);
+        return _pepperCache;
+      }
+    }
+  } catch (e) {
+    console.error('[paired-keys] sidecar pepper read failed, falling back to DB: ' + (e && e.message));
+  }
+
+  // 2) Legacy: pepper in the `config` table. Honour it for backwards-compat,
+  //    then promote to the sidecar file so future boots skip this branch.
   const db = dbModule.getDb();
   const row = db.prepare('SELECT value FROM config WHERE key = ?').get('api_key_pepper');
   if (row && typeof row.value === 'string' && row.value.length > 0) {
     _pepperCache = row.value;
+    try {
+      fs.mkdirSync(secretDir, { recursive: true });
+      fs.writeFileSync(pepperFile, _pepperCache, { encoding: 'utf8', mode: 0o600 });
+      _restrictSecretPerms(secretDir, pepperFile);
+      console.log('[paired-keys] promoted legacy pepper from config table to ' + pepperFile);
+    } catch (e) {
+      // Non-fatal: the legacy DB-stored pepper still works for this process.
+      console.error('[paired-keys] could not write sidecar pepper file: ' + (e && e.message));
+    }
     return _pepperCache;
   }
+
+  // 3) First-boot mint. Generate 32 random bytes and write the sidecar with
+  //    restrictive perms. Do NOT also write to the `config` table — new
+  //    installs keep the pepper out of the DB entirely.
   const pepper = crypto.randomBytes(32).toString('hex');
-  const nowIso = new Date().toISOString();
-  db.prepare(
-    'INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?) ' +
-      'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at'
-  ).run('api_key_pepper', pepper, nowIso);
-  console.log('[paired-keys] minted new api_key_pepper in config table');
+  try {
+    fs.mkdirSync(secretDir, { recursive: true });
+    fs.writeFileSync(pepperFile, pepper, { encoding: 'utf8', mode: 0o600 });
+    _restrictSecretPerms(secretDir, pepperFile);
+    console.log('[paired-keys] minted new api_key_pepper at ' + pepperFile);
+  } catch (e) {
+    // Sidecar write failed (e.g. read-only volume in a CI sandbox). Fall
+    // back to the DB so the daemon can still operate. This is a degraded
+    // mode — log loudly.
+    console.error(
+      '[paired-keys] sidecar pepper write FAILED (' + (e && e.message) + ') — ' +
+        'falling back to storing pepper in webpilot.db config table. ' +
+        'Investigate dataDir perms.'
+    );
+    const nowIso = new Date().toISOString();
+    db.prepare(
+      'INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?) ' +
+        'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at'
+    ).run('api_key_pepper', pepper, nowIso);
+  }
   _pepperCache = pepper;
   return _pepperCache;
 }
@@ -492,7 +574,38 @@ function checkPairingStatus(pairingId) {
   const entry = rowToPairingEntry(row);
   console.log(`[pairing:checkPairingStatus] pairingId=${pairingId} status=${entry.status}`);
   const result = { status: entry.status };
-  if (entry.apiKey) result.apiKey = entry.apiKey;
+  if (entry.apiKey) {
+    result.apiKey = entry.apiKey;
+    // SECURITY: the plaintext apiKey is stored in pairings.metadata_json so the
+    // polling agent can retrieve it after approval. Once we have handed it back
+    // to the caller, clear it from the row so the plaintext does not persist
+    // at rest indefinitely. Subsequent polls for the same pairingId will see
+    // status='approved' with no apiKey field — the agent is expected to have
+    // stored the key on its first successful read. The agents row (api_key_hash
+    // only) is the durable record.
+    try {
+      const db = dbModule.getDb();
+      // Preserve profileId / source / etc. — only strip apiKey.
+      let meta = {};
+      try { meta = JSON.parse(row.metadata_json) || {}; } catch (_e) { meta = {}; }
+      if (typeof meta === 'object' && meta !== null && 'apiKey' in meta) {
+        delete meta.apiKey;
+        db.prepare('UPDATE pairings SET metadata_json = ? WHERE id = ?')
+          .run(JSON.stringify(meta), row.id);
+        console.log(
+          `[pairing:checkPairingStatus] cleared plaintext apiKey from pairings.metadata_json ` +
+            `for pairingId=${pairingId} (one-time retrieval consumed)`
+        );
+      }
+    } catch (e) {
+      // Non-fatal — the caller already has the key; log so we know if the
+      // cleanup is silently failing in production.
+      console.error(
+        `[pairing:checkPairingStatus] failed to clear plaintext apiKey for pairingId=${pairingId}: ` +
+          (e && e.message)
+      );
+    }
+  }
   return result;
 }
 

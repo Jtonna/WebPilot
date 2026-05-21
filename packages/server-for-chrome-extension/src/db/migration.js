@@ -85,6 +85,11 @@ function archiveImported(sourcePath) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = sourcePath + '.imported.' + ts;
     fs.renameSync(sourcePath, dest);
+    // SECURITY: paired-keys.json contains plaintext API keys (legacy format).
+    // After import the .imported.<TS> archive still holds those plaintext
+    // keys at rest. Tighten perms so other local users cannot read them.
+    // Best-effort on Windows where fs.chmodSync only maps the read-only bit.
+    try { fs.chmodSync(dest, 0o600); } catch (_e) { /* non-fatal */ }
     console.log(`[migration] archived ${sourcePath} → ${dest}`);
     return dest;
   } catch (e) {

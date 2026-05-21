@@ -407,7 +407,25 @@ function connectWebSocket() {
 
     wsConnection.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data);
+        // Defensive: cap frame size and reject non-object payloads before
+        // dispatch. Even though the WS is gated server-side to localhost
+        // (or LAN in --network), a misbehaving / hijacked server should not
+        // be able to crash the service worker with a malformed frame. See
+        // QOL security audit X1.
+        const raw = typeof event.data === 'string' ? event.data : '';
+        if (!raw || raw.length > 8 * 1024 * 1024) {
+          console.log('[ws:msg] dropping oversized or empty frame');
+          return;
+        }
+        const message = JSON.parse(raw);
+        if (!message || typeof message !== 'object' || Array.isArray(message)) {
+          console.log('[ws:msg] dropping non-object frame');
+          return;
+        }
+        if (typeof message.type !== 'string' || message.type.length === 0) {
+          console.log('[ws:msg] dropping frame with missing/invalid type');
+          return;
+        }
         if (message.type === 'pong') return;
 
         // Handle non-command messages from server

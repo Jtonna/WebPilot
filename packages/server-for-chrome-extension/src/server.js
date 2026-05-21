@@ -367,7 +367,20 @@ if (IS_DEV_MODE) {
   );
 }
 
-function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
+// Defense-in-depth helper for the dev-mode auth bypass. A bypass is only
+// safe when (a) the operator explicitly opted into dev mode AND (b) the
+// daemon is bound to loopback only — i.e. there is no LAN-reachable
+// surface. Network-mode binds the extension WS to 0.0.0.0; in that case
+// every dev-mode-bypass path must refuse to loosen its gate, because a
+// remote attacker could otherwise reach UI / mutating endpoints via the
+// network-mode listener simply because the operator left WEBPILOT_DEV set.
+// See QOL security audit S4.
+function _isDevBypassSafe(hostBinding) {
+  if (!IS_DEV_MODE) return false;
+  return hostBinding === '127.0.0.1' || hostBinding === 'localhost';
+}
+
+function makeUiAuth(hostBinding /* '127.0.0.1' | '0.0.0.0' */) {
   return function uiAuth(req, res, next) {
     const remote = req.socket && req.socket.remoteAddress;
     const isLocal =
@@ -377,9 +390,16 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
     if (isLocal) {
       return next();
     }
-    if (IS_DEV_MODE) {
-      console.log(`[ui-auth] DEV MODE — allowing non-local ${req.method} ${req.url} from ${remote}`);
+    // Dev-mode bypass is intentionally NEVER honored when the server is bound
+    // to 0.0.0.0 — that would convert a developer-convenience opt-in into a
+    // remote auth-bypass. See QOL security audit S4.
+    if (_isDevBypassSafe(hostBinding)) {
+      console.log(`[ui-auth] DEV MODE (loopback bind) — allowing non-local ${req.method} ${req.url} from ${remote}`);
+      try { res.setHeader('X-WebPilot-Dev-Bypass', '1'); } catch (_e) { /* ignore */ }
       return next();
+    }
+    if (IS_DEV_MODE && hostBinding === '0.0.0.0') {
+      console.log(`[ui-auth] DEV MODE present but daemon is network-bound — refusing bypass for non-local ${req.method} ${req.url} from ${remote}`);
     }
     console.log(`[ui-auth] rejecting non-local request to ${req.method} ${req.url} from ${remote}`);
     return res.status(403).json({ error: 'Forbidden: web UI is localhost-only' });
@@ -399,7 +419,7 @@ function makeUiAuth(/* apiKey unused: see localhost-only contract above */) {
  * use this — if we ever loosen UI auth to allow read-only network access, those
  * endpoints stay reachable while mutating ones stay loopback-only.
  */
-function makeMutatingUiAuth() {
+function makeMutatingUiAuth(hostBinding) {
   return function mutatingUiAuth(req, res, next) {
     const remote = (req.socket && req.socket.remoteAddress) || '';
     const isLocal =
@@ -407,9 +427,13 @@ function makeMutatingUiAuth() {
       remote === '::1' ||
       remote === '::ffff:127.0.0.1';
     if (isLocal) return next();
-    if (IS_DEV_MODE) {
-      console.log(`[ui-auth] DEV MODE — allowing non-local MUTATING ${req.method} ${req.url} from ${remote}`);
+    if (_isDevBypassSafe(hostBinding)) {
+      console.log(`[ui-auth] DEV MODE (loopback bind) — allowing non-local MUTATING ${req.method} ${req.url} from ${remote}`);
+      try { res.setHeader('X-WebPilot-Dev-Bypass', '1'); } catch (_e) { /* ignore */ }
       return next();
+    }
+    if (IS_DEV_MODE && hostBinding === '0.0.0.0') {
+      console.log(`[ui-auth] DEV MODE present but daemon is network-bound — refusing MUTATING bypass for non-local ${req.method} ${req.url} from ${remote}`);
     }
     console.log(`[ui-auth] rejecting non-local mutating request to ${req.method} ${req.url} from ${remote}`);
     return res.status(403).json({ error: 'Forbidden: mutating UI endpoints are localhost-only' });
@@ -417,12 +441,12 @@ function makeMutatingUiAuth() {
 }
 
 function mountWebUiRoutes(app, deps) {
-  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port, broadcastUiEvent } = deps;
+  const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port, broadcastUiEvent, hostBinding } = deps;
   // Web UI is localhost-only — no API key involved. See makeUiAuth().
-  const auth = makeUiAuth();
+  const auth = makeUiAuth(hostBinding);
   // Extra localhost gate layered onto every mutating admin endpoint. See
   // makeMutatingUiAuth() for the rationale.
-  const mutatingAuth = makeMutatingUiAuth();
+  const mutatingAuth = makeMutatingUiAuth(hostBinding);
 
   app.get('/api/ui/status', auth, async (req, res) => {
     try {
@@ -1446,8 +1470,31 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   }
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  // Tight CORS: the web UI is same-origin (served from /ui on this very
+  // daemon) and the MCP / popup endpoints are designed for local
+  // (server-side) callers. A wide-open `cors()` adds no value and lets
+  // any web page in the user's browser issue preflight + simple GETs.
+  // Restrict to loopback origins; non-CORS callers (server-side MCP) are
+  // unaffected because they don't send Origin.
+  app.use(
+    cors({
+      origin: (incomingOrigin, cb) => {
+        if (!incomingOrigin) return cb(null, true); // no-origin (server-side) — allow
+        const allowed = [
+          `http://localhost:${port}`,
+          `http://127.0.0.1:${port}`,
+        ];
+        if (allowed.includes(incomingOrigin)) return cb(null, true);
+        return cb(null, false);
+      },
+      credentials: false,
+    })
+  );
+  // Cap JSON bodies. The largest legitimate payload is a workflow chain
+  // (browser_request_chain) with embedded JS — 1 MB is generous. Default
+  // express.json() limit is 100 KB which is too small for chain payloads
+  // but the implicit reliance on the default is also footgun-y.
+  app.use(express.json({ limit: '1mb' }));
 
   const server = http.createServer(app);
 
@@ -1484,14 +1531,36 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         remoteAddr === '127.0.0.1' ||
         remoteAddr === '::1' ||
         remoteAddr === '::ffff:127.0.0.1';
-      if (!isLocal && !IS_DEV_MODE) {
+      // Origin gate (QOL security audit S2). The web UI is served at
+      // /ui from this same daemon, so legitimate UI WS upgrades carry
+      // Origin: http://localhost:<port> or http://127.0.0.1:<port>.
+      // Any other Origin is a webpage trying to ride the loopback bind
+      // — reject without socket allocation.
+      const uiOrigin = (request.headers && request.headers.origin) || '';
+      if (uiOrigin) {
+        const allowedUiOrigins = [
+          `http://localhost:${port}`,
+          `http://127.0.0.1:${port}`,
+        ];
+        if (!allowedUiOrigins.includes(uiOrigin)) {
+          console.log(`[ui-ws] rejecting UI WS upgrade with disallowed Origin "${uiOrigin}"`);
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+      }
+      const devSafe = _isDevBypassSafe(host);
+      if (!isLocal && !devSafe) {
+        if (IS_DEV_MODE && host === '0.0.0.0') {
+          console.log(`[ui-ws] DEV MODE present but daemon is network-bound — refusing UI WS upgrade from ${remoteAddr}`);
+        }
         console.log(`[ui-ws] rejecting non-local UI WS upgrade from ${remoteAddr}`);
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
       }
-      if (!isLocal && IS_DEV_MODE) {
-        console.log(`[ui-ws] DEV MODE — allowing non-local UI WS upgrade from ${remoteAddr}`);
+      if (!isLocal && devSafe) {
+        console.log(`[ui-ws] DEV MODE (loopback bind) — allowing non-local UI WS upgrade from ${remoteAddr}`);
       }
       uiWss.handleUpgrade(request, socket, head, (ws) => {
         uiWss.emit('connection', ws, request);
@@ -1507,10 +1576,36 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // `mcp-handler.js`) is the security boundary for tool calls. The
     // extension_installs row binds (installId -> profileId), which the
     // bridge uses for routing only.
+    //
+    // Origin gate (QOL security audit S1): browser tabs running arbitrary web
+    // pages can open WebSockets to 127.0.0.1:3456. Their `Origin` is the
+    // page's http(s) origin. Legitimate WebPilot connections come from the
+    // extension's service worker, which sends `Origin: chrome-extension://<id>`
+    // or no Origin at all (Node ws clients, curl, etc.). Reject anything
+    // that smells like a webpage origin — even though installId-only
+    // upgrades grant zero agent power, gating early shrinks the attack
+    // surface (no socket allocation, no per-frame parse, no possible
+    // confused-deputy attack via routing).
+    const originHeader = (request.headers && request.headers.origin) || '';
+    if (originHeader && /^https?:\/\//i.test(originHeader)) {
+      console.log(`[extension-bridge] WS upgrade rejected — disallowed web Origin "${originHeader}"`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
     const installId = url.searchParams.get('installId');
     if (typeof installId !== 'string' || installId.length === 0) {
       console.log('[extension-bridge] WS upgrade rejected — missing installId');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    // Cap installId length defensively — UUIDs are 36 chars; 256 is a sane
+    // upper bound that still allows future format changes without truncation.
+    if (installId.length > 256) {
+      console.log(`[extension-bridge] WS upgrade rejected — installId exceeds max length (${installId.length})`);
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
       return;
     }
@@ -2012,13 +2107,30 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // Extract installId from the request and resolve it to a profileId.
     // Returns { installId, profileId } on success, or null on failure.
     // Supports X-Install-Id header (preferred) or `installId` query param.
+    //
+    // Origin gate (QOL security audit S3): the popup endpoints are designed
+    // to be called from the extension popup (origin chrome-extension://…).
+    // If a request carries a webpage Origin (http(s)://…), refuse it — that
+    // would be a malicious site running in any Chrome profile trying to
+    // reach the loopback API. Server-side callers (no Origin header) and
+    // chrome-extension:// origins are allowed through.
     function _authPopup(req) {
+      const origin = (req.headers && req.headers.origin) || '';
+      if (origin && /^https?:\/\//i.test(origin)) {
+        console.log(`[popup-auth] rejecting — disallowed web Origin "${origin}"`);
+        return null;
+      }
       const installId =
         req.headers['x-install-id'] ||
         req.headers['X-Install-Id'] ||
         (req.query && req.query.installId) ||
         null;
       if (typeof installId !== 'string' || installId.length === 0) return null;
+      // Cap installId length defensively.
+      if (installId.length > 256) {
+        console.log(`[popup-auth] rejecting — installId exceeds max length (${installId.length})`);
+        return null;
+      }
       let profileId = null;
       try {
         profileId = extensionInstalls.getProfileForInstall(installId);
@@ -2061,6 +2173,12 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
       const tabUrlRaw = (req.query && req.query.tabUrl) || null;
       let currentTab = null;
+      // 8 KB is well above any real URL; reject anything longer rather than
+      // pushing oversized inputs through URL/normalizeDomain.
+      if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 8192) {
+        console.log(`[popup:state] rejecting oversized tabUrl (${tabUrlRaw.length} bytes)`);
+        return res.status(400).json({ error: 'tabUrl too long' });
+      }
       if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 0) {
         const domain = sitePolicyPopup.normalizeDomain(tabUrlRaw);
         if (domain) {
@@ -2105,6 +2223,12 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
       if (action !== 'block' && action !== 'allow') {
         return res.status(400).json({ error: "action must be 'block' or 'allow'" });
       }
+      // Cap raw domain length before normalization — domain RFC max is 253;
+      // 512 leaves plenty of slack for URL-shaped inputs without exposing
+      // the URL parser to multi-megabyte strings.
+      if (typeof domainRaw === 'string' && domainRaw.length > 512) {
+        return res.status(400).json({ error: 'domain too long' });
+      }
       const normalized = sitePolicyPopup.normalizeDomain(domainRaw);
       if (!normalized) {
         return res.status(400).json({ error: 'invalid domain' });
@@ -2143,6 +2267,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     server,
     port,
     broadcastUiEvent,
+    hostBinding: host,
     setNetworkMode: ({ enabled }) => {
       // Persist + restart-spawn approach (Section 4.6).
       // P2 phase 7: write to the DB (`config.network_enabled`) instead of the
