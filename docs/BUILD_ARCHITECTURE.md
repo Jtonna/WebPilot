@@ -100,7 +100,6 @@ directories:
   output: ../../dist
 files:
   - electron/**/*
-  - out/**/*
   - package.json
 extraResources:
   - from: ../server-for-chrome-extension/dist   # → resources/server/
@@ -335,7 +334,7 @@ Defined in the root `package.json`:
 | `dev` | `npm run dev` | One-command dev mode — runs the MCP server and the Next.js dev server concurrently with hot reload. `/ui/*` requests are proxied from the MCP server to `http://localhost:3100`. |
 | `dev:server` | `npm run dev:server` | Starts only the MCP server in dev mode (sets `WEBPILOT_DEV=1` and `--foreground`). |
 | `dev:web` | `npm run dev:web` | Starts only the Next.js dev server (port 3100). |
-| `dev:onboarding` | `npm run dev:onboarding` | Starts the Electron/Next.js onboarding UI in dev mode. |
+| `dev:onboarding` | `npm run dev:onboarding` | Launches the Electron shell. Pair with `npm run dev` (or `dev:server`) so the MCP server is up and `/ui/` is reachable. |
 | `build:web` | `npm run build:web` | Runs `next build` in `packages/server-web-ui` to produce the static export under `out/`. |
 | `start` | `npm run start` | Builds the web UI (`build:web`) and starts the MCP server in production mode — serves the UI from `packages/server-web-ui/out/`. |
 | `dist:win` | `npm run dist:win` | Builds the server binary (Windows) then the Electron installer. |

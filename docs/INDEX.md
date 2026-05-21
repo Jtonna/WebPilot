@@ -10,7 +10,7 @@ WebPilot documentation covering system architecture, development guides, and API
 - [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.
 - [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
 - [CHROME_LINUX.md](CHROME_LINUX.md) -- Linux-side Chrome integration notes (same scope as the macOS doc).
-- [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: status dashboard, onboarding placeholder text, preload IPC bridge, and build scripts. For developers working on the installer and management UI.
+- [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: splash window, server lifecycle, tray, window swap to the server-hosted `/ui/`, and build scripts. For developers working on the installer and management UI.
 
 ## Guides
 

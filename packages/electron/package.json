@@ -6,25 +6,17 @@
   "description": "WebPilot onboarding UI",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"next dev --port 3000\" \"wait-on http://localhost:3000 && electron .\"",
-    "build:next": "next build",
+    "dev": "electron .",
     "dist": "electron-builder --publish never",
-    "dist:win": "npm run build:next && electron-builder --win --publish never",
-    "dist:mac": "npm run build:next && electron-builder --mac --publish never",
-    "dist:linux": "npm run build:next && electron-builder --linux --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
     "generate:icons": "node scripts/generate-icons.js",
     "start": "electron ."
   },
-  "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
   "devDependencies": {
-    "concurrently": "^9.0.0",
     "electron": "33.4.11",
-    "electron-builder": "^25.0.0",
-    "wait-on": "^8.0.0"
+    "electron-builder": "^25.0.0"
   },
   "overrides": {
     "axios": "1.14.0"

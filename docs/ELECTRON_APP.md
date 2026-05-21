@@ -58,13 +58,11 @@ This path sits **outside** the install directory that electron-builder wipes on 
 
 ### Status & onboarding
 
-There is no Electron-side wizard or status pane in the active runtime — the window is pointed at the server's `/ui/`, which owns extension sideloading guidance, profile setup, pairing, configuration, and health surfacing. A legacy Next.js `app/page.js` (status indicators driven by `window.webpilot.*`) and a legacy `electron/preload.js` IPC bridge still exist on disk but are **not** loaded by `main.js`: `BrowserWindow` is created with no `preload`, `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`. They're kept for now as a follow-up cleanup in case a future Electron-only affordance wants them back.
-
-<!-- TODO(founder): decide whether to delete the dormant `app/page.js` + `electron/preload.js` or wire them back in for an Electron-native status surface. -->
+There is no Electron-side wizard or status pane in the active runtime — the window is pointed at the server's `/ui/`, which owns extension sideloading guidance, profile setup, pairing, configuration, and health surfacing. The earlier Next.js `app/page.js` status pane and the `electron/preload.js` IPC bridge have been removed; `BrowserWindow` is created with no `preload`, `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`.
 
 ## Architecture
 
-The app is built with Next.js (`^15.0.0`, React `^19.0.0`) inside Electron `33.4.11`, producing platform-specific installers:
+The app is a thin Electron `33.4.11` shell (no Next.js / React bundle — the renderer loads a static splash, then `loadURL`s the server-hosted `/ui/`), producing platform-specific installers:
 
 | Platform | Installer Format |
 |----------|-----------------|
@@ -89,7 +87,7 @@ Icons are regenerated via `npm run generate:icons` (see `scripts/generate-icons.
 
 ### Security posture
 
-The active `BrowserWindow` runs with `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, and no `preload`. The dashboard is served by the local daemon over `http://127.0.0.1:<port>/ui/`; the renderer has no Node API access. (The legacy `preload.js` on disk did call `fs` / `child_process` directly and would have required `sandbox: false`, but it is not wired up by the current `main.js`.)
+The active `BrowserWindow` runs with `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, and no `preload`. The dashboard is served by the local daemon over `http://127.0.0.1:<port>/ui/`; the renderer has no Node API access.
 
 ### Build scripts
 
@@ -97,16 +95,15 @@ From `packages/electron/package.json`:
 
 | Script | Description |
 |--------|-------------|
-| `dev` | Runs Next.js dev server and Electron concurrently (`concurrently` + `wait-on`). |
-| `build:next` | Static Next.js export. |
+| `dev` | Launches Electron against the local main process. Pair with `npm run dev` at the repo root (or `npm run dev:server`) so the MCP server is up to serve `/ui/`. |
 | `start` | Launches Electron directly. |
 | `dist` | `electron-builder --publish never`. |
-| `dist:win` | Windows build (runs `build:next` first). |
-| `dist:mac` | macOS build (runs `build:next` first). |
-| `dist:linux` | Linux build (runs `build:next` first). |
+| `dist:win` | Windows installer. |
+| `dist:mac` | macOS installer. |
+| `dist:linux` | Linux installer. |
 | `generate:icons` | Regenerates multi-resolution `.ico` + PNG icons under `assets/`. |
 
-Next.js is configured with static export and `assetPrefix: './'` for Electron `file://` compatibility (`next.config.js`).
+There is no Next.js build step inside this package — the renderer's only HTML is `electron/splash.html`, and the dashboard is served by the MCP server at `/ui/`.
 
 Electron-builder output directory is `../../dist`, placing built installers in the monorepo root `dist/` directory rather than inside the electron package.
 
@@ -121,11 +118,8 @@ packages/electron/
     main.js               # Splash + tray + server lifecycle + window swap to /ui/
     splash.html           # Static splash shown before /ui/ is reachable
     splash-logo.png       # Splash artwork
-    preload.js            # Dormant legacy IPC bridge (not wired up by main.js)
-  app/                    # Dormant legacy Next.js status pane (not loaded at runtime)
   assets/                 # icon.ico, logo.png, tray-icon.ico, tray-icon.png
   scripts/generate-icons.js
-  next.config.js          # Static export config with file:// compatibility
   electron-builder.yml    # Installer + extraResources config
 ```
 

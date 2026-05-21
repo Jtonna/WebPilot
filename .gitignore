@@ -66,8 +66,6 @@ packages/server-web-ui/debug-storybook.log
 
 # Additional editor files
 *.code-workspace
-/packages/electron/.next
-/packages/electron/out
 .claude/settings.local.json
 
 # starterpack — these paths must be tracked by git

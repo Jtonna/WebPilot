@@ -126,9 +126,9 @@ function createWindow() {
     title: 'WebPilot',
     webPreferences: {
       // No preload: the splash is pure CSS and the dashboard runs against
-      // its own server; neither needs the legacy onboarding IPC bridge.
-      // preload.js is kept on disk for now in case a future Electron-only
-      // affordance wants it back; tracked as a follow-up cleanup.
+      // its own server; neither needs an IPC bridge. The legacy onboarding
+      // Next.js bundle + preload.js were removed once main.js switched to
+      // the splash -> /ui/ handoff model.
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
