@@ -78,7 +78,9 @@ jobs:
           fi
           KEYFILE="$(mktemp -t webpilot-signing-key.XXXXXX)"
           trap 'rm -f "$KEYFILE"' EXIT
-          printf '%s' "$WEBPILOT_SIGNING_KEY_BASE64" | base64 -d > "$KEYFILE"
+          # Strip whitespace before decoding — GitHub Actions secrets set via
+          # piped stdin can carry trailing CRLF/LF that breaks base64 -d.
+          printf '%s' "$WEBPILOT_SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYFILE"
           chmod 600 "$KEYFILE"
           WEBPILOT_SIGNING_KEY="$KEYFILE" node scripts/sign-formatters.js
 
