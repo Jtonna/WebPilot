@@ -63,8 +63,13 @@ jobs:
             const ref = context.ref;
             const event = context.eventName;
             const isTagPush = event === 'push' && ref.startsWith('refs/tags/v');
-            const isDispatch = event === 'workflow_dispatch';
-            const isCall = event === 'workflow_call';
+            // GitHub reports event_name as the CALLER's event for reusable
+            // workflows, so context.eventName is 'workflow_dispatch' for both
+            // a direct manual dispatch and a release-{patch,minor,major}.yml
+            // dispatcher calling us. Detect the workflow_call case via the
+            // inputs that only the dispatchers set.
+            const isCall = !!process.env.CALL_VERSION && !!process.env.CALL_TAG;
+            const isDispatch = event === 'workflow_dispatch' && !isCall;
 
             function readVersion() {
               return JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
