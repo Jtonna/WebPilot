@@ -72,6 +72,26 @@ async function checkForUpdates() {
     return { updated: false, error: 'signed manifest missing manifest.json hash' };
   }
 
+  // Persist the verified signed manifest + signature to disk. This is the
+  // trust anchor for any future boot-time re-verification: if the on-disk
+  // formatter files don't match these hashes, the daemon knows the cache
+  // has drifted. Writing this on EVERY successful verification (not just
+  // when files update) covers two cases:
+  //   1. Fresh install — bootstrap the signed manifest alongside the
+  //      bundled formatter files.
+  //   2. Upgrader from a pre-signing release — formatters/ has the
+  //      formatter files already but no signed-manifest.json, because
+  //      the previous daemon wrote files without one. This lazy-
+  //      bootstraps the missing trust anchor without requiring a
+  //      version bump.
+  try {
+    fs.mkdirSync(formatterDir, { recursive: true });
+    fs.writeFileSync(path.join(formatterDir, 'signed-manifest.json'), signedBundle.signedText, 'utf8');
+    fs.writeFileSync(path.join(formatterDir, 'signed-manifest.json.sig'), signedBundle.sigText, 'utf8');
+  } catch (err) {
+    console.warn(`[formatter-updater] failed to persist signed manifest: ${err.message}`);
+  }
+
   // Fetch the actual manifest.json and check its hash against the signed bundle.
   let manifestText;
   try {
