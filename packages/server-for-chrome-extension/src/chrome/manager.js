@@ -22,6 +22,9 @@ class ChromeManager {
     this.userDataDir = options.userDataDir || getDefaultUserDataDir();
     this.chromePath = options.chromePath || getDefaultChromePath();
     this.activityWindowSeconds = options.activityWindowSeconds || 30;
+    this.extensionBridge = options.extensionBridge || null;
+    this.connectTimeoutMs = options.connectTimeoutMs || 10000;
+    this.connectPollIntervalMs = options.connectPollIntervalMs || 250;
     this._cache = {
       browserPid: null,
       hasFlag: false,
@@ -196,14 +199,75 @@ class ChromeManager {
 
     const status = await this.getStatus();
 
-    // Case 2: running with flag — treat as sufficient and no-op.
+    // Case 2: running with flag — verify each required profile has a live
+    // extension WS connection. Chrome being alive with the debugger flag is
+    // necessary but NOT sufficient: a profile we need may simply not have a
+    // window open (which means the extension service worker for that profile
+    // isn't loaded and isn't connected to our bridge).
     if (status.running && status.hasFlag) {
-      log('manager', 'ensureReady — already running with flag, no action', { browserPid: status.browserPid });
-      return {
-        action: 'noop',
+      // If the bridge wasn't injected we can't gate on connection — preserve
+      // legacy behavior so we don't regress callers that don't wire it up.
+      if (!this.extensionBridge || typeof this.extensionBridge.isConnected !== 'function') {
+        log('manager', 'ensureReady — already running with flag, no bridge to gate on, no action', { browserPid: status.browserPid });
+        return {
+          action: 'noop',
+          browserPid: status.browserPid,
+          launched: [],
+          reason: 'chrome already running with flag',
+        };
+      }
+
+      const missing = reqProfiles.filter((p) => !this.extensionBridge.isConnected(p));
+      if (missing.length === 0) {
+        log('manager', 'ensureReady — already running with flag, all required profiles connected', {
+          browserPid: status.browserPid,
+          requiredProfiles: reqProfiles,
+        });
+        return {
+          action: 'noop',
+          browserPid: status.browserPid,
+          launched: [],
+          reason: 'chrome already running with flag; all required profiles have extension connected',
+        };
+      }
+
+      log('manager', 'ensureReady — chrome running but some profiles have no extension connection; launching windows', {
         browserPid: status.browserPid,
-        launched: [],
-        reason: 'chrome already running with flag',
+        missing,
+      });
+      const launched = this._launchProfiles(missing);
+
+      const waitResult = await this._waitForProfileConnections(missing, this.connectTimeoutMs);
+      if (waitResult.allConnected) {
+        log('manager', 'ensureReady — launch-additional complete; all missing profiles connected', {
+          launched,
+          waitedMs: waitResult.waitedMs,
+        });
+        return {
+          action: 'launch-additional',
+          browserPid: status.browserPid,
+          launched,
+          reason: 'chrome already running; opened additional window(s) for profile(s) missing extension connection',
+        };
+      }
+
+      const stillMissingList = waitResult.stillMissing.join(', ');
+      error(
+        'manager',
+        'ensureReady — extension never reported in for launched profile(s)',
+        new Error('extension connect timeout: ' + stillMissingList)
+      );
+      return {
+        action: 'partial',
+        browserPid: status.browserPid,
+        launched,
+        stillMissing: waitResult.stillMissing,
+        reason:
+          'profile(s) opened but the WebPilot extension never reported in within ' +
+          Math.round(this.connectTimeoutMs / 1000) +
+          's: ' +
+          stillMissingList +
+          '. Open chrome://extensions on that profile and confirm WebPilot is installed + enabled.',
       };
     }
 
@@ -267,6 +331,41 @@ class ChromeManager {
 
   _uniq(arr) {
     return Array.from(new Set(arr));
+  }
+
+  /**
+   * Poll the extension bridge until every profile in `profiles` reports a
+   * live WS connection, or until timeoutMs elapses. Polls every
+   * connectPollIntervalMs.
+   *
+   * Returns: { allConnected, stillMissing: string[], waitedMs }
+   */
+  async _waitForProfileConnections(profiles, timeoutMs) {
+    const startedAt = Date.now();
+    const interval = this.connectPollIntervalMs;
+
+    const check = () => profiles.filter((p) => !this.extensionBridge.isConnected(p));
+
+    let stillMissing = check();
+    if (stillMissing.length === 0) {
+      return { allConnected: true, stillMissing: [], waitedMs: 0 };
+    }
+
+    log('manager', 'waiting for extension to connect for profiles', { profiles, timeoutMs });
+
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      stillMissing = check();
+      if (stillMissing.length === 0) {
+        const waitedMs = Date.now() - startedAt;
+        log('manager', 'all required profiles connected', { profiles, waitedMs });
+        return { allConnected: true, stillMissing: [], waitedMs };
+      }
+    }
+
+    const waitedMs = Date.now() - startedAt;
+    log('manager', 'wait-for-connect timed out', { stillMissing, waitedMs });
+    return { allConnected: false, stillMissing, waitedMs };
   }
 
   _launchProfiles(profiles) {

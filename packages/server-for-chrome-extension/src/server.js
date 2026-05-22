@@ -1517,7 +1517,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   const server = http.createServer(app);
 
   const extensionBridge = createExtensionBridge();
-  const chromeManager = createChromeManager({ userDataDir: null, log: console.log });
+  const chromeManager = createChromeManager({ userDataDir: null, log: console.log, extensionBridge });
 
   // Web UI WebSocket clients (separate from extension WS — they receive UI events
   // like pairing requests, status changes, etc.)
