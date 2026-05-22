@@ -10,6 +10,12 @@ import { getSession, isProtectedPage } from '../utils/debugger.js';
  */
 export const persistentScripts = new Map();
 
+// Defensive cap on injectable/executable JS bodies. The MCP server already
+// caps fetched scripts at 5 MB; this is the per-extension last-line guard
+// so a misbehaving / hijacked server can't push a payload large enough to
+// exhaust the service-worker heap.
+const MAX_SCRIPT_BYTES = 5 * 1024 * 1024;
+
 /**
  * Inject a script into a tab.
  *
@@ -24,6 +30,12 @@ export async function injectScript(params) {
 
   if (!tab_id) throw new Error('tab_id is required');
   if (!script_content) throw new Error('script_content is required');
+  if (typeof script_content !== 'string') {
+    throw new Error('script_content must be a string');
+  }
+  if (script_content.length > MAX_SCRIPT_BYTES) {
+    throw new Error(`script_content exceeds ${MAX_SCRIPT_BYTES} bytes`);
+  }
 
   const tab = await chrome.tabs.get(tab_id);
   if (isProtectedPage(tab.url)) {
@@ -82,6 +94,10 @@ export async function executeJs(params) {
 
   if (!tab_id) throw new Error('tab_id is required');
   if (!code) throw new Error('code is required');
+  if (typeof code !== 'string') throw new Error('code must be a string');
+  if (code.length > MAX_SCRIPT_BYTES) {
+    throw new Error(`code exceeds ${MAX_SCRIPT_BYTES} bytes`);
+  }
 
   const tab = await chrome.tabs.get(tab_id);
   if (isProtectedPage(tab.url)) {

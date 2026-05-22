@@ -8,7 +8,6 @@ directories:
 
 files:
   - electron/**/*
-  - out/**/*
   - package.json
 
 extraResources:
@@ -16,17 +15,26 @@ extraResources:
     to: server
   - from: ../chrome-extension-unpacked
     to: chrome-extension
+  - from: assets
+    to: assets
+  # PUBKEY.pem is the trust anchor for the formatter / blocklist signed
+  # manifests. Bundled as an extraResource so the daemon process can read
+  # it at process.resourcesPath without going through pkg's snapshot fs.
+  - from: ../../accessibility-tree-formatters/PUBKEY.pem
+    to: server/PUBKEY.pem
 
 win:
   target:
     - target: nsis
       arch: [x64]
+  icon: assets/icon.ico
   artifactName: ${productName}-${version}-windows.${ext}
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: false
   perMachine: false
+  include: build/installer.nsh
 
 mac:
   target:

@@ -1,49 +1,68 @@
-# Electron App (Phase 2)
+# Electron App
 
-Next.js Electron application for installer onboarding and MCP server service management.
+Thin Electron shell that ships the MCP server binary + Chrome extension as `extraResources`, spawns the server as a managed child on launch, and renders the server's own web UI (`/ui/`) inside a `BrowserWindow`. Lives in `packages/electron/`; main entry is `packages/electron/electron/main.js`.
+
+> The management UI for WebPilot lives **inside the server** at `http://localhost:<port>/ui/` (served by the server pkg binary, see `BUILD_ARCHITECTURE.md`). The Electron app exists to install the binary + extension files onto disk, bootstrap the server process, and host its UI in a desktop window with a tray icon. It is not where the management UI is implemented.
 
 ## Purpose
 
-The Electron app provides a graphical interface for setting up and managing WebPilot. On startup, the Electron main process also launches the MCP server as a detached child process (see [Server Launching](#server-launching) below). The Electron app additionally serves as a control panel for service registration and status monitoring.
+The Electron app exists to:
+
+1. Ship the compiled MCP server binary and the Chrome extension files as `extraResources`.
+2. Spawn the server binary as a managed child process on app start (`startServer()` in `electron/main.js`), and tear it down on tray Exit.
+3. Show a splash window, then swap to the server-hosted `/ui/` once `/health` responds.
+4. Install a tray icon (single-instance, hide-to-tray on close) so the daemon keeps running in the background.
+
+The server-hosted web UI is the canonical surface for pairing, profile management, agent administration, and notification preferences. The Electron shell points its window at that UI; it does not implement its own management surface.
 
 ## Features
 
-### Status Dashboard (Partially Implemented)
+### Window lifecycle (splash -> dashboard)
 
-The status dashboard has a basic working implementation in `app/page.js`:
+`createWindow()` opens a `BrowserWindow` (1200x800, dark background, no menu bar, app icon) and loads `electron/splash.html` immediately. In parallel, `waitForServerHealthThenSwap()` polls `server.port` from the data dir and probes `http://127.0.0.1:<port>/health` every 500ms for up to 30 seconds. On success it `loadURL`s `http://127.0.0.1:<port>/ui/`; on timeout it renders an inline error page asking the user to quit from the tray and relaunch.
 
-**Implemented:**
-- Shows server status (Running/Offline/Starting...) with color-coded indicators
-- Shows extension connection status via the `/health` endpoint response
-- Checks extension file availability by looking for `manifest.json`
-- Displays the extension file path
-- Polls the `/health` endpoint every 3 seconds
+External `http(s)` links opened from the dashboard are routed to the user's default browser via `shell.openExternal` (`setWindowOpenHandler`), not navigated inside the window.
 
-**Not yet implemented:**
-- Start/stop/restart controls for the running server (note: preload exposes `installService()` and `uninstallService()` for auto-start registration, but these are not start/stop controls and are not wired to the UI)
-- Active MCP sessions display
+### Tray + single-instance
 
-### Onboarding Wizard (Placeholder Only)
+A single-instance lock (`app.requestSingleInstanceLock()`) ensures a second launch focuses the running window instead of spawning a second server + tray. The tray icon is built from a multi-resolution Windows `.ico` (or PNG on macOS/Linux) and exposes:
 
-The onboarding wizard currently exists only as a placeholder string (`"Onboarding goes here"` in `page.js`). No step-by-step wizard logic exists yet.
+- **Open WebPilot** — restores/shows the window.
+- **Exit** — sets `app.isQuitting`, kills the server child (plus PID-file fallback), and quits.
 
-**Planned (not yet implemented):**
-- Guide users through Chrome extension sideloading (enable Developer Mode, Load unpacked, select extension folder)
-- Display the connection string for pasting into the extension popup
-- Show the MCP config snippet for adding to Claude Code or other MCP clients
-- Verify setup: check that the server is running, extension is connected, and end-to-end communication works
+Closing the window does **not** quit the app — `win.on('close')` preempts the default and hides to tray. Only tray Exit (or `before-quit`) actually quits.
 
-### Configuration Management (Not Yet Implemented)
+### Server lifecycle
 
-- View and update the server port and API key
-- Regenerate the API key
-- Toggle network mode (localhost vs. LAN access)
+`startServer()` resolves the server binary path (dev: monorepo `server-for-chrome-extension/dist/`; packaged: `<resourcesPath>/server/`) and `spawn`s it with:
 
-Note: `getServerPort()` is available in the preload bridge and used by the health check, but no configuration editing UI exists. API key regeneration has no implementation.
+- `windowsHide: true`, `stdio: 'ignore'`.
+- `env.WEBPILOT_NO_OPEN = '1'` — suppresses the server's default-browser pop; the dashboard renders inside our window instead.
+- `env.WEBPILOT_DATA_DIR = app.getPath('userData')` — pins the daemon's data dir to Electron's `userData` path so the shell and the daemon agree.
+
+The child handle is retained (no `detached`/`unref`). `killServer()` runs from tray Exit and `before-quit`, and tries **both** the spawned handle and the PID written to `<dataDir>/server.pid` — the latter covers the case where the server was auto-started outside the Electron shell (e.g. Registry Run key) and the Electron app attached to an already-running daemon.
+
+If the server binary is missing, `startServer()` logs and skips; the window will then fall through to the 30-second timeout and show its error page.
+
+### Single user data directory
+
+User data (DB, paired-key state, formatter config, `server.pid`, `server.port`) lives at `app.getPath('userData')`:
+
+| Platform | Path |
+|----------|------|
+| Windows  | `%APPDATA%\WebPilot` |
+| macOS    | `~/Library/Application Support/WebPilot` |
+| Linux    | `~/.config/WebPilot` (or `$XDG_CONFIG_HOME/WebPilot`) |
+
+This path sits **outside** the install directory that electron-builder wipes on upgrade, so user data survives version bumps. Dev and prod resolve to the same path so the upgrade story can be tested locally. The daemon receives the path via `WEBPILOT_DATA_DIR`.
+
+### Status & onboarding
+
+There is no Electron-side wizard or status pane in the active runtime — the window is pointed at the server's `/ui/`, which owns extension sideloading guidance, profile setup, pairing, configuration, and health surfacing. The earlier Next.js `app/page.js` status pane and the `electron/preload.js` IPC bridge have been removed; `BrowserWindow` is created with no `preload`, `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`.
 
 ## Architecture
 
-The app is built with Next.js (`^15.0.0`, React `^19.0.0`) inside Electron `33.4.11`, producing platform-specific installers:
+The app is a thin Electron `33.4.11` shell (no Next.js / React bundle — the renderer loads a static splash, then `loadURL`s the server-hosted `/ui/`), producing platform-specific installers:
 
 | Platform | Installer Format |
 |----------|-----------------|
@@ -51,63 +70,57 @@ The app is built with Next.js (`^15.0.0`, React `^19.0.0`) inside Electron `33.4
 | macOS    | `.dmg` |
 | Linux    | AppImage |
 
-The installer bundles both the compiled MCP server binary and the unpacked extension files via `extraResources` in `electron-builder.yml`. These are placed in the app's `resources/` subdirectory within the installation directory (e.g., `resources/server/` and `resources/chrome-extension/`). No service registration occurs during installation; the server is launched by the Electron main process each time the app starts (see [Server Launching](#server-launching) below).
+The installer bundles the compiled MCP server binary, the unpacked extension, and the `assets/` directory via `extraResources` in `electron-builder.yml`. These land at `<resourcesPath>/server/`, `<resourcesPath>/chrome-extension/`, and `<resourcesPath>/assets/` respectively. No service registration occurs during installation; the server is launched by the Electron main process on each app start (see [Server lifecycle](#server-lifecycle)).
 
-### Server Launching
+### Assets / icons
 
-The Electron main process spawns the server binary as a detached child process on startup (`main.js`). It uses `detached: true`, `windowsHide: true`, `stdio: 'ignore'` with `child.unref()` so the server outlives the Electron window. If the server binary is not found, it gracefully skips the launch.
+`assets/` (copied to `<resourcesPath>/assets/` in packaged builds) holds:
 
-### Preload IPC Bridge
+| File | Use |
+|------|-----|
+| `icon.ico` | Multi-resolution Windows app icon (`BrowserWindow.icon` on win32, also `win.icon` in `electron-builder.yml`). |
+| `logo.png` | Window icon on macOS / Linux. |
+| `tray-icon.ico` | Multi-resolution Windows tray icon — required because PNGs passed to `Tray()` on Windows get composited onto a white square at non-100% DPI scales. |
+| `tray-icon.png` | RGBA tray icon for macOS / Linux. |
 
-`electron/preload.js` exposes 7 methods to the renderer via `contextBridge.exposeInMainWorld('webpilot', ...)`:
+Icons are regenerated via `npm run generate:icons` (see `scripts/generate-icons.js`).
 
-| Method | Description |
-|--------|-------------|
-| `getServerPort()` | Reads port from `server.port` file in data dir |
-| `getDataDir()` | Returns the data directory path |
-| `getExtensionPath()` | Returns the extension directory path |
-| `isExtensionAvailable()` | Checks if `manifest.json` exists in extension dir |
-| `installService()` | Runs server binary with `--install` flag |
-| `uninstallService()` | Runs server binary with `--uninstall` flag |
-| `getServiceStatus()` | Runs server binary with `--status` flag |
+### Security posture
 
-Paths are passed from the main process to the preload script via `webPreferences.additionalArguments`, not via standard IPC channels.
+The active `BrowserWindow` runs with `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`, and no `preload`. The dashboard is served by the local daemon over `http://127.0.0.1:<port>/ui/`; the renderer has no Node API access.
 
-### Security Note
+### Build scripts
 
-`electron/main.js` sets `sandbox: false` in `webPreferences`. This is required because the preload script directly uses Node.js APIs (`fs`, `child_process`) rather than routing through IPC handlers in the main process. This is a pragmatic choice for the current stage but means the renderer has broader system access than a sandboxed configuration would allow.
-
-### Build Scripts
-
-Full build pipeline in `package.json`:
+From `packages/electron/package.json`:
 
 | Script | Description |
 |--------|-------------|
-| `dev` | Runs Next.js dev server and Electron concurrently (using `concurrently` and `wait-on`) |
-| `build:next` | Static Next.js export |
-| `start` | Launches Electron directly |
-| `dist` | electron-builder (no publish) |
-| `dist:win` | Windows build (runs `build:next` first) |
-| `dist:mac` | macOS build (runs `build:next` first) |
-| `dist:linux` | Linux build (runs `build:next` first) |
+| `dev` | Launches Electron against the local main process. Pair with `npm run dev` at the repo root (or `npm run dev:server`) so the MCP server is up to serve `/ui/`. |
+| `start` | Launches Electron directly. |
+| `dist` | `electron-builder --publish never`. |
+| `dist:win` | Windows installer. |
+| `dist:mac` | macOS installer. |
+| `dist:linux` | Linux installer. |
+| `generate:icons` | Regenerates multi-resolution `.ico` + PNG icons under `assets/`. |
 
-Next.js is configured with static export and `assetPrefix: './'` for Electron `file://` compatibility (`next.config.js`).
+There is no Next.js build step inside this package — the renderer's only HTML is `electron/splash.html`, and the dashboard is served by the MCP server at `/ui/`.
 
-Electron-builder output directory is `../../dist`, placing built installers in the monorepo root `dist/` directory rather than within the electron package.
+Electron-builder output directory is `../../dist`, placing built installers in the monorepo root `dist/` directory rather than inside the electron package.
 
 ## Current Status
 
-The package (`@webpilot/onboarding`, version `0.4.0`) contains a working foundation:
+The package is `@webpilot/onboarding`, version `1.1.8` (unified with the rest of the monorepo on the QOL-Features branch).
 
 ```
 packages/electron/
-  package.json          # Name: @webpilot/onboarding, version 0.4.0
-  app/layout.js         # Next.js layout with metadata
-  app/page.js           # Status dashboard with health polling
-  electron/main.js      # Electron main process with server launching
-  electron/preload.js   # Preload script with IPC bridge (7 methods)
-  next.config.js        # Static export config with file:// compatibility
-  electron-builder.yml  # Full installer configuration
+  package.json            # Name: @webpilot/onboarding
+  electron/
+    main.js               # Splash + tray + server lifecycle + window swap to /ui/
+    splash.html           # Static splash shown before /ui/ is reachable
+    splash-logo.png       # Splash artwork
+  assets/                 # icon.ico, logo.png, tray-icon.ico, tray-icon.png
+  scripts/generate-icons.js
+  electron-builder.yml    # Installer + extraResources config
 ```
 
-The status dashboard is partially functional (health polling and status display work). The onboarding wizard is a placeholder only. Configuration management and API key regeneration are not yet implemented. The MCP server and Chrome extension (Phase 1) are functional independently.
+The Electron shell is intentionally thin: it boots the daemon, hosts the daemon's `/ui/`, and provides a tray. Configuration management, API key regeneration, pairing, and agent administration are all handled inside the server-hosted UI — not in this app.

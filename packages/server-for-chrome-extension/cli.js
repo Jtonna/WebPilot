@@ -18,6 +18,11 @@ const options = {
   version:   { type: 'boolean', default: false },
   // --network is forwarded to the server (index.js reads process.argv directly)
   network:   { type: 'boolean', default: false },
+  // --reimport forces db/migration.js to re-run the JSON→SQLite import even
+  // when the destination tables are already populated. Useful for dev
+  // recovery after the user manually renames `.imported` files back to
+  // `.json`. See `db/migration.js`.
+  reimport:  { type: 'boolean', default: false },
 };
 
 let parsed;
@@ -46,6 +51,12 @@ Options:
   --uninstall    Remove the background service
   --stop         Stop the running server
   --status       Check service status
+  --network      Bind the server to all interfaces (0.0.0.0) instead of localhost.
+                 Same effect as setting NETWORK=1; overridden by
+                 <dataDir>/network.enabled if present.
+  --reimport     Force re-import of legacy JSON stores into SQLite even when
+                 the destination tables are populated. Use after renaming
+                 `.imported` files back to `.json` to recover from a bad import.
   --help         Show this help message
   --version      Show version number
 
@@ -187,6 +198,13 @@ if (flags.network || process.env.NETWORK === '1') {
   process.env.NETWORK = '1';
 }
 
+// Forward --reimport via env var so db/migration.js picks it up regardless of
+// whether it was launched directly (foreground) or via the daemon spawn (the
+// child process inherits the env but not the argv).
+if (flags.reimport) {
+  process.env.WEBPILOT_REIMPORT = '1';
+}
+
 if (flags.foreground || process.env.WEBPILOT_FOREGROUND === '1') {
   // Foreground mode: run server directly in this process
   // Initialize daemon logging
@@ -201,6 +219,21 @@ if (flags.foreground || process.env.WEBPILOT_FOREGROUND === '1') {
 
   // Clean up log writer on exit
   process.on('exit', () => logWriter.close());
+
+  // Auto-open the web UI in the user's default browser. Foreground mode
+  // is the explicit interactive launch, so opening a window is what the
+  // user expects. Skipped in background/daemon mode (different code path
+  // below) and when WEBPILOT_NO_OPEN=1 is set. See Wave 6 H5.
+  try {
+    const { openWebUi } = require('./src/service/open-browser');
+    const fgPort = getPort();
+    // Fire-and-forget: polls /health then spawns the OS open command.
+    openWebUi({ port: fgPort }).catch((err) => {
+      console.log('[browser-open] unexpected error: ' + (err && err.message));
+    });
+  } catch (err) {
+    console.log('[browser-open] failed to schedule auto-open: ' + (err && err.message));
+  }
 
   // Start server
   require('./index.js');

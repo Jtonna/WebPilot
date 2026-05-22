@@ -48,7 +48,27 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the API key, server URL, SSE URL, and network mode, then stores all values in `chrome.storage.local` and establishes the WebSocket connection. If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes (e.g., network mode toggle). The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. Authentication failures (code 1008) clear stored config and restart auto-connect. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+
+### Hello handshake
+
+Once the WebSocket is open the extension sends a `hello` message **before any other traffic** — the server gates all non-hello messages until the handshake completes. The handshake carries:
+
+- `profileId` -- previously-resolved Chrome profile directoryName (e.g. `"Default"`, `"Profile 1"`), if any.
+- `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
+- `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (the `extension_installs` SQLite table) survives config wipes.
+
+The server resolves the binding in five ordered steps (see `server.js` around lines 980-1090):
+
+1. **Direct `profileId`** — if the extension already has a previously-resolved profile in `chrome.storage.local`, the hello message carries it and the server uses it as-is.
+2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
+3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
+4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
+5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the popup, which renders the picker via `profileIdentifyView`. Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
+
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
+
+> Step 4 (inference-by-exclusion) is the path most likely to "auto-bind to the wrong profile" when a user has several profiles whose `Local State` entries lack a `gaia_email`. If that happens, click **Change** on the popup's profile row to force `RESET_PROFILE_ID` and pick explicitly.
 
 ### Message handlers
 
@@ -56,28 +76,24 @@ On startup, the extension auto-connects to `localhost:3456` by fetching `/connec
 
 | Message type | Action |
 |--------------|--------|
-| `pairing_request` | Stores the pending request and forwards it to the popup via `chrome.runtime.sendMessage` so the user can Approve or Deny. |
-| `store_refs` | Push | `tabId`, `refs`, `refContexts` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting |
+| `store_refs` | Stores ref-to-backendDOMNodeId mappings and ancestry context sent by the server after formatting (params: `tabId`, `refs`, `refContexts`). |
 
-#### From popup (chrome.runtime.onMessage)
+#### From popup / other extension contexts (chrome.runtime.onMessage)
+
+The current minimal popup does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates, future programmatic disconnect paths):
 
 | Message type | Action |
 |--------------|--------|
-| `GET_STATUS` | Returns current connection state: `enabled`, `connected`, `connectionStatus`, `connectionError`, `errorType`, `manuallyDisconnected`, and config info (`hasApiKey`, `serverUrl`). |
 | `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
-| `DISCONNECT` | Sets `manuallyDisconnected = true`, then calls `disconnectWebSocket()` which nulls `wsConnection.onclose` before closing to prevent the onclose handler from auto-reconnecting. |
 | `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
-| `FORGET_CONFIG` | Disconnects, clears stored config (`apiKey`, `serverUrl`, `enabled`), resets state, and restarts auto-connect to pick up server again. |
-| `RETRY_AUTO_CONNECT` | Restarts the auto-connect polling loop (fetches `/connect` from the default server URL). |
-| `PAIRING_RESPONSE` | Relays the user's approve/deny decision to the server with the original request ID. Removes the request from the pending list in storage. |
-| `REVOKE_KEY` | Sends a `revoke_key` message to the server over WebSocket with the specified `apiKey`. |
-| `RENAME_AGENT` | Sends a `rename_agent` message to the server over WebSocket with the specified `apiKey` and `newName`. |
-| `GET_PAIRED_AGENTS` | Reads `pairedAgents` from `chrome.storage.local` and returns the list to the popup. |
-| `GET_PENDING_PAIRING` | Reads `pendingPairingRequests` from `chrome.storage.local` and returns them to the popup. |
-| `SET_NETWORK_MODE` | Sends a `set_network_mode` message to the server over WebSocket with the `enabled` flag. The server switches listen address and persists the preference. |
+| `FORGET_CONFIG` | Disconnects, clears stored config (`serverUrl`, `enabled`, legacy `apiKey`), resets state, and restarts auto-connect to pick up server again. `webpilot.installId` is intentionally preserved. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
-| `CHECK_FORMATTER_UPDATES` | Forwards `check_formatter_updates` to server via WebSocket. Relays `formatter_update_result` response back to popup (10s timeout). |
+
+> Removed once the popup was rewritten as a minimal status-and-escape-hatch panel and these runtime messages had no remaining listeners in the extension:
+> `GET_STATUS`, `DISCONNECT`, `RETRY_AUTO_CONNECT`, `RESET_PROFILE_ID`, `SET_PROFILE_ID`, `GET_PROFILE_IDENTITY`, `CHECK_FORMATTER_UPDATES`. Background broadcasts `IDENTIFY_REQUIRED` and `CONNECTION_STATUS_CHANGED` also removed for the same reason.
+>
+> Also removed: `SET_NETWORK_MODE` — network mode is configured via `POST /api/ui/settings/network-mode` from the web UI.
 
 ## Handlers
 
@@ -190,69 +206,81 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The extension popup (`popup/popup.html`, `popup/popup.js`, `popup/popup.css`) uses a tabbed interface with three tabs: **Dashboard**, **Pairing**, and **Settings**. The popup header displays the extension version (from `chrome.runtime.getManifest()`).
+The popup was gutted to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, restricted-mode whitelist) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
 
-### Dashboard Tab
+### What the popup shows
 
-The Dashboard tab shows connection status with three views:
+Four components, top to bottom:
 
-| View | When Shown | Content |
-|------|-----------|---------|
-| Connecting | Connecting to server or auto-connect polling | Shows server URL, error messages if server unreachable |
-| Connected | WebSocket open | Server URL, endpoint display (WS, SSE, network mode), Disconnect button, restricted mode controls with whitelist management |
-| Disconnected | User manually disconnected | Shows server URL, Retry button |
+1. **Connection status** — colored dot + one-word label (`Connected` / `Reconnecting…` / `Disconnected`). Reveals the bound profile and server URL underneath.
+2. **Current tab** — domain + state pill (`Allowed` / `Blocked (baseline)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
+3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
+4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
 
-#### Connected View Details
+The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (written by the background auto-connect flow) and hits two server endpoints, authenticating with the `X-Install-Id` header:
 
-When connected, the Dashboard displays:
+- `GET  /api/popup/state?tabUrl=<url>` — connection + current-tab pill.
+- `POST /api/popup/site-toggle` — flip the global rule.
 
-- **Server URL** -- The WebSocket URL the extension is connected to
-- **Endpoints section** -- Shows the WS URL, SSE URL, and network mode indicator ("Local only" or "Network (LAN)")
-- **Disconnect button** -- Sets `manuallyDisconnected = true` and closes the connection; the onclose handler is nulled before closing to prevent auto-reconnect
-- **Restricted mode** (toggle, defaults to true) -- Blocks all MCP commands on non-whitelisted domains. When enabled, reveals the whitelist management panel.
+The legacy `X-API-Key` header (and the `apiKey` storage key) have been retired along with the shared server transport key. Auth is now installId-based end-to-end.
 
-#### Whitelist Management
+### Popup IPC
 
-When restricted mode is enabled, the Dashboard displays whitelist controls:
+The two popup endpoints live in `packages/server-for-chrome-extension/src/server.js` (the `_authPopup` helper plus the two route handlers). Both are localhost-only by virtue of the server bind; both are gated by an installId resolver and an Origin allowlist.
 
-- **Whitelist this site** (button) -- Quick toggle to add or remove the current tab's domain. Shows "Remove this site" for whitelisted domains. Hidden if the current tab is not on a valid HTTP/HTTPS URL.
-- **Manual domain input** (text field + Add button) -- Enter a domain manually (e.g., `example.com`, `https://example.com`). Domains are normalized: protocol and `www.` prefix stripped, path/query/hash removed. Duplicate domains are rejected silently.
-- **Domain list** (scrollable container) -- Shows all whitelisted domains with remove (x) buttons.
+**Auth (`_authPopup`).** Every popup request must:
 
-Domain matching is domain-level and covers all subdomains (e.g., whitelisting `yahoo.com` allows `www.yahoo.com`, `mail.yahoo.com`, etc.).
+1. Carry `X-Install-Id: <uuid>` (the same `webpilot.installId` the extension sent on its WS upgrade). A `?installId=<uuid>` query-string fallback is accepted to keep ad-hoc curl flows working. Missing or empty values → 401. Strings longer than 256 characters → 401 (defensive cap).
+2. Resolve via `extensionInstalls.getProfileForInstall(installId)`. An unknown installId → 401.
+3. Pass the **Origin gate (S3)**. The `Origin` header must either be absent (server-side caller, the popup itself, or a `chrome-extension://…` origin) or any non-`http(s)://` scheme. Any `http://` or `https://` origin is rejected outright — that pattern is a webpage running in some Chrome profile trying to ride the loopback bind to mutate site policy. This is the same hardening as the extension-WS `S1` gate and the UI-WS `S2` gate.
 
-### Pairing Tab
+A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context — only `global_site_rules` apply; `agent_site_overrides` are not consulted from here.
 
-The Pairing tab has a badge count showing the number of pending pairing requests. It contains two sections:
+#### `GET /api/popup/state`
 
-#### Pairing Requests
+| Aspect | Value |
+|---|---|
+| Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
+| Query | `tabUrl` (optional). Strings longer than 8192 bytes → 400 (`tabUrl too long`). |
+| Response | `{ connection, profileId, agent, serverUrl, currentTab? }` |
 
-Displays pending pairing requests from AI agents. Each entry shows the agent name and two action buttons:
+Response fields:
 
-- **Approve** -- Approves the pairing request, generating an API key for the agent and sending it back to the server.
-- **Deny** -- Rejects the pairing request without granting access.
+- `connection` — `'connected'` or `'disconnected'`, based on `extensionBridge.isConnected(profileId)`.
+- `profileId` — the bound Chrome profile directoryName.
+- `agent` — always `null` (popup is profile-scoped).
+- `serverUrl` — `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers, used by the popup to build the "Open dashboard" link.
+- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_baseline' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
 
-The section is hidden when there are no pending requests.
+#### `POST /api/popup/site-toggle`
 
-#### Paired Agents
+| Aspect | Value |
+|---|---|
+| Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
+| Body | `{ domain, action: 'block' \| 'allow' }`. Raw `domain` strings longer than 512 chars → 400. |
+| Response | `{ ok, domain, decision, newState }` |
 
-Lists all agents that have been granted access. Each entry shows:
+Writes a `source='user'` row to `global_site_rules` via `sitePolicy.setGlobalRule(normalized, action, 'user')`. Audit log line records the truncated installId and bound profileId (no agent identity — popup is not in agent context). Broadcasts a `sites_changed` event over `/api/ui/events` so the Sites admin page stays in sync. `newState` is the recomputed pill key (global-only, no agent override) so the popup can update its toggle without a follow-up `GET /api/popup/state`.
 
-- **Agent name** -- The display name provided by the agent during pairing. Clicking the **Rename** button switches to an inline edit mode (text input) where the user can change the name. Pressing Enter or blurring the input commits the rename by sending a `RENAME_AGENT` message to the background script, which relays it to the server via WebSocket.
-- **Paired date** -- The date the agent was approved.
-- **Last active** -- A relative time-ago display (e.g., "5m ago") of the agent's last authenticated tool call. Only shown if the agent has been used since pairing. The server updates this via `touchKey()` on every authenticated `tools/call` request.
-- **Revoke** button -- Immediately invalidates the agent's API key, removing its access.
+It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 
-Shows "No paired agents" when the list is empty.
+### Per-profile reload required
 
-### Settings Tab
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** when the popup was rewritten, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`1.1.8`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
 
-The Settings tab provides:
+For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
-- **Focus new tabs** (toggle, defaults to false) -- Controls whether newly created tabs receive focus via `chrome.tabs.create({ active: focusNewTabs })`. When false, tabs open in the background.
-- **Tab organization** (select) -- Choose between "Existing window" (group mode, default: adds tabs to a cyan tab group) or "New window" (window mode: moves tabs to a dedicated WebPilot Chrome window). When window mode is active, the extension persists the window's size and position to `chrome.storage.local` under `webPilotWindowBounds` and restores them when creating a new WebPilot window.
-- **Network mode** (toggle, defaults to false) -- Switches the server between local-only (`127.0.0.1`) and LAN (`0.0.0.0`) mode. Sends a `SET_NETWORK_MODE` message to the background script, which relays it to the server via WebSocket. The server re-binds its listener, persists the preference to `network.enabled`, and the extension reconnects and refreshes its stored URLs via `refreshConnectionMetadata()`. The toggle state is synced from `chrome.storage.local` (`networkMode`) and also updates reactively when the storage value changes (e.g., after reconnect metadata refresh).
-- **Check for formatter updates** (button) -- Sends a `CHECK_FORMATTER_UPDATES` message to the background script, which forwards a `check_formatter_updates` message to the server via WebSocket and relays the `formatter_update_result` response back to the popup (10s timeout).
+### Web UI takeover
+
+The following capabilities that previously lived in the extension popup are now in the web UI:
+
+- Approve / deny pairing requests
+- Pick the Chrome profile a new agent binds to during approval
+- Pre-provision an API key (skip `request_pairing` entirely; mints via `POST /api/ui/agents`)
+- Re-bind an existing agent to a different profile (`PATCH /api/ui/agents/:key`)
+- List / rename / revoke paired agents (still available via `REVOKE_KEY` / `RENAME_AGENT` runtime messages too, but the UI is the canonical surface)
+- View pairing history (terminal-state pairings persisted with `profileId`)
+- Toggle network mode, manage notification preferences, restart server / Chrome
 
 ### Storage Keys
 
@@ -264,16 +292,18 @@ Settings and state are stored in `chrome.storage.local`:
 | `tabMode` | string | `'group'` | Tab organization mode (`'group'` or `'window'`) |
 | `restrictedModeEnabled` | boolean | true | Whether restricted mode is active |
 | `whitelistedDomains` | string[] | `[]` | Whitelisted domains for restricted mode |
-| `apiKey` | string | null | Server API key (from auto-connect) |
-| `serverUrl` | string | null | WebSocket server URL |
+| `serverUrl` | string | null | WebSocket server URL (from `/connect`) |
 | `sseUrl` | string | null | SSE endpoint URL |
-| `networkMode` | boolean | false | Whether server is in network mode |
+| `networkMode` | boolean | false | Cached network mode flag (UI hint only) |
 | `enabled` | boolean | false | Whether the extension is enabled |
-| `pairedAgents` | array | `[]` | Cached list of paired agents |
-| `pendingPairingRequests` | array | `[]` | Pending pairing requests |
+| `pairedAgents` | array | `[]` | Cached list of paired agents (server is source of truth) |
+| `pendingPairingRequests` | array | `[]` | (legacy) Cached pending requests; no longer surfaced in the popup |
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
+| `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
+| `webpilot.profileId` | string | null | Bound Chrome profile directoryName (cleared on `RESET_PROFILE_ID`) |
+| `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
 
-Authentication failures (invalid API key) automatically clear stored config and restart auto-connect.
+`webpilot.installId` is intentionally **not** cleared on config resets (e.g. `FORGET_CONFIG`) so the server's `installId → profileId` mapping survives storage wipes. Any pre-1.2.0 `apiKey` value left in `chrome.storage.local` is purged on first startup after upgrade (one-time migration; the legacy transport key was retired 2026-05-17).
 
 ## Communication Protocol
 
@@ -292,10 +322,14 @@ Standard command envelope:
 
 | Type | Envelope | Params / Fields | Description |
 |------|----------|-----------------|-------------|
-| `pairing_request` | Command | `agentName` (string) | Server forwards a pairing request from an AI agent. The extension shows an Approve/Deny prompt in the popup. |
-| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, key, keyDisplay }`) | Server pushes the current list of paired agents to the extension (not a command — no response expected). |
+| `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. |
+| `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; popup surfaces a profile picker. |
+| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
-| `formatter_update_result` | Push (no `id`) | _(result payload)_ | Server responds to a `check_formatter_updates` request with the outcome of the update check. |
+
+> Removed: `pairing_request`. Pairing approval no longer goes through the extension popup — pending pairings are surfaced and approved/denied via the web UI at `/ui/pairings`. The legacy `pairing_request` push has no consumer in the current extension.
+>
+> Removed: `formatter_update_result`. The minimal-popup rewrite removed the extension-side `CHECK_FORMATTER_UPDATES` runtime message and the corresponding `check_formatter_updates` WebSocket request, so the server's push response no longer has a consumer in the extension. Formatter update checks are now driven from the web UI.
 
 ### Extension to Server (WebSocket)
 
@@ -321,11 +355,14 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `revoke_key` | `apiKey` (string) | Extension requests the server to invalidate the specified API key. Sent when the user clicks Revoke in the Paired Agents panel. |
-| `rename_agent` | `apiKey` (string), `newName` (string) | Extension requests the server to rename the agent associated with the given API key. Sent when the user renames an agent in the Paired Agents panel. |
-| `list_paired_agents` | _(none)_ | Extension requests the current list of paired agents from the server. The server responds with a `paired_agents_list` push message. |
-| `set_network_mode` | `enabled` (boolean) | Extension requests the server to switch between local-only and LAN mode. The server re-binds its listener, persists the preference, and the extension reconnects. |
-| `check_formatter_updates` | _(none)_ | Extension requests the server to check for available formatter updates. The server responds with a `formatter_update_result` push message. |
+| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
+| `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
+| `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
+| `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |
+
+> **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. The extension popup no longer sends these. Network mode and pairing config are now owned by the web UI.
+>
+> **Removed from the extension:** `check_formatter_updates`. The minimal-popup rewrite dropped the runtime listener and the WebSocket sender. Formatter update checks now run from the server-hosted web UI.
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
@@ -335,12 +372,16 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 | Permission | Purpose |
 |-----------|---------|
-| `storage` | Persist connection config (API key, server URL, enabled state) |
+| `storage` | Persist connection config (server URL, enabled state, installId, profileId) |
 | `activeTab` | Access the currently active tab |
 | `tabs` | Query and manage all browser tabs |
 | `tabGroups` | Create and manage the WebPilot tab group |
 | `debugger` | Attach CDP sessions for input simulation and accessibility tree access |
 | `scripting` | Execute scripts in page context |
 | `webNavigation` | Listen for navigation events to re-inject persistent scripts |
+| `windows` | Manage the dedicated WebPilot window in `'window'` tab-organization mode |
+| `identity` + `identity.email` | Read the signed-in profile email via `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })` to help the server auto-resolve the profile binding during the hello handshake |
 
 Host permission `<all_urls>` allows the extension to operate on any website.
+
+Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.1.8"`. The background service worker is declared with `"type": "module"`.

@@ -1,0 +1,12 @@
+{
+  "name": "threads",
+  "version": "1.0.0",
+  "match": "threads.com",
+  "source": "remote",
+  "description": "Threads (Meta) — extracts posts from the home feed, profile pages, search results, and the activity inbox.",
+  "notes": "Router-based formatter. Detects page type from URL (home/profile vs. search vs. activity) and delegates to a page-specific sub-formatter. Output includes a postCount extra field. Posts surface author, timestamp, body text, and engagement counters when present.",
+  "errorHandling": {
+    "fallbackToRawTree": true
+  },
+  "workflows": []
+}

@@ -1,0 +1,45 @@
+name: PR validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  build:
+    name: Build (windows)
+    # Mac + Linux build legs are intentionally disabled until those platforms
+    # are functionally verified. Tracked in issues #48 (macOS) and #49 (Linux).
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & package
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify installer artifact exists
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*.exe)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No installer artifact produced."
+            ls -la dist/ || true
+            exit 1
+          fi
+          printf 'Artifact: %s\n' "${files[@]}"

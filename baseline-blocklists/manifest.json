@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "lists": [
+    {
+      "name": "financial-institutions",
+      "file": "financial-institutions.txt",
+      "description": "Major US banks, brokerages, credit unions — recommended-blocked by default."
+    }
+  ]
+}

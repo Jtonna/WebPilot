@@ -1,0 +1,88 @@
+# WebPilot baseline blocklist — financial-institutions
+# version: 1
+#
+# Format: hosts.txt style. One domain per line, prefixed by `0.0.0.0 `.
+# Lines beginning with `#` are comments. Blank lines are ignored.
+# The `0.0.0.0` prefix is the de-facto hosts-file convention and is stripped
+# on parse; it makes the file usable by off-the-shelf blocklist tooling.
+#
+# This file is auto-updated by the WebPilot server (`blocklist-updater.js`)
+# on boot and every 24 hours. Users override per-domain in the WebPilot
+# webapp (Sites page) via per-agent or per-user allow rules — those
+# overrides take precedence over baseline-block entries below.
+#
+# Curated set: major US retail banks + brokerages + credit unions + a few
+# international names. NOT exhaustive; the intent is to cover the institutions
+# a user would expect to see flagged out of the box. Add/remove via PRs to
+# the WebPilot repo's `baseline-blocklists/` directory.
+
+# ── US retail banks ─────────────────────────────────────────────────────
+0.0.0.0 chase.com
+0.0.0.0 bankofamerica.com
+0.0.0.0 wellsfargo.com
+0.0.0.0 citi.com
+0.0.0.0 citibank.com
+0.0.0.0 usbank.com
+0.0.0.0 pnc.com
+0.0.0.0 truist.com
+0.0.0.0 capitalone.com
+0.0.0.0 tdbank.com
+0.0.0.0 bmoharris.com
+0.0.0.0 regions.com
+0.0.0.0 fifththird.com
+0.0.0.0 53.com
+0.0.0.0 keybank.com
+0.0.0.0 citizensbank.com
+0.0.0.0 huntington.com
+0.0.0.0 ally.com
+0.0.0.0 discover.com
+0.0.0.0 americanexpress.com
+
+# ── US brokerages / investment ──────────────────────────────────────────
+0.0.0.0 schwab.com
+0.0.0.0 fidelity.com
+0.0.0.0 vanguard.com
+0.0.0.0 robinhood.com
+0.0.0.0 etrade.com
+0.0.0.0 ameritrade.com
+0.0.0.0 tdameritrade.com
+0.0.0.0 morganstanley.com
+0.0.0.0 merrilledge.com
+0.0.0.0 interactivebrokers.com
+0.0.0.0 sofi.com
+0.0.0.0 webull.com
+0.0.0.0 wealthfront.com
+0.0.0.0 betterment.com
+
+# ── Payments / fintech ──────────────────────────────────────────────────
+0.0.0.0 paypal.com
+0.0.0.0 venmo.com
+0.0.0.0 cashapp.com
+0.0.0.0 zellepay.com
+0.0.0.0 stripe.com
+0.0.0.0 wise.com
+0.0.0.0 revolut.com
+
+# ── Credit unions ───────────────────────────────────────────────────────
+0.0.0.0 navyfederal.org
+0.0.0.0 alliantcreditunion.com
+0.0.0.0 penfed.org
+0.0.0.0 schoolsfirstfcu.org
+0.0.0.0 boeingfederalcreditunion.com
+0.0.0.0 becu.org
+
+# ── International banks ─────────────────────────────────────────────────
+0.0.0.0 hsbc.com
+0.0.0.0 barclays.com
+0.0.0.0 barclays.co.uk
+0.0.0.0 deutsche-bank.com
+0.0.0.0 db.com
+0.0.0.0 santander.com
+0.0.0.0 bnpparibas.com
+0.0.0.0 ubs.com
+0.0.0.0 credit-suisse.com
+0.0.0.0 lloydsbank.com
+0.0.0.0 natwest.com
+0.0.0.0 rbc.com
+0.0.0.0 td.com
+0.0.0.0 scotiabank.com

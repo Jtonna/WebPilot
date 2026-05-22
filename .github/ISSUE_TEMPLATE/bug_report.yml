@@ -1,0 +1,82 @@
+name: Bug report
+description: Something WebPilot does that it shouldn't, or doesn't do that it should.
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! A few details up front make this much faster to triage.
+        For security issues, please use the [private disclosure process](../blob/main/SECURITY.md) instead.
+
+  - type: input
+    id: webpilot-version
+    attributes:
+      label: WebPilot version
+      description: Visible in the dashboard footer at http://localhost:3456/ui/, or run `webpilot-server --version`.
+      placeholder: "1.1.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "Windows 11 23H2 / macOS 14.5 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: input
+    id: chrome-version
+    attributes:
+      label: Chrome channel + version
+      placeholder: "Chrome Stable 131.0.6778.86"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the dashboard
+        2. Click "Restart Chrome"
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Paste relevant lines from the server log. Locations:
+        - Windows: `%LOCALAPPDATA%\WebPilot\logs\server.log`
+        - macOS:   `~/Library/Application Support/WebPilot/logs/server.log`
+        - Linux:   `~/.config/WebPilot/logs/server.log`
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Anything else — screenshots, related issues, recent config changes, etc.

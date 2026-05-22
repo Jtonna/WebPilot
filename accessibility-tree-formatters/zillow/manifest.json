@@ -1,0 +1,12 @@
+{
+  "name": "zillow",
+  "version": "1.0.0",
+  "match": "zillow.com",
+  "source": "remote",
+  "description": "Zillow — extracts listings from home, search results, the property detail overlay shown on search, and the standalone property detail page.",
+  "notes": "Router-based formatter. Detects page type from URL plus the presence of a property-detail overlay region (search results can show an inline overlay; the formatter merges overlay data when present). Output includes a listingCount extra field. The detail formatter exposes save/share/hide/more buttons via refs.",
+  "errorHandling": {
+    "fallbackToRawTree": true
+  },
+  "workflows": []
+}
