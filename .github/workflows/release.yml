@@ -36,7 +36,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read
 
 jobs:
   decide:
