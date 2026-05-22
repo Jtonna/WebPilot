@@ -955,6 +955,8 @@ function mountWebUiRoutes(app, deps) {
   app.get('/api/ui/formatters', auth, (req, res) => {
     try {
       const manifests = formatterManager.getPerFormatterManifests();
+      const shadowedManifests = formatterManager.getShadowedFormatterManifests();
+      const customFormatterDir = formatterManager.getCustomFormatterDir();
       const statusMap = formatterLogs.listAll();
       const out = Object.entries(manifests).map(([name, pm]) => {
         const status = statusMap.get(name) || {
@@ -965,6 +967,7 @@ function mountWebUiRoutes(app, deps) {
           successCount: 0,
           errorCount: 0
         };
+        const shadowed = shadowedManifests[name] || null;
         return {
           name,
           version: pm.version,
@@ -979,10 +982,26 @@ function mountWebUiRoutes(app, deps) {
           lastSuccessAt: status.lastSuccessAt,
           lastErrorAt: status.lastErrorAt,
           successCount: status.successCount,
-          errorCount: status.errorCount
+          errorCount: status.errorCount,
+          // When a same-named custom formatter is currently shadowing a
+          // remote one, `shadowedRemote` describes the routing-inactive
+          // remote copy. The custom copy always wins routing — this field
+          // exists purely so the dashboard can surface the relationship.
+          // Null in the common case (no overlap).
+          shadowedRemote: shadowed
+            ? {
+                name,
+                version: shadowed.version || '0.0.0',
+                source: 'remote',
+                description: shadowed.description || '',
+                notes: shadowed.notes || '',
+                match: shadowed.match || '',
+                workflows: Array.isArray(shadowed.workflows) ? shadowed.workflows : []
+              }
+            : null
         };
       });
-      res.json({ formatters: out });
+      res.json({ formatters: out, customFormatterDir });
     } catch (e) {
       console.error('[ui-api] GET /formatters failed:', e.message);
       res.status(500).json({ error: e.message });

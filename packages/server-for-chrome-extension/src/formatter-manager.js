@@ -10,6 +10,16 @@ let formatterCache = {}; // path -> loaded module
 let customPlatforms = new Set(); // platform names that came from custom manifest
 let perFormatterManifests = {}; // platformName -> normalized per-formatter manifest
 let workflowsByFormatter = {};   // platformName -> { workflowName -> { description, parameters, run } }
+// platformName -> normalized per-formatter manifest of the REMOTE copy that
+// is currently being shadowed by a same-named custom formatter. Populated
+// only for platforms that exist in BOTH the auto-updated and custom
+// manifests. Used by `/api/ui/formatters` so the dashboard can surface the
+// fact that a routing-inactive copy exists on disk.
+let shadowedPerFormatterManifests = {};
+// platformName -> { platformConfig } for the remote copy that is currently
+// being shadowed. Kept separate from `manifest` (which always represents
+// the routing-effective merged view) so detection survives reload().
+let shadowedPlatformConfigs = {};
 
 // --- per-formatter manifest schema ---
 //
@@ -103,6 +113,22 @@ function loadAllPerFormatterManifests() {
       sourceHint
     );
     loadWorkflowsForFormatter(platformName, baseDir, platformConfig.entry);
+  }
+
+  // For every platform that a custom formatter is shadowing, also load the
+  // remote per-formatter manifest from disk so the dashboard can show what
+  // would route if the custom override were removed. Workflows are NOT
+  // loaded for shadowed copies — they're inactive by definition and can't
+  // be invoked.
+  for (const [platformName, remoteConfig] of Object.entries(shadowedPlatformConfigs)) {
+    if (!remoteConfig.entry) continue;
+    shadowedPerFormatterManifests[platformName] = loadPerFormatterManifest(
+      platformName,
+      formatterDir,
+      remoteConfig.entry,
+      remoteConfig.match,
+      'remote'
+    );
   }
 }
 
@@ -240,6 +266,9 @@ function init() {
     // Still load custom manifest so custom formatters work even before auto-updated ones arrive
     const customManifest = JSON.parse(fs.readFileSync(customManifestPath, 'utf8'));
     customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
+    // No remote manifest yet → nothing can be shadowed.
+    shadowedPlatformConfigs = {};
+    shadowedPerFormatterManifests = {};
     manifest = customManifest;
     if (customPlatforms.size > 0) {
       console.log('[formatter-manager] Loaded custom manifest with platforms:', [...customPlatforms].join(', '));
@@ -254,6 +283,17 @@ function init() {
 
   customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
 
+  // Snapshot remote configs that are about to be shadowed by a same-named
+  // custom entry. The merge below collapses them into the winner; this map
+  // preserves the loser so we can still inspect it without re-reading disk.
+  shadowedPlatformConfigs = {};
+  shadowedPerFormatterManifests = {};
+  for (const platformName of customPlatforms) {
+    if (autoManifest.platforms && autoManifest.platforms[platformName]) {
+      shadowedPlatformConfigs[platformName] = autoManifest.platforms[platformName];
+    }
+  }
+
   manifest = {
     ...autoManifest,
     platforms: {
@@ -265,6 +305,10 @@ function init() {
   console.log('[formatter-manager] Loaded manifest version', autoManifest.version);
   if (customPlatforms.size > 0) {
     console.log('[formatter-manager] Custom platforms loaded:', [...customPlatforms].join(', '));
+  }
+  const shadowNames = Object.keys(shadowedPlatformConfigs);
+  if (shadowNames.length > 0) {
+    console.log('[formatter-manager] Custom formatters shadowing remote:', shadowNames.join(', '));
   }
 
   loadAllPerFormatterManifests();
@@ -354,6 +398,18 @@ function reload() {
 
   customPlatforms = new Set(Object.keys(customManifest.platforms || {}));
 
+  // Refresh the shadowed-remote map. Recomputed from scratch on every
+  // reload so a freshly-deleted custom override stops claiming a shadow.
+  shadowedPlatformConfigs = {};
+  shadowedPerFormatterManifests = {};
+  if (autoManifest && autoManifest.platforms) {
+    for (const platformName of customPlatforms) {
+      if (autoManifest.platforms[platformName]) {
+        shadowedPlatformConfigs[platformName] = autoManifest.platforms[platformName];
+      }
+    }
+  }
+
   if (autoManifest) {
     manifest = {
       ...autoManifest,
@@ -369,6 +425,10 @@ function reload() {
 
   if (customPlatforms.size > 0) {
     console.log('[formatter-manager] Custom platforms reloaded:', [...customPlatforms].join(', '));
+  }
+  const shadowNames = Object.keys(shadowedPlatformConfigs);
+  if (shadowNames.length > 0) {
+    console.log('[formatter-manager] Custom formatters shadowing remote:', shadowNames.join(', '));
   }
 
   loadAllPerFormatterManifests();
@@ -407,6 +467,7 @@ function getFormatterInfo(platform) {
       parameters: wf.parameters || {},
       implemented: !!(wf.name && implMap[wf.name])
     }));
+    const shadowed = shadowedPerFormatterManifests[name];
     platforms[name] = {
       name,
       match: (perManifest && perManifest.match) || config.match,
@@ -417,7 +478,21 @@ function getFormatterInfo(platform) {
       version: (perManifest && perManifest.version) || '0.0.0',
       source: (perManifest && perManifest.source) || fallbackSource,
       errorHandling: (perManifest && perManifest.errorHandling) || { fallbackToRawTree: true },
-      workflows
+      workflows,
+      // Present only when a same-named custom formatter is currently
+      // shadowing a remote one. Routing-inactive — no workflows are loaded
+      // for this copy. Delete the custom-formatters/<name>/ directory to
+      // restore the remote-signed version.
+      shadowedRemote: shadowed
+        ? {
+            name,
+            version: shadowed.version || '0.0.0',
+            match: shadowed.match || '',
+            description: shadowed.description || '',
+            notes: shadowed.notes || '',
+            source: 'remote'
+          }
+        : null
     };
   }
 
@@ -519,6 +594,22 @@ function getPerFormatterManifests() {
   return { ...perFormatterManifests };
 }
 
+/**
+ * Snapshot of every per-formatter manifest whose platform name exists in
+ * BOTH the auto-updated and custom manifests — i.e. the remote copy is
+ * currently being shadowed by a same-named custom formatter and would
+ * route if the custom override were removed. Keyed by formatter name.
+ *
+ * Empty object when there is no overlap (the common case). Used by
+ * `/api/ui/formatters` so the dashboard can render a "shadowed by local
+ * override" sub-row next to the active formatter.
+ *
+ * @returns {Object<string, object>}
+ */
+function getShadowedFormatterManifests() {
+  return { ...shadowedPerFormatterManifests };
+}
+
 module.exports = {
   init,
   formatTree,
@@ -526,6 +617,7 @@ module.exports = {
   getFormatterInfo,
   getCustomFormatterDir,
   getPerFormatterManifests,
+  getShadowedFormatterManifests,
   getWorkflow,
   listWorkflows
 };

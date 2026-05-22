@@ -14,7 +14,7 @@ const meta = {
   argTypes: {
     state: {
       control: { type: 'inline-radio' },
-      options: ['active', 'ready', 'needs_setup', 'warn', 'danger', 'info', 'unknown'],
+      options: ['active', 'ready', 'needs_setup', 'warn', 'danger', 'info', 'unknown', 'shadowed'],
     },
     label: { control: 'text' },
   },
@@ -36,6 +36,7 @@ export const AllStates = {
       <Pill state="danger" label="Danger" />
       <Pill state="needs_setup" label="Needs setup" />
       <Pill state="unknown" label="Unknown" />
+      <Pill state="shadowed" label="Shadowed by local override" />
     </div>
   ),
 };
@@ -45,4 +46,13 @@ export const LongLabel = {
     state: 'info',
     label: 'A reasonably long pill label that still sits on one line',
   },
+};
+
+/**
+ * "shadowed" — used on the Formatters tab to mark a remote formatter
+ * whose routing has been usurped by a same-named custom override.
+ * Muted dot + muted label so it stays visually below the active row.
+ */
+export const Shadowed = {
+  args: { state: 'shadowed', label: 'Shadowed by local override' },
 };

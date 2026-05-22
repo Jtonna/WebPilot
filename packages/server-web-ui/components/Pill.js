@@ -15,6 +15,9 @@
  *   - "danger"      danger dot
  *   - "info"        info dot
  *   - "unknown"     muted-fg dot (fallback)
+ *   - "shadowed"    muted-fg dot + muted label — used on the Formatters
+ *                   tab to mark a remote formatter whose routing has been
+ *                   usurped by a same-named custom override
  *
  * The `label` span is re-keyed on state change so `.wp-pill-label`'s mount
  * opacity keyframe replays on every state transition.

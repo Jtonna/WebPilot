@@ -897,6 +897,12 @@ hr {
 .wp-pill[data-state="danger"]      .wp-pill-dot { background: var(--wp-danger); }
 .wp-pill[data-state="info"]        .wp-pill-dot { background: var(--wp-info); }
 .wp-pill[data-state="unknown"]     .wp-pill-dot { background: var(--wp-fg-muted); }
+/* "shadowed" — used on the Formatters tab to mark a remote formatter
+   whose routing has been usurped by a same-named custom override. Reads
+   as deliberately dim (muted dot + label) so it stays below the active
+   row's HealthPill in the visual hierarchy. */
+.wp-pill[data-state="shadowed"]    .wp-pill-dot { background: var(--wp-fg-muted); }
+.wp-pill[data-state="shadowed"]    .wp-pill-label { color: var(--wp-fg-muted); }
 
 /* ---------------------------------------------------------------------------
  * Buttons

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import ErrorCard from '../../components/ErrorCard';
 import HealthPill from '../../components/HealthPill';
+import Pill from '../../components/Pill';
 import { SkeletonRow } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { createSequencedFetcher, getFormatters } from '../../lib/api';
@@ -60,6 +61,8 @@ function FormatterRow({ f }) {
     f.health === 'unhealthy' && (f.lastErrorAt || (f.lastError && f.lastError.timestamp));
   const lastErrorAt = f.lastErrorAt || (f.lastError && f.lastError.timestamp);
 
+  const overridesRemote = f.source === 'custom' && f.shadowedRemote;
+
   return (
     <a
       key={f.name}
@@ -93,6 +96,9 @@ function FormatterRow({ f }) {
         </div>
       </div>
       <div className="wp-row-actions" style={{ gap: 'var(--s-3)' }}>
+        {overridesRemote ? (
+          <Pill state="info" label="Overrides remote" />
+        ) : null}
         {showLastError ? (
           <span
             style={{
@@ -112,7 +118,79 @@ function FormatterRow({ f }) {
   );
 }
 
-function FormattersSection({ title, items, emptyText }) {
+/**
+ * Sub-row rendered beneath the active formatter when a same-named custom
+ * formatter is currently shadowing a remote one. Visually dimmed +
+ * strikethrough on the title to make it obvious this copy is not routing.
+ *
+ * Not a link — there are no logs to inspect for an inactive copy.
+ */
+function ShadowedRow({ active, customFormatterDir }) {
+  const s = active.shadowedRemote;
+  if (!s) return null;
+  const workflowCount = Array.isArray(s.workflows) ? s.workflows.length : 0;
+  const workflowText = `${workflowCount} ${workflowCount === 1 ? 'workflow' : 'workflows'}`;
+  const overridePath = customFormatterDir
+    ? `${customFormatterDir.replace(/[\\/]+$/, '')}/${active.name}/`
+    : `custom-formatters/${active.name}/`;
+  return (
+    <div
+      className="wp-row"
+      style={{
+        // Indent under the active row so the shadowing relationship reads
+        // visually. No hover state — this isn't a link.
+        paddingLeft: 'calc(var(--s-4) + var(--s-4))',
+        background: 'transparent',
+        cursor: 'default',
+      }}
+      aria-label={`${s.name} (shadowed remote formatter, currently overridden by your custom copy)`}
+    >
+      <div className="wp-row-grow">
+        <div
+          className="wp-row-title"
+          style={{
+            color: 'var(--wp-fg-muted)',
+            textDecoration: 'line-through',
+            textDecorationColor: 'var(--wp-fg-muted)',
+            fontWeight: 400,
+          }}
+        >
+          {s.name}
+          {s.version ? (
+            <span
+              style={{
+                marginLeft: 'var(--s-2)',
+                color: 'var(--wp-fg-muted)',
+                fontWeight: 400,
+                fontSize: 'var(--fs-small)',
+                fontVariantNumeric: 'tabular-nums',
+                textDecoration: 'none',
+              }}
+            >
+              v{s.version}
+            </span>
+          ) : null}
+        </div>
+        <div
+          className="wp-row-sub"
+          style={{ color: 'var(--wp-fg-muted)' }}
+          title={`Currently overridden by your custom formatter. Delete ${overridePath} to restore the remote-signed version.`}
+        >
+          {s.match ? <span className="wp-mono">{s.match}</span> : null}
+          {s.match ? <span className="wp-row-sep">·</span> : null}
+          {workflowText}
+          <span className="wp-row-sep">·</span>
+          Delete <span className="wp-mono">{overridePath}</span> to restore the remote-signed version.
+        </div>
+      </div>
+      <div className="wp-row-actions" style={{ gap: 'var(--s-3)' }}>
+        <Pill state="shadowed" label="Shadowed by local override" />
+      </div>
+    </div>
+  );
+}
+
+function FormattersSection({ title, items, emptyText, customFormatterDir }) {
   return (
     <section className="wp-section">
       <div className="wp-section-head">
@@ -125,7 +203,14 @@ function FormattersSection({ title, items, emptyText }) {
         <EmptyState body={emptyText} />
       ) : (
         <div className="wp-row-list">
-          {items.map((f) => <FormatterRow key={f.name} f={f} />)}
+          {items.map((f) => (
+            <Fragment key={f.name}>
+              <FormatterRow f={f} />
+              {f.source === 'custom' && f.shadowedRemote ? (
+                <ShadowedRow active={f} customFormatterDir={customFormatterDir} />
+              ) : null}
+            </Fragment>
+          ))}
         </div>
       )}
     </section>
@@ -134,6 +219,7 @@ function FormattersSection({ title, items, emptyText }) {
 
 export default function FormattersPage() {
   const [formatters, setFormatters] = useState([]);
+  const [customFormatterDir, setCustomFormatterDir] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const fetcherRef = useRef(null);
@@ -146,6 +232,9 @@ export default function FormattersPage() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getFormatters());
       if (isStale) return;
       setFormatters(Array.isArray(data && data.formatters) ? data.formatters : []);
+      setCustomFormatterDir(
+        data && typeof data.customFormatterDir === 'string' ? data.customFormatterDir : ''
+      );
       setError(null);
     } catch (err) {
       setError(err);
@@ -198,11 +287,13 @@ export default function FormattersPage() {
         title="Loaded from remote"
         items={remote}
         emptyText="No remote formatters loaded."
+        customFormatterDir={customFormatterDir}
       />
       <FormattersSection
         title="Custom"
         items={custom}
         emptyText="No custom formatters loaded."
+        customFormatterDir={customFormatterDir}
       />
     </>
   );
