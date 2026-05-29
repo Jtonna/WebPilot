@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const isDev = !app.isPackaged;
+const isHiddenLaunch = process.argv.includes('--hidden');
 
 let win = null;
 let tray = null;
@@ -121,6 +122,9 @@ function createWindow() {
     backgroundColor: '#0e0e10',
     icon: iconPath,
     title: 'WebPilot',
+    // Hidden boot (login auto-start with --hidden): start invisible so the
+    // app sits in the tray. Tray click still reveals via showWindow().
+    show: !isHiddenLaunch,
     webPreferences: {
       // No preload: the splash is pure CSS and the dashboard runs against
       // its own HTTP server; neither needs an IPC bridge.
@@ -140,6 +144,8 @@ function createWindow() {
     win.loadFile(path.join(__dirname, 'splash.html'));
   }
 
+  // Hidden boot launch (--hidden, e.g. login auto-start): preload the URL
+  // but never show the window. The tray click reveals it on demand.
   waitForServerHealthThenSwap();
 
   // Hide-to-tray on window close — only an explicit tray Exit (or
@@ -245,6 +251,54 @@ function quitFully() {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-start (login item)
+// ---------------------------------------------------------------------------
+
+// Electron owns auto-start. On login we relaunch ourselves with --hidden so
+// the app boots straight to the tray and the spawned server runs as a hidden
+// child (no console window, no browser pop). The legacy entry registered by
+// the standalone server binary (HKCU Run\WebPilotServer) is migrated away on
+// first run so the old foreground server stops launching at boot.
+function ensureAutoStart() {
+  if (isDev) return; // never register dev builds
+  try {
+    if (process.platform === 'win32' || process.platform === 'darwin') {
+      const current = app.getLoginItemSettings();
+      if (!current.openAtLogin) {
+        app.setLoginItemSettings({
+          openAtLogin: true,
+          args: ['--hidden'],
+          path: process.execPath,
+        });
+      }
+    }
+  } catch (e) {
+    console.log('ensureAutoStart: failed to register login item: ' + (e && e.message));
+  }
+
+  // Best-effort migration: remove the legacy server Run key entry. The old
+  // standalone server registered itself here and would otherwise keep
+  // popping a console + browser tab at boot.
+  if (process.platform === 'win32') {
+    try {
+      const { execFile } = require('child_process');
+      execFile(
+        'reg',
+        [
+          'delete',
+          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+          '/v',
+          'WebPilotServer',
+          '/f',
+        ],
+        { windowsHide: true },
+        () => { /* swallow errors — entry may not exist */ },
+      );
+    } catch { /* ignore */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
@@ -260,6 +314,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     ensureDataDir();
+    ensureAutoStart();
     startServer();
     createTray();
     createWindow();
