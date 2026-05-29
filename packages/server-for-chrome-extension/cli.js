@@ -176,6 +176,14 @@ function isAlreadyRunning() {
 
 // Auto-register service if not already registered
 function autoRegister() {
+  // Skip when launched as a child of the Electron desktop app. Electron owns
+  // auto-start (via app.setLoginItemSettings) and spawns this binary hidden
+  // with WEBPILOT_NO_OPEN=1 and WEBPILOT_DATA_DIR set. Registering ourselves
+  // in the Run key would resurrect the legacy console-spawning entry on next
+  // boot.
+  if (process.env.WEBPILOT_NO_OPEN === '1' || process.env.WEBPILOT_DATA_DIR) {
+    return;
+  }
   try {
     const service = require('./src/service');
     const result = service.status();
