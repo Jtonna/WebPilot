@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebPilot",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Browser control via MCP for AI agents",
   "permissions": [
     "storage",
