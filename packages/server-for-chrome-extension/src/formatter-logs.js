@@ -69,6 +69,16 @@ function truncateStack(stack) {
   return stack.slice(0, STACK_MAX) + '\n[truncated]';
 }
 
+function extractTopFrame(stack) {
+  if (!stack || typeof stack !== 'string') return null;
+  const match = stack.match(/at\s+([^(]+)\s+\(([^)]+):(\d+):\d+\)/);
+  if (!match) return null;
+  const fn = match[1].trim();
+  const file = require('path').basename(match[2]);
+  const line = match[3];
+  return `${file}:${line} (${fn})`;
+}
+
 function ensureFormatter(name) {
   let entry = state.get(name);
   if (!entry) {
@@ -259,7 +269,11 @@ function recordError(formatterName, info = {}) {
   try {
     emitter.emit('changed', { name: formatterName, status: statusForEntry(entry) });
   } catch (_e) { /* listener errors are not our problem */ }
+
+  return incident;
 }
+
+// New recordError call sites must also be wired into the inline-diagnostics augmentation path (see buildDiagnostics).
 
 /**
  * Per-incident dismiss. Updates the DB row and, if the row is in any
@@ -539,6 +553,18 @@ function cleanupDismissedIncidents(maxAgeDays = 90) {
   return { removed: res.changes, kept: remaining };
 }
 
+// Build a compact diagnostic payload from a recorded incident for inline MCP error responses.
+function buildDiagnostics(incident, platform) {
+  return {
+    phase: incident.phase,
+    workflow: incident.workflow ?? null,
+    platform,
+    tabId: incident.tabId ?? null,
+    topFrame: extractTopFrame(incident.stack),
+    more: `Call webpilot_dev_get_formatter_logs({platform: '${platform}'}) for full error history.`
+  };
+}
+
 /**
  * Test seam: clears the in-memory state + counters and resets the
  * hydration flag so the next call re-reads from the DB. Does NOT touch
@@ -561,6 +587,8 @@ module.exports = {
   listAll,
   flush,
   cleanupDismissedIncidents,
+  extractTopFrame,
+  buildDiagnostics,
   // EventEmitter used by server.js to bridge incident updates to the UI
   // WebSocket. Emits `'changed'` with `{ name, status }` after recordError,
   // recordSuccess, recordDismiss, and recordDismissAll. See server.js

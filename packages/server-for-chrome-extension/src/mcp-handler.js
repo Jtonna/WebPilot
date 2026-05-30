@@ -649,7 +649,7 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
     },
     {
       name: 'webpilot_dev_get_formatter_logs',
-      description: 'DEVELOPER TOOL. Get health summary + recent error log entries for one platform formatter. Use this when iterating on a formatter or workflow to see why it failed — each entry includes the error message, truncated stack trace, phase (`format` for formatter errors during accessibility-tree rendering, `workflow` for errors raised inside `webpilot_run_workflow`), the workflow name + params + tabId for workflow errors, and an ISO timestamp. The `health` field summarizes overall activity ({ health: "healthy"|"unhealthy"|"unknown", lastError, successCount, errorCount, lastSuccessAt, lastErrorAt }). Note: only error entries are stored in the ring buffer; successful invocations bump counters and update `lastSuccessAt` but produce no log row. Pair with webpilot_reload_formatters to iterate quickly: edit → reload → run → call this if anything broke. Returns { platform, health, entries: [...], totalReturned, requestedLimit }.',
+      description: 'Get error history for a platform formatter. Workflow and tool errors already include the most recent diagnostic inline, so this is typically only needed when investigating multiple failures, comparing across runs, or developing a new formatter. Returns up to 50 entries from the per-formatter ring buffer.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1143,6 +1143,9 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     try {
       formatted = formatterManager.formatTree(formatterUrl, nodes);
     } catch (err) {
+      if (err.__formatterIncident) {
+        throw err;
+      }
       console.warn('[mcp-handler] Formatter error, falling back to default:', err.message);
       formatted = formatterManager.formatTree(null, nodes);
     }
@@ -1787,16 +1790,22 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         });
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(result && typeof result === 'object' ? result : { result }) }) }] };
       } catch (err) {
-        formatterLogs.recordError(platform, {
-          error: err,
-          phase: 'workflow',
-          workflow,
-          params: workflowParams,
-          tabId: workflowTabId
-        });
+        let incident;
+        if (err.__formatterIncident) {
+          incident = err.__formatterIncident;
+        } else {
+          incident = formatterLogs.recordError(platform, {
+            error: err,
+            phase: 'workflow',
+            workflow,
+            params: workflowParams,
+            tabId: workflowTabId
+          });
+        }
+        const diagnostics = formatterLogs.buildDiagnostics(incident, platform);
         console.warn(`[mcp:workflow] ${platform}/${workflow} failed: ${err.message}`);
         return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }],
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, diagnostics }) }],
           isError: true
         };
       }
@@ -1848,13 +1857,24 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       }
 
       case 'browser_get_accessibility_tree': {
-        const responseData = await _browserGetAccessibilityTree(args, apiKey);
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(responseData, null, 2)
-          }]
-        };
+        try {
+          const responseData = await _browserGetAccessibilityTree(args, apiKey);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(responseData, null, 2)
+            }]
+          };
+        } catch (err) {
+          if (err.__formatterIncident) {
+            const diagnostics = formatterLogs.buildDiagnostics(err.__formatterIncident, err.__platform);
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, diagnostics }) }],
+              isError: true
+            };
+          }
+          throw err;
+        }
       }
 
       case 'browser_inject_script':
