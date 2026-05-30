@@ -187,6 +187,8 @@ Tools are exposed to AI agents. All tools except `request_pairing`, `check_pairi
 
 Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, `browser_scroll`, `browser_type`, `webpilot_run_workflow`) also accept an optional `intent` string — a short human-readable description of *why* the call is being made. The value is purely additive: it surfaces in server-side debug logs as `[mcp:intent] <tool>: <text>` and is ignored by tool execution. Not validated, not required — but strongly encouraged for non-trivial flows to make debug traces readable.
 
+**Error responses for formatter-related tools** (`webpilot_run_workflow`, `browser_get_accessibility_tree`) include an inline `diagnostics` object — `{ phase, workflow, platform, tabId, topFrame, more }` — so agents can see what failed without calling `webpilot_dev_get_formatter_logs` for history.
+
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `request_pairing` | Initiate **async** pairing — returns a `pairing_id` immediately; the human approves via the web UI. Short-circuits and returns the existing identity if the caller already presents a valid API key. | `agent_name` |
@@ -203,8 +205,8 @@ Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, 
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
 | `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
 | `webpilot_reload_formatters` | DEVELOPER TOOL. Reload all formatters (auto-updated + custom) without restarting the server. Auth-gated (reloads code from disk → mutates server state). | (none) |
-| `webpilot_dev_get_formatter_logs` | DEVELOPER TOOL. Returns health summary + recent error ring-buffer entries for one platform formatter. Auth-exempt (strictly read-only inspection). | `platform`, `limit?` |
-| `webpilot_dev_reload_extension` | DEVELOPER TOOL. Triggers `chrome.runtime.reload()` in the extension service worker bound to the caller's profile, so edits under `packages/chrome-extension-unpacked/` take effect without manually reloading from `chrome://extensions/`. Per-profile scope only — other paired agents must call it from their own profile to reload everywhere. WS drops momentarily; the paired API key persists. | `api_key?` |
+| `webpilot_dev_get_formatter_logs` | Get error history for a platform formatter. Workflow and tool errors already include the most recent diagnostic inline, so this is typically only needed when investigating multiple failures, comparing across runs, or developing a new formatter. Returns up to 50 entries from the per-formatter ring buffer. | `platform`, `limit?` |
+| `webpilot_dev_reload_extension` | Triggers `chrome.runtime.reload()` in the extension service worker bound to the caller's profile, so edits under `packages/chrome-extension-unpacked/` take effect without manually reloading from `chrome://extensions/`. Per-profile scope only — other paired agents must call it from their own profile to reload everywhere. WS drops momentarily; the paired API key persists. | `api_key?` |
 | `webpilot_run_workflow` | Execute a platform-specific workflow (e.g. `discord/send_message`) that bundles multiple primitive actions into one named operation. Workflow names + parameters come from each formatter's manifest. | `platform`, `workflow`, `tab_id`, `params?` |
 
 ### `browser_request_chain`
