@@ -133,11 +133,28 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.decide.outputs.ref }}
-          fetch-depth: 0
+      - name: Checkout source (single-ref, case-collision-safe)
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF='${{ needs.decide.outputs.ref }}'
+          # Strip 'refs/heads/' prefix if present so 'git fetch' treats it as a
+          # branch name. Tag refs ('refs/tags/v...') are passed through.
+          if [[ "$REF" == refs/heads/* ]]; then
+            REF="${REF#refs/heads/}"
+          fi
+          echo "Resolved ref: $REF"
+          git init -q .
+          git config --local advice.detachedHead false
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          # Fetch ONLY the target ref to avoid Windows case-insensitive FS
+          # collisions between FEAT/ and feat/ prefixed branches.
+          git fetch --no-tags --depth=0 origin "$REF"
+          git checkout --detach FETCH_HEAD
+          echo "Checked out at:"
+          git log -1 --oneline
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
