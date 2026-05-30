@@ -204,7 +204,7 @@ jobs:
           $sb = New-Object System.Text.StringBuilder
           [void]$sb.AppendLine("## WebPilot ${{ steps.ver.outputs.tag }}")
           [void]$sb.AppendLine("")
-          if ($prev) { [void]$sb.AppendLine("Changes since $prev:") } else { [void]$sb.AppendLine("Initial release notes:") }
+          if ($prev) { [void]$sb.AppendLine("Changes since ${prev}:") } else { [void]$sb.AppendLine("Initial release notes:") }
           [void]$sb.AppendLine("")
           if ($feat)  { [void]$sb.AppendLine("### Features");      $feat  | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
           if ($fix)   { [void]$sb.AppendLine("### Fixes");         $fix   | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
