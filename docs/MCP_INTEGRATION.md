@@ -304,7 +304,7 @@ Each formatter declares its workflows in `manifest.json` under `workflows[]` and
 | `intent` | string | No | Optional debug trace. |
 
 **Returns:**
-On success, an object of shape `{ ok: true, ...result }` where `result` is whatever the workflow's `run()` function returned. On failure, `{ ok: false, error: "<message>" }` with `isError: true` set on the MCP response.
+On success, an object of shape `{ ok: true, ...result }` where `result` is whatever the workflow's `run()` function returned. On failure, `{ ok: false, error: "<message>", diagnostics: {...} }` with `isError: true` set on the MCP response. The `diagnostics` object includes `phase`, `workflow`, `platform`, `tabId`, and error context.
 
 **Example (Discord — `send_message`):**
 ```
@@ -320,7 +320,8 @@ webpilot_run_workflow(
 Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name: 'Message textbox' })`, clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
 
 **Notes:**
-- Workflow runtime errors are recorded to per-formatter logs (`formatter-logs.js`) with `phase: 'workflow'` so the Web UI Formatters tab surfaces them under each formatter's recent-errors list.
+- Workflow runtime errors include inline `diagnostics` in the error response (phase, workflow, platform, tabId), so you can see what failed without calling `webpilot_dev_get_formatter_logs`.
+- Errors are also recorded to per-formatter logs so the Web UI Formatters tab can surface recent errors for pattern analysis.
 - Workflow parameters are type-checked against the manifest declaration (string/number/boolean/object/array). All parameters are treated as optional unless explicitly required by the workflow's `run()` implementation.
 - Workflows execute server-side using the same internal browser primitives as the MCP tool dispatch — so per-agent profile routing, visual cursor, auth, and refs all keep working transparently.
 
@@ -550,6 +551,7 @@ Refs (e1, e2, e3...) are stable identifiers for each element. These can be used 
 - `tab_id is required` - Missing tab_id parameter
 - `Another debugger is already attached to this tab` - DevTools or another extension is debugging the tab
 - `Failed to attach debugger: ...` - Tab may not exist or be a protected page (chrome://, etc.)
+- Formatter errors return `{ ok: false, error: "<message>", diagnostics: {...} }` (rather than throwing). The `diagnostics` object includes `phase`, `platform`, `tabId`, and error context.
 
 **Notes:**
 - Uses Chrome DevTools Protocol via the debugger API
@@ -1092,7 +1094,7 @@ The `webpilot_dev_*` namespace exists for formatter authors iterating against a 
 
 | Tool | What it does |
 |------|--------------|
-| `webpilot_dev_get_formatter_logs` | Returns the recent error ring buffer (most-recent-first) and a health summary (`successCount`, `errorCount`, `lastSuccessAt`, `lastErrorAt`, `health`, `lastError`) for one platform. Auth-exempt (read-only). Takes `platform` (required), plus optional `limit` / filters — see source for the full schema. |
+| `webpilot_dev_get_formatter_logs` | Get error history for a platform formatter. Workflow and accessibility-tree errors already include the most recent diagnostic inline, so this is typically only needed when investigating multiple failures or developing a new formatter. Auth-exempt (read-only). |
 | `webpilot_dev_reload_extension` | Triggers a `chrome.runtime.reload()` on the *calling agent's* paired Chrome profile. Requires auth. Multi-profile installs need one call per profile. Used when iterating on extension code; safe to skip in normal agent flows. |
 
 See `accessibility-tree-formatters/DEV_GUIDE.md` for the formatter dev loop these tools support.
