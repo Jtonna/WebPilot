@@ -1,0 +1,249 @@
+name: Release (stable)
+
+# Consolidated stable release workflow. Replaces the former release.yml +
+# release-{patch,minor,major}.yml dispatcher trio.
+#
+# Flow:
+#   1. Checkout main (full history).
+#   2. Compute new version from root package.json + bump input.
+#   3. Validate tag doesn't exist.
+#   4. node scripts/bump-version.js <new> — syncs all package.json / manifest /
+#      lockfiles across the monorepo.
+#   5. Sign formatter + blocklist manifests (idempotent — same key + same files
+#      produce byte-identical output).
+#   6. Write packages/server-for-chrome-extension/release-info.json (bundled
+#      into the pkg binary via assets — enables channel-aware formatter updates).
+#   7. npm run dist:win (builds pkg .exe + Electron installer).
+#   8. Commit version bump + release-info.json back to main.
+#   9. Create + push annotated tag.
+#  10. Generate release notes (categorised feat/fix/chore).
+#  11. Publish GitHub Release (prerelease: false).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver bump to apply to current version
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release-stable
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish stable release
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout main (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # Compute new version
+      # -----------------------------------------------------------------------
+      - name: Compute new version
+        id: ver
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $current = $pkg.version
+          Write-Host "Current version: $current"
+          $parts = $current.Split('-')[0].Split('.')
+          if ($parts.Count -ne 3) { Write-Error "Unexpected version shape: $current"; exit 1 }
+          [int]$maj = $parts[0]; [int]$min = $parts[1]; [int]$pat = $parts[2]
+          switch ('${{ inputs.bump }}') {
+            'major' { $maj++; $min = 0; $pat = 0 }
+            'minor' { $min++; $pat = 0 }
+            'patch' { $pat++ }
+          }
+          $new = "$maj.$min.$pat"
+          $tag = "v$new"
+          Write-Host "New version: $new  Tag: $tag"
+          "current=$current" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "new=$new"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Verify tag does not already exist
+        shell: pwsh
+        run: |
+          if (git tag --list '${{ steps.ver.outputs.tag }}') {
+            Write-Error "Tag ${{ steps.ver.outputs.tag }} already exists. Bump the version manually or use a different bump level."
+            exit 1
+          }
+
+      # -----------------------------------------------------------------------
+      # Version sync
+      # -----------------------------------------------------------------------
+      - name: Sync version across monorepo
+        shell: bash
+        run: node scripts/bump-version.js ${{ steps.ver.outputs.new }}
+
+      # -----------------------------------------------------------------------
+      # Formatter signing (idempotent — must run before build so the signed
+      # manifests bundled in the binary match the formatter sources at this tag)
+      # -----------------------------------------------------------------------
+      - name: Sign formatter + blocklist manifests
+        shell: bash
+        env:
+          WEBPILOT_SIGNING_KEY_BASE64: ${{ secrets.WEBPILOT_SIGNING_KEY_BASE64 }}
+        run: |
+          if [ -z "${WEBPILOT_SIGNING_KEY_BASE64:-}" ]; then
+            echo "ERROR: WEBPILOT_SIGNING_KEY_BASE64 secret is not set."
+            echo "Add the base64-encoded Ed25519 signing key to the repo secrets"
+            echo "before cutting a release. See CONTRIBUTING.md > Signing formatter releases."
+            exit 1
+          fi
+          set -euo pipefail
+          KEYFILE="$(mktemp -t webpilot-signing-key.XXXXXX)"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s' "$WEBPILOT_SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+          WEBPILOT_SIGNING_KEY="$KEYFILE" node scripts/sign-formatters.js
+
+      # -----------------------------------------------------------------------
+      # Write release-info.json BEFORE build so it gets bundled into the pkg binary
+      # -----------------------------------------------------------------------
+      - name: Write release-info.json
+        shell: pwsh
+        run: |
+          $info = [ordered]@{
+            ref     = '${{ steps.ver.outputs.tag }}'
+            channel = 'stable'
+            version = '${{ steps.ver.outputs.new }}'
+            builtAt = (Get-Date -Format 'o')
+          }
+          $json = $info | ConvertTo-Json -Compress
+          Set-Content -Path 'packages/server-for-chrome-extension/release-info.json' -Value $json -Encoding utf8
+          Write-Host "release-info.json: $json"
+
+      # -----------------------------------------------------------------------
+      # Build
+      # -----------------------------------------------------------------------
+      - name: Build & package (Windows)
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Commit version bump + release-info.json to main, tag, push
+      # -----------------------------------------------------------------------
+      - name: Commit version bump + release-info.json
+        shell: pwsh
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          $msg = "chore(release): ${{ steps.ver.outputs.tag }}"
+          git commit -m $msg
+          git push origin HEAD:main
+
+      - name: Create & push annotated tag
+        shell: pwsh
+        run: |
+          git tag -a '${{ steps.ver.outputs.tag }}' -m 'WebPilot ${{ steps.ver.outputs.tag }}'
+          git push origin '${{ steps.ver.outputs.tag }}'
+
+      # -----------------------------------------------------------------------
+      # Release notes
+      # -----------------------------------------------------------------------
+      - name: Generate release notes (since previous stable tag)
+        id: notes
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $tags = git tag --list 'v*' | Where-Object { $_ -notmatch '-' -and $_ -ne '${{ steps.ver.outputs.tag }}' }
+          $prev = $null
+          if ($tags) {
+            $prev = $tags | Sort-Object { [version]($_.TrimStart('v')) } | Select-Object -Last 1
+          }
+          if ($prev) {
+            Write-Host "Previous stable tag: $prev"
+            $range = "$prev..${{ steps.ver.outputs.tag }}"
+          } else {
+            Write-Host "No previous stable tag found; using full history."
+            $range = '${{ steps.ver.outputs.tag }}'
+          }
+          $commits = git log --pretty=format:'%s|%h' $range
+          $feat = @(); $fix = @(); $chore = @(); $other = @()
+          foreach ($line in $commits) {
+            if (-not $line) { continue }
+            $parts = $line.Split('|', 2)
+            $subject = $parts[0]; $sha = $parts[1]
+            $entry = "- $subject ($sha)"
+            switch -Regex ($subject) {
+              '^feat(\(|:|!)'  { $feat  += $entry; break }
+              '^fix(\(|:|!)'   { $fix   += $entry; break }
+              '^chore(\(|:|!)' { $chore += $entry; break }
+              default          { $other += $entry }
+            }
+          }
+          $sb = New-Object System.Text.StringBuilder
+          [void]$sb.AppendLine("## WebPilot ${{ steps.ver.outputs.tag }}")
+          [void]$sb.AppendLine("")
+          if ($prev) { [void]$sb.AppendLine("Changes since $prev:") } else { [void]$sb.AppendLine("Initial release notes:") }
+          [void]$sb.AppendLine("")
+          if ($feat)  { [void]$sb.AppendLine("### Features");      $feat  | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
+          if ($fix)   { [void]$sb.AppendLine("### Fixes");         $fix   | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
+          if ($chore) { [void]$sb.AppendLine("### Chores");        $chore | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
+          if ($other) { [void]$sb.AppendLine("### Other changes"); $other | ForEach-Object { [void]$sb.AppendLine($_) }; [void]$sb.AppendLine("") }
+          [void]$sb.AppendLine("---")
+          [void]$sb.AppendLine("## Downloads")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("| Platform | Installer |")
+          [void]$sb.AppendLine("|----------|-----------|")
+          [void]$sb.AppendLine("| Windows  | ``WebPilot-${{ steps.ver.outputs.new }}-windows.exe`` |")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("macOS and Linux builds are not yet shipping — tracked in [#48](https://github.com/Jtonna/WebPilot/issues/48) and [#49](https://github.com/Jtonna/WebPilot/issues/49).")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("### Installation")
+          [void]$sb.AppendLine("**Windows** — Run the \`.exe\` installer. SmartScreen warning expected (unsigned).")
+          $notes = $sb.ToString()
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $notesPath -Value $notes -Encoding utf8
+          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # -----------------------------------------------------------------------
+      # Locate artifact + publish
+      # -----------------------------------------------------------------------
+      - name: Locate installer artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem 'dist' -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { Write-Error 'Installer not found in dist/'; exit 1 }
+          Write-Host "Artifact: $($exe.FullName)"
+          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: WebPilot ${{ steps.ver.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+          prerelease: false
+          draft: false
+          files: ${{ steps.artifact.outputs.path }}
