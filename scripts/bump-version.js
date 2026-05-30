@@ -14,8 +14,12 @@ function abort(msg) {
 }
 
 function validateSemver(version) {
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    abort('Version "' + version + '" does not look like semver (X.Y.Z).');
+  // Accept strict semver (X.Y.Z) for stable releases AND semver with a
+  // pre-release suffix (X.Y.Z-<pre>) for nightly/prerelease builds.
+  // <pre> may contain lowercase/uppercase letters, digits, and dots —
+  // e.g. "2.0.4-nightly.20260530" or "2.0.4-nightly.20260530.2".
+  if (!/^\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?$/.test(version)) {
+    abort('Version "' + version + '" does not look like semver (X.Y.Z or X.Y.Z-pre).');
   }
 }
 

@@ -1,0 +1,251 @@
+name: Release (nightly)
+
+# Nightly prerelease workflow.
+#
+# Flow:
+#   1. Checkout (full history) at dispatch SHA — no changes committed.
+#   2. Compute nightly version: patch-bump above latest stable tag (or base_version
+#      input). Suffix: -nightly.YYYYMMDD[.N] for same-day collisions.
+#   3. In-memory version bump: node scripts/bump-version.js <nightly-semver>
+#      (mutates on-disk files in the runner's working tree; NOT committed).
+#   4. Sign formatter + blocklist manifests (idempotent).
+#   5. Write packages/server-for-chrome-extension/release-info.json with
+#      channel=nightly (bundled into pkg binary; NOT committed).
+#   6. npm run dist:win
+#   7. Create annotated tag at ${{ github.sha }} (unmodified source SHA) + push tag.
+#   8. Generate release notes (since previous tag of any kind).
+#   9. Publish GitHub Release (prerelease: true).
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        description: "Override base semver (e.g. 2.1.0). Leave empty to auto-compute: patch-bump above latest stable tag."
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: release-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish nightly prerelease
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # Compute nightly version + tag
+      # -----------------------------------------------------------------------
+      - name: Compute nightly version & tag
+        id: ver
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $override = '${{ inputs.base_version }}'.Trim()
+          if ($override) {
+            if ($override -notmatch '^\d+\.\d+\.\d+$') {
+              Write-Error "base_version must be X.Y.Z (got: $override)"
+              exit 1
+            }
+            $base = $override
+          } else {
+            # Auto-compute: find latest stable vX.Y.Z tag, patch-bump it
+            $stableTags = git tag --list 'v*' | Where-Object { $_ -notmatch '-' }
+            if ($stableTags) {
+              $latest = ($stableTags | Sort-Object { [version]($_.TrimStart('v')) } | Select-Object -Last 1).TrimStart('v')
+              $parts = $latest.Split('.')
+              [int]$maj = $parts[0]; [int]$min = $parts[1]; [int]$pat = $parts[2]
+              $pat++
+              $base = "$maj.$min.$pat"
+            } else {
+              # Fall back to root package.json version (strip any pre-release suffix)
+              $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+              $base = $pkg.version.Split('-')[0]
+            }
+          }
+          Write-Host "Base version: $base"
+          $date = (Get-Date -Format 'yyyyMMdd')
+          $prefix = "v$base-nightly.$date"
+          $existing = git tag --list "$prefix*"
+          if (-not $existing) {
+            $tag    = $prefix
+            $semver = "$base-nightly.$date"
+          } else {
+            # Same-day collision: find max N, use N+1
+            $maxN = 0
+            foreach ($t in $existing) {
+              if ($t -eq $prefix) {
+                if ($maxN -lt 1) { $maxN = 1 }
+              } elseif ($t -match "^$([Regex]::Escape($prefix))\.(\d+)$") {
+                $n = [int]$Matches[1]
+                if ($n -gt $maxN) { $maxN = $n }
+              }
+            }
+            $next   = $maxN + 1
+            $tag    = "$prefix.$next"
+            $semver = "$base-nightly.$date.$next"
+          }
+          Write-Host "Nightly tag:    $tag"
+          Write-Host "Nightly semver: $semver"
+          "base=$base"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "semver=$semver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # -----------------------------------------------------------------------
+      # In-memory version bump (not committed)
+      # -----------------------------------------------------------------------
+      - name: Set in-memory version (no commit)
+        shell: bash
+        run: node scripts/bump-version.js ${{ steps.ver.outputs.semver }}
+
+      # -----------------------------------------------------------------------
+      # Formatter signing (idempotent)
+      # -----------------------------------------------------------------------
+      - name: Sign formatter + blocklist manifests
+        shell: bash
+        env:
+          WEBPILOT_SIGNING_KEY_BASE64: ${{ secrets.WEBPILOT_SIGNING_KEY_BASE64 }}
+        run: |
+          if [ -z "${WEBPILOT_SIGNING_KEY_BASE64:-}" ]; then
+            echo "WEBPILOT_SIGNING_KEY_BASE64 not set — skipping in-CI sign step."
+            echo "Signed manifests already on HEAD will be shipped as-is."
+            exit 0
+          fi
+          set -euo pipefail
+          KEYFILE="$(mktemp -t webpilot-signing-key.XXXXXX)"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s' "$WEBPILOT_SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+          WEBPILOT_SIGNING_KEY="$KEYFILE" node scripts/sign-formatters.js
+
+      # -----------------------------------------------------------------------
+      # Write release-info.json BEFORE build (not committed)
+      # -----------------------------------------------------------------------
+      - name: Write release-info.json
+        shell: pwsh
+        run: |
+          $info = [ordered]@{
+            ref     = '${{ steps.ver.outputs.tag }}'
+            channel = 'nightly'
+            version = '${{ steps.ver.outputs.semver }}'
+            builtAt = (Get-Date -Format 'o')
+          }
+          $json = $info | ConvertTo-Json -Compress
+          Set-Content -Path 'packages/server-for-chrome-extension/release-info.json' -Value $json -Encoding utf8
+          Write-Host "release-info.json: $json"
+
+      # -----------------------------------------------------------------------
+      # Build (working tree has in-memory bumps + release-info.json)
+      # -----------------------------------------------------------------------
+      - name: Build & package (Windows)
+        run: npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Tag the UNMODIFIED source SHA — no commit
+      # -----------------------------------------------------------------------
+      - name: Create & push nightly tag (at unmodified source SHA)
+        shell: pwsh
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Tag the SHA the workflow was dispatched against (unmodified source).
+          # The in-memory bumps and release-info.json are NOT committed.
+          git tag -a '${{ steps.ver.outputs.tag }}' ${{ github.sha }} -m 'WebPilot ${{ steps.ver.outputs.tag }} (nightly)'
+          git push origin '${{ steps.ver.outputs.tag }}'
+
+      # -----------------------------------------------------------------------
+      # Release notes (since previous tag of any kind)
+      # -----------------------------------------------------------------------
+      - name: Generate release notes (since previous tag)
+        id: notes
+        shell: pwsh
+        run: |
+          $allTags = git tag --list 'v*' | Where-Object { $_ -ne '${{ steps.ver.outputs.tag }}' }
+          $prev = $null
+          if ($allTags) {
+            $prev = git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags/ |
+                    Where-Object { $_ -like 'v*' -and $_ -ne '${{ steps.ver.outputs.tag }}' } |
+                    Select-Object -First 1
+          }
+          if ($prev) {
+            Write-Host "Previous tag: $prev"
+            $range = "$prev..${{ github.sha }}"
+          } else {
+            Write-Host "No previous tag; using full history."
+            $range = '${{ github.sha }}'
+          }
+          $commits = git log --pretty=format:'%s|%h' $range
+          $sb = New-Object System.Text.StringBuilder
+          [void]$sb.AppendLine("## WebPilot ${{ steps.ver.outputs.tag }} (nightly prerelease)")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("Built from commit ``${{ github.sha }}`` on branch ``${{ github.ref_name }}``.")
+          [void]$sb.AppendLine("")
+          if ($prev) { [void]$sb.AppendLine("### Changes since $prev") } else { [void]$sb.AppendLine("### Changes") }
+          [void]$sb.AppendLine("")
+          if (-not $commits) {
+            [void]$sb.AppendLine("- (no new commits since previous tag)")
+          } else {
+            foreach ($line in $commits) {
+              if (-not $line) { continue }
+              $parts = $line.Split('|', 2)
+              [void]$sb.AppendLine("- $($parts[0]) ($($parts[1]))")
+            }
+          }
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("---")
+          [void]$sb.AppendLine("## Downloads")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("| Platform | Installer |")
+          [void]$sb.AppendLine("|----------|-----------|")
+          [void]$sb.AppendLine("| Windows  | ``WebPilot-${{ steps.ver.outputs.semver }}-windows.exe`` |")
+          [void]$sb.AppendLine("")
+          [void]$sb.AppendLine("> **Nightly build.** Not intended for production use. Installer is Windows NSIS (unsigned).")
+          $notes = $sb.ToString()
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $notesPath -Value $notes -Encoding utf8
+          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # -----------------------------------------------------------------------
+      # Locate artifact + publish (prerelease)
+      # -----------------------------------------------------------------------
+      - name: Locate installer artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem 'dist' -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { Write-Error 'Installer not found in dist/'; exit 1 }
+          Write-Host "Artifact: $($exe.FullName)"
+          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release (prerelease)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: WebPilot ${{ steps.ver.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+          prerelease: true
+          draft: false
+          files: ${{ steps.artifact.outputs.path }}

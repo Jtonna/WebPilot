@@ -9,8 +9,42 @@ const {
   verifyFileHash,
 } = require('./lib/manifest-verifier');
 
-// GitHub raw content base URL — hardcoded to this repo
-const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/Jtonna/WebPilot/main/accessibility-tree-formatters';
+// GitHub raw content base URL — derived from the embedded release-info.json.
+//
+// At build time the CI workflow writes
+//   packages/server-for-chrome-extension/release-info.json
+// and it is bundled into the pkg binary via the `assets` list.  The file
+// contains { ref, channel, version, builtAt } where `ref` is the git tag
+// the binary was published against (e.g. "v2.0.4" or "v2.0.4-nightly.20260530").
+//
+// This lets the auto-updater fetch formatter manifests from the exact ref that
+// produced the running binary instead of always tracking `main`.  Stable users
+// get formatters frozen at their stable tag; nightly users get formatters frozen
+// at their nightly tag.
+//
+// Fallback: if the file is absent (dev checkout, legacy build, or any parse
+// error) we fall back to "main" — identical to the pre-epic behaviour.
+const GITHUB_RAW_BASE = (() => {
+  const REPO_BASE = 'https://raw.githubusercontent.com/Jtonna/WebPilot';
+  const FORMATTER_PATH = 'accessibility-tree-formatters';
+  try {
+    // __dirname resolves correctly both in plain Node and inside a pkg snapshot.
+    // release-info.json lives one directory up from src/ (i.e. at the package root).
+    const infoPath = path.join(__dirname, '..', 'release-info.json');
+    const raw = fs.readFileSync(infoPath, 'utf8');
+    const info = JSON.parse(raw);
+    if (info && typeof info.ref === 'string' && info.ref.length > 0) {
+      return `${REPO_BASE}/${info.ref}/${FORMATTER_PATH}`;
+    }
+    console.warn('[formatter-updater] release-info.json missing "ref" field — falling back to main');
+  } catch (_err) {
+    // File absent in dev/legacy builds — silent fallback (not a warning-worthy condition).
+    if (_err.code !== 'ENOENT') {
+      console.warn('[formatter-updater] release-info.json missing or malformed — falling back to main');
+    }
+  }
+  return `${REPO_BASE}/main/${FORMATTER_PATH}`;
+})();
 
 let formatterManager = null;
 
