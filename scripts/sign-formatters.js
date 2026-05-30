@@ -55,6 +55,24 @@ function sha256Hex(buf) {
 }
 
 /**
+ * Hash a text file after normalizing line endings to LF.
+ *
+ * WHY: On Windows with autocrlf=true, fs.readFileSync returns CRLF bytes,
+ * producing a CRLF-based hash. But git stores text files as LF (enforced by
+ * .gitattributes `* text=auto`), and raw.githubusercontent.com serves those
+ * LF bytes to the auto-updater. This means a CRLF hash claimed in the
+ * signed-manifest never matches what the auto-updater actually downloads,
+ * causing every "manifest.json hash mismatch — refusing update" failure on
+ * installed nightlies. Normalizing to LF before hashing makes the signing
+ * environment-independent and matches what consumers actually receive.
+ */
+function sha256TextLF(filePath) {
+  const text = fs.readFileSync(filePath, 'utf8');
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return sha256Hex(Buffer.from(normalized, 'utf8'));
+}
+
+/**
  * Stable stringify so repeated runs produce byte-identical output and
  * therefore byte-identical signatures. Keys sorted at every level.
  */
@@ -114,13 +132,13 @@ function signBundle(dir, manifestKind) {
 
   const refs = referencedFiles(manifest, manifestKind);
   const fileHashes = {};
-  fileHashes['manifest.json'] = sha256Hex(manifestBuf);
+  fileHashes['manifest.json'] = sha256TextLF(manifestPath);
   for (const rel of refs) {
     const abs = path.join(dir, rel);
     if (!fs.existsSync(abs)) {
       abort('Manifest references missing file: ' + rel + ' (' + abs + ')');
     }
-    fileHashes[rel] = sha256Hex(fs.readFileSync(abs));
+    fileHashes[rel] = sha256TextLF(abs);
   }
 
   const signed = {

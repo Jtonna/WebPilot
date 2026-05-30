@@ -65,13 +65,15 @@ that points at each formatter's entry file and lists files to sync.
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `name` | yes | string | Must match the directory name. |
-| `version` | yes | semver string | Per-formatter version. Bump on behavior changes. |
+| `version` | yes | semver string | Per-formatter version. Informational metadata only — displayed in the Web UI and agent responses. **Does NOT trigger auto-updates.** |
 | `match` | yes | string | Hostname pattern. Substring match against `URL.hostname`. v1 keeps this simple — no regex, no path matching. |
 | `source` | yes | enum | One of `"remote"` (auto-downloaded from this repo), `"custom"` (user-written, lives in custom-formatters dir), `"local"` (bundled with the binary). |
 | `description` | yes | short string | One-line description of the formatter's purpose. Surfaced to agents and the Web UI. |
 | `notes` | no | freeform string | Agent-facing hints — what elements look like, edge cases, useful semantics. Multi-sentence is fine. |
 | `errorHandling` | no | object | `{ fallbackToRawTree: boolean }` — when `true`, the manager returns the raw CDP tree if the formatter throws. Defaults to `true` if absent. |
 | `workflows` | no | array | Workflow declarations consumed by `webpilot_run_workflow`. Each entry: `{ name, description, parameters }`. Implementations live in a sibling `workflows.js`. See "Workflows" below. Default `[]`. |
+
+> **Note on `version`**: This per-formatter `version` field is **informational only**. Auto-updates are triggered exclusively by the TOP-LEVEL `accessibility-tree-formatters/manifest.json` `version` bump. Bump that (and regenerate `signed-manifest.json` via `node scripts/sign-formatters.js`) when any formatter file changes. Bumping a per-formatter `version` alone does nothing — the auto-updater never reads it.
 
 ### `source` semantics
 

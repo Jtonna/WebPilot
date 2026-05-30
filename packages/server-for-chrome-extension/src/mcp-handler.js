@@ -5,6 +5,7 @@ const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 const { findInTree } = require('./lib/tree-query');
 const formatterLogs = require('./formatter-logs');
 const sitePolicy = require('./site-policy');
+const formatterUnlockState = require('./formatter-unlock-state');
 
 // Tools that operate on an existing tab_id and therefore need a per-call
 // current-URL policy check (checkpoint B in the site-policy gate).
@@ -628,13 +629,17 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
     },
     {
       name: 'webpilot_get_formatter_info',
-      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own.',
+      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own. Pass tab_id to also unlock the formatter gate for that tab so subsequent browser_* tools on the tab are allowed.',
       inputSchema: {
         type: 'object',
         properties: {
           platform: {
             type: 'string',
             description: 'Optional: filter to a specific platform (e.g., "threads", "zillow"). Omit to get info on all platforms.'
+          },
+          tab_id: {
+            type: 'number',
+            description: 'Optional: tab ID to unlock for interaction. When provided, the server checks that the tab URL matches the requested platform and records the unlock so subsequent browser_* tools on this tab are allowed.'
           }
         }
       }
@@ -649,7 +654,7 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
     },
     {
       name: 'webpilot_dev_get_formatter_logs',
-      description: 'DEVELOPER TOOL. Get health summary + recent error log entries for one platform formatter. Use this when iterating on a formatter or workflow to see why it failed — each entry includes the error message, truncated stack trace, phase (`format` for formatter errors during accessibility-tree rendering, `workflow` for errors raised inside `webpilot_run_workflow`), the workflow name + params + tabId for workflow errors, and an ISO timestamp. The `health` field summarizes overall activity ({ health: "healthy"|"unhealthy"|"unknown", lastError, successCount, errorCount, lastSuccessAt, lastErrorAt }). Note: only error entries are stored in the ring buffer; successful invocations bump counters and update `lastSuccessAt` but produce no log row. Pair with webpilot_reload_formatters to iterate quickly: edit → reload → run → call this if anything broke. Returns { platform, health, entries: [...], totalReturned, requestedLimit }.',
+      description: 'Get error history for a platform formatter. Workflow and tool errors already include the most recent diagnostic inline, so this is typically only needed when investigating multiple failures, comparing across runs, or developing a new formatter. Returns up to 50 entries from the per-formatter ring buffer.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -927,6 +932,28 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         console.log(`[policy] enforcement threw: ${err.message} — failing open`);
       }
 
+      // Formatter-guide gate. Runs after site-policy. Requires agents to call
+      // webpilot_get_formatter_info first for tabs that have a platform formatter.
+      // Fails CLOSED on internal errors — an exception blocks the request.
+      try {
+        const blocked = await _enforceFormatterGuide(params.name, params.arguments || {}, effectiveKey);
+        if (blocked) {
+          return { jsonrpc: '2.0', id, result: blocked };
+        }
+      } catch (err) {
+        console.error(`[formatter-guide] gate threw unexpectedly — blocking request:`, err);
+        return {
+          jsonrpc: '2.0', id, result: {
+            content: [{ type: 'text', text: JSON.stringify({
+              error: 'formatter_guide_gate_error',
+              message: 'Internal error in platform-guide gate; request blocked. See server logs.',
+              details: err.message
+            }) }],
+            isError: true
+          }
+        };
+      }
+
       try {
         const result = await handleToolCall(params, effectiveKey);
         return {
@@ -1143,6 +1170,9 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     try {
       formatted = formatterManager.formatTree(formatterUrl, nodes);
     } catch (err) {
+      if (err.__formatterIncident) {
+        throw err;
+      }
       console.warn('[mcp-handler] Formatter error, falling back to default:', err.message);
       formatted = formatterManager.formatTree(null, nodes);
     }
@@ -1431,6 +1461,78 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     return null;
   }
 
+  const FORMATTER_GUIDE_ALLOWLIST = new Set([
+    'request_pairing',
+    'check_pairing_status',
+    'webpilot_get_formatter_info',
+    'webpilot_dev_get_formatter_logs',
+    'browser_get_tabs',
+    'browser_close_tab',
+    'webpilot_reload_formatters',
+    'webpilot_dev_reload_extension'
+  ]);
+
+  const FORMATTER_GUIDE_GATED = new Set([
+    'browser_get_accessibility_tree',
+    'browser_click',
+    'browser_type',
+    'browser_scroll',
+    'browser_execute_js',
+    'browser_inject_script',
+    'browser_request_chain',
+    'webpilot_run_workflow'
+  ]);
+
+  async function _enforceFormatterGuide(toolName, args, apiKey) {
+    if (FORMATTER_GUIDE_ALLOWLIST.has(toolName)) return null;
+    if (!FORMATTER_GUIDE_GATED.has(toolName)) return null;
+
+    if (args && args.usePlatformOptimizer === false) return null;
+
+    const tabId = args && typeof (args.tab_id ?? args.tabId) === 'number'
+      ? (args.tab_id ?? args.tabId)
+      : null;
+    if (tabId === null) return null;
+
+    const profileId = resolveTargetProfile(apiKey);
+    if (!extensionBridge.isConnected(profileId)) return null;
+
+    const url = await _resolveTabUrl(profileId, tabId);
+    if (!url) return null;
+
+    const formatter = formatterManager.getFormatterNameForUrl(url);
+    if (!formatter) return null;
+
+    const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
+    const unlock = agentId ? formatterUnlockState.getUnlock(agentId, tabId) : null;
+
+    if (unlock) {
+      const currentFormatter = formatterManager.getFormatterNameForUrl(url);
+      if (currentFormatter !== unlock.formatter) {
+        // Navigated to a different platform — invalidate stale unlock and block for new formatter
+        if (agentId) formatterUnlockState.invalidate(agentId, tabId);
+        return _buildFormatterGuideBlock(currentFormatter || formatter, tabId);
+      }
+      // Still on the same formatter — pass
+      return null;
+    }
+
+    return _buildFormatterGuideBlock(formatter, tabId);
+  }
+
+  function _buildFormatterGuideBlock(platform, tab_id) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({
+        error: 'platform_guide_required',
+        platform,
+        tab_id,
+        message: `This tab is on a platform with a WebPilot formatter. Call webpilot_get_formatter_info({platform: '${platform}', tab_id: ${tab_id}}) before interacting with this tab. The response will include the navigation guide, instructions for operating the platform, and available sub-workflows / tools for doing tasks within the platform.`,
+        unlock_call: { tool: 'webpilot_get_formatter_info', params: { platform, tab_id } }
+      }) }],
+      isError: true
+    };
+  }
+
   async function handleToolCall(params, apiKey = null) {
     const { name, arguments: args } = params;
 
@@ -1687,7 +1789,65 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
     if (name === 'webpilot_get_formatter_info') {
       const info = formatterManager.getFormatterInfo(args.platform);
-      return { content: [{ type: 'text', text: JSON.stringify(info, null, 2) }] };
+      const runWorkflowHint = args.platform
+        ? `To run a workflow: webpilot_run_workflow({platform: '${args.platform}', workflow: '<name>', tab_id: <id>, params: {}})`
+        : undefined;
+      const baseResult = runWorkflowHint ? { ...info, runWorkflowHint } : info;
+
+      const tabId = typeof args.tab_id === 'number' ? args.tab_id : null;
+      if (tabId === null) {
+        return { content: [{ type: 'text', text: JSON.stringify(baseResult, null, 2) }] };
+      }
+
+      // tab_id provided — attempt unlock
+      const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
+      if (!agentId) {
+        // T8: no valid API key — discovery-only path
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ...baseResult,
+            unlocked: false,
+            reason: 'discovery-only: no API key provided, unlock skipped'
+          }, null, 2) }]
+        };
+      }
+
+      const profileId = resolveTargetProfile(apiKey);
+      let tabUrl = null;
+      if (extensionBridge.isConnected(profileId)) {
+        tabUrl = await _resolveTabUrl(profileId, tabId);
+      }
+
+      if (!tabUrl) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ...baseResult,
+            unlocked: false,
+            reason: 'tab URL could not be resolved'
+          }, null, 2) }]
+        };
+      }
+
+      const matchedFormatter = formatterManager.getFormatterNameForUrl(tabUrl);
+      if (!matchedFormatter || (args.platform && matchedFormatter !== args.platform)) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            ...baseResult,
+            unlocked: false,
+            reason: 'tab URL does not match formatter'
+          }, null, 2) }]
+        };
+      }
+
+      formatterUnlockState.recordUnlock(agentId, tabId, matchedFormatter, tabUrl);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({
+          ...baseResult,
+          unlocked: true,
+          unlockedPlatform: matchedFormatter,
+          runWorkflowHint: `To run a workflow: webpilot_run_workflow({platform: '${matchedFormatter}', workflow: '<name>', tab_id: ${tabId}, params: {}})`
+        }, null, 2) }]
+      };
     }
 
     if (name === 'webpilot_reload_formatters') {
@@ -1787,16 +1947,22 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         });
         return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(result && typeof result === 'object' ? result : { result }) }) }] };
       } catch (err) {
-        formatterLogs.recordError(platform, {
-          error: err,
-          phase: 'workflow',
-          workflow,
-          params: workflowParams,
-          tabId: workflowTabId
-        });
+        let incident;
+        if (err.__formatterIncident) {
+          incident = err.__formatterIncident;
+        } else {
+          incident = formatterLogs.recordError(platform, {
+            error: err,
+            phase: 'workflow',
+            workflow,
+            params: workflowParams,
+            tabId: workflowTabId
+          });
+        }
+        const diagnostics = formatterLogs.buildDiagnostics(incident, platform);
         console.warn(`[mcp:workflow] ${platform}/${workflow} failed: ${err.message}`);
         return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message }) }],
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, diagnostics }) }],
           isError: true
         };
       }
@@ -1818,8 +1984,14 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     // browser_create_tab is the readiness gate: it may launch/restart Chrome.
     if (name === 'browser_create_tab') {
       const result = await _browserCreateTab({ url: args.url }, apiKey);
+      const responseObj = typeof result === 'object' && result !== null ? result : { result };
+      const detectedFormatter = formatterManager.getFormatterNameForUrl(args.url);
+      const createdTabId = responseObj.tab_id ?? responseObj.tabId ?? responseObj.id ?? null;
+      if (detectedFormatter) {
+        responseObj.warning = `Platform '${detectedFormatter}' detected on the URL you opened. Call webpilot_get_formatter_info({platform: '${detectedFormatter}', tab_id: ${createdTabId}}) before interacting.`;
+      }
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+        content: [{ type: 'text', text: JSON.stringify(responseObj, null, 2) }]
       };
     }
 
@@ -1848,13 +2020,24 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       }
 
       case 'browser_get_accessibility_tree': {
-        const responseData = await _browserGetAccessibilityTree(args, apiKey);
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(responseData, null, 2)
-          }]
-        };
+        try {
+          const responseData = await _browserGetAccessibilityTree(args, apiKey);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(responseData, null, 2)
+            }]
+          };
+        } catch (err) {
+          if (err.__formatterIncident) {
+            const diagnostics = formatterLogs.buildDiagnostics(err.__formatterIncident, err.__platform);
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, diagnostics }) }],
+              isError: true
+            };
+          }
+          throw err;
+        }
       }
 
       case 'browser_inject_script':
@@ -1942,6 +2125,24 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
             } catch (e) {
               console.log(`[policy] chain-step enforcement threw: ${e.message}`);
             }
+            if (!stepResult) {
+              try {
+                const blocked = await _enforceFormatterGuide(step.tool, resolvedArgs || {}, apiKey);
+                if (blocked) {
+                  stepResult = blocked;
+                }
+              } catch (e) {
+                console.error(`[formatter-guide] chain-step gate threw — blocking step:`, e);
+                stepResult = {
+                  content: [{ type: 'text', text: JSON.stringify({
+                    error: 'formatter_guide_gate_error',
+                    message: 'Internal error in platform-guide gate; request blocked. See server logs.',
+                    details: e.message
+                  }) }],
+                  isError: true
+                };
+              }
+            }
             const result = stepResult || await handleToolCall(
               { name: step.tool, arguments: resolvedArgs },
               apiKey
@@ -1993,7 +2194,15 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
   return {
     handleSSE,
     handleMessage,
-    getSessionCount
+    getSessionCount,
+    // Drive the MCP message pipeline directly (no HTTP session required).
+    // Used by integration tests and non-HTTP transport layers.
+    processRequest: (message, mcpApiKey) =>
+      processMessage(message, { mcpApiKey, queue: [] }),
+    // The formatter-guide gate function. Exposed so callers that already have
+    // a resolved profileId / tabUrl can drive the gate without going through
+    // the full MCP pipeline.
+    enforceFormatterGuide: _enforceFormatterGuide
   };
 }
 

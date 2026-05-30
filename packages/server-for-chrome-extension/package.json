@@ -5,7 +5,7 @@
   "main": "index.js",
   "bin": "cli.js",
   "scripts": {
-    "test": "node test/formatter-updater-ref.test.js",
+    "test": "node test/formatter-diagnostics.test.js && node test/platform-guide-gate.test.js && node test/formatter-updater-ref.test.js",
     "start": "node index.js",
     "dev": "cross-env WEBPILOT_DEV=1 node --watch index.js",
     "dev:network": "cross-env WEBPILOT_DEV=1 node --watch index.js --network",
