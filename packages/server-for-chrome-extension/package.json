@@ -5,6 +5,7 @@
   "main": "index.js",
   "bin": "cli.js",
   "scripts": {
+    "test": "node test/formatter-updater-ref.test.js",
     "start": "node index.js",
     "dev": "cross-env WEBPILOT_DEV=1 node --watch index.js",
     "dev:network": "cross-env WEBPILOT_DEV=1 node --watch index.js --network",
@@ -21,6 +22,7 @@
       "src/**/*.js",
       "src/**/*.sql",
       "index.js",
+      "release-info.json",
       "../server-web-ui/out/**/*",
       "../../accessibility-tree-formatters/PUBKEY.pem"
     ],
