@@ -325,8 +325,13 @@ function formatTree(url, rawNodes) {
 
   // Match URL to platform
   if (url) {
+    let hostname;
     try {
-      const hostname = new URL(url).hostname;
+      hostname = new URL(url).hostname;
+    } catch (err) {
+      console.warn('[formatter-manager] URL parsing failed:', err.message);
+    }
+    if (hostname) {
       for (const [platformName, platformConfig] of Object.entries(manifest.platforms)) {
         if (hostname.includes(platformConfig.match)) {
           const baseDir = customPlatforms.has(platformName) ? customFormatterDir : formatterDir;
@@ -340,7 +345,7 @@ function formatTree(url, rawNodes) {
             return result;
           } catch (err) {
             console.warn(`[formatter-manager] Platform formatter ${platformName} failed:`, err.message);
-            formatterLogs.recordError(platformName, { error: err, phase: 'format' });
+            const incident = formatterLogs.recordError(platformName, { error: err, phase: 'format' });
 
             // Honor per-formatter `errorHandling.fallbackToRawTree` (defaults
             // to true if the per-formatter manifest is missing or did not
@@ -348,14 +353,14 @@ function formatTree(url, rawNodes) {
             const pm = perFormatterManifests[platformName];
             const fallback = !pm || !pm.errorHandling || pm.errorHandling.fallbackToRawTree !== false;
             if (!fallback) {
+              err.__formatterIncident = incident;
+              err.__platform = platformName;
               throw err;
             }
             // Fall through to default
           }
         }
       }
-    } catch (err) {
-      console.warn('[formatter-manager] URL parsing failed:', err.message);
     }
   }
 
