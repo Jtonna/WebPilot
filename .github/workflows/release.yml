@@ -149,7 +149,7 @@ jobs:
           git remote add origin "https://github.com/${{ github.repository }}.git"
           # Fetch ONLY the target ref to avoid Windows case-insensitive FS
           # collisions between FEAT/ and feat/ prefixed branches.
-          git fetch --no-tags --depth=0 origin "$REF"
+          git fetch --no-tags origin "$REF"
           git checkout --detach FETCH_HEAD
           echo "Checked out at:"
           git log -1 --oneline
