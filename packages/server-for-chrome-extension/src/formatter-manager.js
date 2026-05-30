@@ -314,6 +314,21 @@ function init() {
   loadAllPerFormatterManifests();
 }
 
+function getFormatterNameForUrl(url) {
+  if (!url || !manifest) return null;
+  try {
+    const hostname = new URL(url).hostname;
+    for (const [platformName, platformConfig] of Object.entries(manifest.platforms)) {
+      if (hostname.includes(platformConfig.match)) {
+        return platformName;
+      }
+    }
+  } catch (_e) {
+    // malformed URL
+  }
+  return null;
+}
+
 function formatTree(url, rawNodes) {
   if (!manifest) {
     console.warn('[formatter-manager] No manifest loaded — returning raw nodes');
@@ -613,6 +628,7 @@ function getShadowedFormatterManifests() {
 module.exports = {
   init,
   formatTree,
+  getFormatterNameForUrl,
   reload,
   getFormatterInfo,
   getCustomFormatterDir,

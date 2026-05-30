@@ -9,6 +9,7 @@
     "dev": "cross-env WEBPILOT_DEV=1 node --watch index.js",
     "dev:network": "cross-env WEBPILOT_DEV=1 node --watch index.js --network",
     "start:network": "node index.js --network",
+    "test": "node test/platform-guide-gate.test.js",
     "build": "echo Use build:win, build:mac, or build:linux && exit 1",
     "build:web-ui": "cd ../server-web-ui && npm run build",
     "build:win": "npm run build:web-ui && pkg . --target node22-win-x64 --out-path dist && node scripts/copy-native-deps.js",
