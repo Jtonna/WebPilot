@@ -169,6 +169,9 @@ Get information about available platform-specific formatters and instructions fo
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `platform` | string | No | Filter to a specific platform (e.g., `"threads"`, `"zillow"`). Omit to return all platforms. |
+| `tab_id` | number | No | Browser tab ID. When provided with a valid API key and the URL matches a formatter, records an unlock for (agentId, formatter, tab_id) so subsequent gated calls on that tab pass the platform-guide gate. Omit for pure discovery. |
+
+**Side effects:** When `tab_id` is provided with a valid API key and the tab's URL matches a formatter, the call records an unlock entry for the (agentId, platform, tab_id) tuple. This allows the agent to call gated tools (`browser_get_accessibility_tree`, `browser_click`, `browser_type`, `browser_scroll`, `browser_execute_js`, `browser_inject_script`, `browser_request_chain`, `webpilot_run_workflow`) on that tab without hitting `platform_guide_required`. Without `tab_id`, the tool is pure discovery.
 
 **Returns:**
 ```json
@@ -319,6 +322,11 @@ webpilot_run_workflow(
 
 Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name: 'Message textbox' })`, clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
 
+**Errors:**
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- `Workflow not found: <workflow>` — Workflow does not exist or is not implemented (`implemented: false` in manifest).
+- `Invalid workflow parameters: ...` — Parameter types do not match the workflow declaration.
+
 **Notes:**
 - Workflow runtime errors include inline `diagnostics` in the error response (phase, workflow, platform, tabId), so you can see what failed without calling `webpilot_dev_get_formatter_logs`.
 - Errors are also recorded to per-formatter logs so the Web UI Formatters tab can surface recent errors for pattern analysis.
@@ -402,9 +410,18 @@ Opens a new browser tab with the specified URL.
 {
   "tab_id": 1062346731,
   "url": "https://example.com",
-  "title": ""
+  "title": "",
+  "warning": "Platform 'threads' detected on the URL you opened. Call webpilot_get_formatter_info({platform:'threads', tab_id:1062346731}) before interacting."
 }
 ```
+
+**Response Fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `tab_id` | number | The new tab's ID for future reference |
+| `url` | string | The URL the tab was opened with |
+| `title` | string | Page title (may be empty if page hasn't finished loading) |
+| `warning` | string | Optional. Present when the requested URL matches a platform with a formatter. Names the formatter and the unlock call needed before interacting with the tab. |
 
 **Notes:**
 - Title may be empty if the page hasn't finished loading
@@ -549,6 +566,7 @@ Refs (e1, e2, e3...) are stable identifiers for each element. These can be used 
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `Another debugger is already attached to this tab` - DevTools or another extension is debugging the tab
 - `Failed to attach debugger: ...` - Tab may not exist or be a protected page (chrome://, etc.)
 - Formatter errors return `{ ok: false, error: "<message>", diagnostics: {...} }` (rather than throwing). The `diagnostics` object includes `phase`, `platform`, `tabId`, and error context.
@@ -593,6 +611,7 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `Fetched script is empty` - Script fetch returned empty content
 - `Cannot inject scripts into protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Unsupported protocol: ...` - Script URL uses non-HTTP(S) protocol
@@ -659,6 +678,7 @@ browser_execute_js(tab_id, 'fetch("/api/data").then(r => r.json())')
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `code is required` - Missing code parameter
 - `Cannot execute scripts on protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Another debugger is already attached to this tab` - Close DevTools or other debuggers first
@@ -801,6 +821,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `Either selector, ref, or x,y coordinates are required` - No click target provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist in stored refs
 - `Element for ref "eX" no longer exists in DOM` - Page changed since tree fetch
@@ -915,6 +936,7 @@ browser_scroll(tab_id, ref="e5")
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `Either ref/selector OR pixels is required` - No scroll target provided
 - `Cannot specify both element target and pixels - use one or the other` - Both ref/selector and pixels provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
@@ -998,6 +1020,7 @@ browser_type(tab_id, text="test", delay=100)
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `text is required` - Missing text parameter
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
 - `Another debugger is already attached to this tab` - Close DevTools first
@@ -1074,7 +1097,10 @@ browser_request_chain(
 )
 ```
 
+**Per-step locking behavior:** If a step targets a tab that's locked behind a formatter guide, that step's result is the inline `platform_guide_required` block envelope (with `platform`, `tab_id`, `unlock_call`). Other steps continue executing. An earlier step that calls `webpilot_get_formatter_info({platform, tab_id})` unlocks the tab for subsequent steps in the same chain.
+
 **Errors:**
+- `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - `Unknown tool(s) in chain: step 0: "nonexistent_tool"` -- invalid tool name
 - `Step 2 references $2 which has not executed yet` -- forward or self reference
 - `Cannot use return_mode "last" with an empty steps array` -- empty steps with last mode

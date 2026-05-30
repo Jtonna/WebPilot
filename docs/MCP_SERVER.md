@@ -203,7 +203,7 @@ Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, 
 | `browser_scroll` | Scroll to element or by pixel amount | `tab_id`, `ref?`, `selector?`, `pixels?` |
 | `browser_type` | Type text with CDP keyboard simulation | `tab_id`, `text`, `ref?`, `selector?`, `delay?`, `pressEnter?` |
 | `browser_request_chain` | Execute multiple tool calls sequentially with result referencing | `steps`, `return_mode?` |
-| `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers | `platform?` |
+| `webpilot_get_formatter_info` | Get info on available platform-specific formatters and instructions for creating custom platform optimizers. When `tab_id` is provided with a valid API key and the URL matches a gated formatter, also records an unlock side-effect so the agent can interact with that tab. | `platform?`, `tab_id?` |
 | `webpilot_reload_formatters` | DEVELOPER TOOL. Reload all formatters (auto-updated + custom) without restarting the server. Auth-gated (reloads code from disk → mutates server state). | (none) |
 | `webpilot_dev_get_formatter_logs` | Get error history for a platform formatter. Workflow and tool errors already include the most recent diagnostic inline, so this is typically only needed when investigating multiple failures, comparing across runs, or developing a new formatter. Returns up to 50 entries from the per-formatter ring buffer. | `platform`, `limit?` |
 | `webpilot_dev_reload_extension` | Triggers `chrome.runtime.reload()` in the extension service worker bound to the caller's profile, so edits under `packages/chrome-extension-unpacked/` take effect without manually reloading from `chrome://extensions/`. Per-profile scope only — other paired agents must call it from their own profile to reload everywhere. WS drops momentarily; the paired API key persists. | `api_key?` |
@@ -225,7 +225,7 @@ WebPilot runs three distinct trust boundaries: MCP tool calls from AI agents (pa
 
 **MCP tool calls — paired API keys (unchanged).** Agent-layer keys are obtained through the **pairing handshake**. An AI agent without a key calls the `request_pairing` MCP tool with a memorable `agent_name`. The server creates a pending pairing entry, surfaces an approval URL through the desktop notification path, and returns a `pairing_id` to the agent. The human reviewer approves (or denies) the request in the local Web UI and chooses which Chrome profile the new key will be bound to. The agent then calls `check_pairing_status` with that `pairing_id` and — once the status flips to `approved` — receives the freshly minted `api_key`. The same key can be re-used across sessions; it is presented either as the `X-API-Key` HTTP header or as an `api_key` argument on each tool call. Keys are persisted in the `agents` SQLite table (HMAC-SHA-256 hash + per-server pepper, never the plaintext) along with their bound profile, `created_at`, and `last_seen_at` timestamps; unused keys auto-expire after 48 hours and pending pairings expire after 24 hours.
 
-Four tools are intentionally exempt from the auth gate: `request_pairing` and `check_pairing_status` (because they *are* the handshake — requiring a key would be circular), and `webpilot_get_formatter_info` plus `webpilot_dev_get_formatter_logs` (strictly read-only inspection of formatter metadata and the in-memory error ring buffer; nothing sensitive is exposed). Every other tool — `browser_*`, `webpilot_run_workflow`, `webpilot_reload_formatters`, `webpilot_dev_reload_extension`, `browser_request_chain` — requires a valid paired key. `webpilot_reload_formatters` reloads formatter code from disk and therefore mutates server state, so it is auth-gated like the other mutating tools.
+Four tools are intentionally exempt from the API-key auth gate: `request_pairing` and `check_pairing_status` (because they *are* the handshake — requiring a key would be circular), and `webpilot_get_formatter_info` plus `webpilot_dev_get_formatter_logs` (strictly read-only inspection of formatter metadata and the in-memory error ring buffer; nothing sensitive is exposed). Note that the **formatter guide gate** (see below) is a separate enforcement layer with its own exemption list — `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`, `request_pairing`, `check_pairing_status`, `browser_get_tabs`, `browser_close_tab`, `webpilot_reload_formatters`, and `webpilot_dev_reload_extension` are exempt; every other tool is gated when its target tab is on a formatter-covered URL. Every other tool — `browser_*`, `webpilot_run_workflow`, `webpilot_reload_formatters`, `webpilot_dev_reload_extension`, `browser_request_chain` — requires a valid paired key. `webpilot_reload_formatters` reloads formatter code from disk and therefore mutates server state, so it is auth-gated like the other mutating tools.
 
 Every comparison of a caller-supplied API key against a stored key uses `crypto.timingSafeEqual` (wrapped in the `constantTimeEqual` helper in `src/paired-keys.js`). This applies to the MCP tool-call auth path (`pairedKeys.validateKey`) and every paired-keys lookup the Web UI admin endpoints perform (rename, re-bind, revoke, touch). A naive `===` short-circuits at the first differing byte and leaks position information; the constant-time compare prevents that. The extension WS upgrade no longer does a secret compare — installId is a non-secret identifier looked up by exact match in SQLite.
 
@@ -252,6 +252,32 @@ When the gate denies a call:
 `browser_get_tabs` and `browser_close_tab` are always allowed — agents can see what's open and can close blocked tabs themselves.
 
 The webapp's `/ui/sites/` admin page is the canonical surface for managing both `global_site_rules` and `agent_site_overrides`. The minimal popup exposes a single Block/Allow toggle that mutates `global_site_rules` for the current tab's domain.
+
+### Formatter guide gate
+
+Independently of site-policy, every gated tool call (`browser_get_accessibility_tree`, `browser_click`, `browser_type`, `browser_scroll`, `browser_execute_js`, `browser_inject_script`, `browser_request_chain`, `webpilot_run_workflow`) runs through the `enforceFormatterGuide` middleware. If the target tab's URL is covered by a platform formatter (detected via `formatterManager.getFormatterNameForUrl(url)`) and the agent has not yet unlocked that formatter+tab pair, the call is blocked with error code `platform_guide_required`.
+
+**Allowlist** (never blocked): `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`, `browser_get_tabs`, `browser_close_tab`, `webpilot_reload_formatters`, `webpilot_dev_reload_extension`.
+
+**Unlock mechanism:** Agents unlock a formatter+tab pair by calling `webpilot_get_formatter_info({ platform, tab_id })`. The server records the unlock in per-agent in-memory state (`formatterUnlockState`), keyed by `agentId`. Subsequent calls to gated tools on that tab pass. Cross-domain navigation **within the same formatter** (e.g. `discord.com` ↔ `discordapp.com`) preserves the unlock; navigation to a **different** formatter invalidates it.
+
+**Block envelope (returned as MCP `isError: true`):**
+
+```json
+{
+  "error": "platform_guide_required",
+  "platform": "discord",
+  "tab_id": 123,
+  "message": "This tab is on a platform with a WebPilot formatter. Call webpilot_get_formatter_info(...) before interacting with this tab. The response will include the navigation guide, instructions for operating the platform, and available sub-workflows / tools for doing tasks within the platform.",
+  "unlock_call": { "tool": "webpilot_get_formatter_info", "params": { "platform": "discord", "tab_id": 123 } }
+}
+```
+
+**Bypass:** Pass `usePlatformOptimizer: false` on `browser_get_accessibility_tree` (or any tool that accepts it) to skip the gate when intentionally inspecting raw transient UI.
+
+**Per-step enforcement in `browser_request_chain`:** Locking is evaluated per step. A locked step's result is the inline block envelope; other steps continue. An earlier step that calls `webpilot_get_formatter_info({ platform, tab_id })` unlocks the tab for later steps in the same chain.
+
+**Fail-closed:** If the gate's own code throws an internal error, the request is blocked with a `formatter_guide_gate_error` envelope and the original exception is logged server-side. The gate does NOT silently pass through on internal errors.
 
 ## Communication Flow
 
