@@ -46,6 +46,7 @@ jobs:
       tag: ${{ steps.plan.outputs.tag }}
       ref: ${{ steps.plan.outputs.ref }}
       should_release: ${{ steps.plan.outputs.should_release }}
+      should_build: ${{ steps.plan.outputs.should_build }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,11 +76,15 @@ jobs:
               return JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
             }
 
-            function emit({version, tag, refOut, shouldRelease}) {
+            function emit({version, tag, refOut, shouldRelease, shouldBuild}) {
               core.setOutput('version', version || '');
               core.setOutput('tag', tag || '');
               core.setOutput('ref', refOut || '');
               core.setOutput('should_release', shouldRelease ? 'true' : 'false');
+              // Default: build whenever we'd release; dispatch with dry_run=true
+              // overrides to build-but-not-release.
+              const sb = shouldBuild === undefined ? !!shouldRelease : !!shouldBuild;
+              core.setOutput('should_build', sb ? 'true' : 'false');
             }
 
             // ---- workflow_call: dispatcher already bumped + tagged ----
@@ -111,7 +116,8 @@ jobs:
                 version,
                 tag: 'v' + version,
                 refOut: context.ref,
-                shouldRelease: !dryRun
+                shouldRelease: !dryRun,
+                shouldBuild: true
               });
             }
 
@@ -123,7 +129,7 @@ jobs:
     needs: decide
     # Mac + Linux build legs are intentionally disabled until those platforms
     # are functionally verified. Tracked in issues #48 (macOS) and #49 (Linux).
-    if: needs.decide.outputs.should_release == 'true'
+    if: needs.decide.outputs.should_build == 'true'
     runs-on: windows-latest
 
     steps:
