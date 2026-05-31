@@ -135,17 +135,12 @@ Tick each of these by hand on first run.
       compare. The matcher is case-sensitive and whitespace-sensitive.
 - [ ] Verify `--user-data-dir=` is extracted correctly when the path
       contains spaces (e.g. `/Users/<you>/Library/Application Support/
-      Google/Chrome`). The regex in `macos-detector.extractUserDataDir`
-      handles both quoted (`"…"`) and bare-with-no-spaces forms. macOS
-      `ps -ww -o command=` output does **not** quote spaces — so the
-      bare form will capture only up to the first space and lose the
-      rest of the path. Note that `launcher.js` deliberately omits
-      `--user-data-dir` when it equals the default (see
-      `getDefaultUserDataDir()`), so the default-path case won't have
-      the flag on the cmdline at all — the regex bug only bites when an
-      explicit non-default user-data-dir containing spaces is passed.
-      Still likely to need a regex fix on first try if anyone uses a
-      custom UDD with spaces.
+      Google/Chrome`). `macos-detector.extractUserDataDir` now captures
+      unquoted macOS `ps -ww -o command=` values through the next
+      Chrome `--flag`, which covers Chrome paths containing spaces. Note
+      that `launcher.js` deliberately omits `--user-data-dir` when it
+      equals the default (see `getDefaultUserDataDir()`), so the
+      default-path case won't have the flag on the cmdline at all.
 
 ### Notification system
 
