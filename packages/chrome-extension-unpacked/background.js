@@ -40,32 +40,12 @@ let config = {
   serverUrl: null
 };
 
-// Restricted mode whitelist cache
-let restrictedModeCache = {
-  enabled: true,  // default ON
-  domains: [],    // default empty = block all
-  loaded: false   // true once storage has been read
-};
-
-// Initialize cache from storage
-let _whitelistReady = new Promise((resolve) => {
-  chrome.storage.local.get(['restrictedModeEnabled', 'whitelistedDomains'], (result) => {
-    restrictedModeCache.enabled = result.restrictedModeEnabled !== false; // default true
-    restrictedModeCache.domains = result.whitelistedDomains || [];
-    restrictedModeCache.loaded = true;
-    resolve();
-  });
-});
+// Vestigial keys from a removed client-side whitelist gate (issue #80); site policy is enforced server-side.
+chrome.storage.local.remove(['restrictedModeEnabled', 'whitelistedDomains']);
 
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
-  // Explicitly initialize restricted mode to ON if not already set by user
-  chrome.storage.local.get(['restrictedModeEnabled'], (result) => {
-    if (result.restrictedModeEnabled === undefined) {
-      chrome.storage.local.set({ restrictedModeEnabled: true });
-    }
-  });
   // Mint a persistent installId on first install so the server can map this
   // extension install to a Chrome profileId independently of
   // extension-storage state. Idempotent — only set if not already present.
@@ -638,8 +618,6 @@ async function handleServerCommand(message) {
   }
 
   try {
-    await checkWhitelist(type, params);
-
     let result;
 
     switch (type) {
@@ -716,51 +694,6 @@ function sendResult(id, success, result, error = null) {
   }
 }
 
-// Whitelist helper functions
-function isDomainWhitelisted(url) {
-  if (!restrictedModeCache.enabled) return true;
-
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return restrictedModeCache.domains.some(entry =>
-      hostname === entry || hostname.endsWith('.' + entry)
-    );
-  } catch {
-    return false; // fail-closed: invalid URLs are blocked
-  }
-}
-
-async function checkWhitelist(type, params) {
-  // Wait for cache to be populated from storage on service worker startup
-  if (!restrictedModeCache.loaded) {
-    await _whitelistReady;
-  }
-
-  if (!restrictedModeCache.enabled) return; // restricted mode off, allow all
-  if (type === 'get_tabs') return; // get_tabs is always allowed
-
-  let url;
-  if (type === 'create_tab') {
-    url = params.url;
-  } else if (params.tab_id) {
-    try {
-      const tab = await chrome.tabs.get(params.tab_id);
-      url = tab.url;
-    } catch (err) {
-      // Tab doesn't exist or can't be accessed — fail-closed
-      throw new Error(`Blocked: Unable to verify tab domain (tab_id=${params.tab_id}, reason=${err.message}). The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
-    }
-  } else {
-    return; // no tab context to check
-  }
-
-  if (!url || !isDomainWhitelisted(url)) {
-    let domain = 'unknown';
-    try { domain = new URL(url).hostname; } catch {}
-    throw new Error(`Blocked: ${domain} is not whitelisted. Whitelist contains: [${restrictedModeCache.domains.join(', ')}]. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.`);
-  }
-}
-
 // Event listeners for cleanup
 chrome.webNavigation.onCompleted.addListener(handleNavigationComplete);
 
@@ -781,12 +714,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
     if (changes.serverUrl) {
       config.serverUrl = changes.serverUrl.newValue;
-    }
-    if (changes.restrictedModeEnabled) {
-      restrictedModeCache.enabled = changes.restrictedModeEnabled.newValue !== false;
-    }
-    if (changes.whitelistedDomains) {
-      restrictedModeCache.domains = changes.whitelistedDomains.newValue || [];
     }
   }
 });

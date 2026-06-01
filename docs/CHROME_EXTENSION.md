@@ -206,7 +206,7 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The popup was gutted to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, restricted-mode whitelist) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
+The popup was gutted to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, site policy) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
 
 ### What the popup shows
 
@@ -266,7 +266,7 @@ It does **not** send any `chrome.runtime.sendMessage` to the background service 
 
 ### Per-profile reload required
 
-The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** when the popup was rewritten, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`1.1.8`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
+The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** when the popup was rewritten, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`2.2.0`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
 
 For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
 
@@ -290,8 +290,6 @@ Settings and state are stored in `chrome.storage.local`:
 |-----|------|---------|-------------|
 | `focusNewTabs` | boolean | false | Whether new tabs receive focus |
 | `tabMode` | string | `'group'` | Tab organization mode (`'group'` or `'window'`) |
-| `restrictedModeEnabled` | boolean | true | Whether restricted mode is active |
-| `whitelistedDomains` | string[] | `[]` | Whitelisted domains for restricted mode |
 | `serverUrl` | string | null | WebSocket server URL (from `/connect`) |
 | `sseUrl` | string | null | SSE endpoint URL |
 | `networkMode` | boolean | false | Cached network mode flag (UI hint only) |
@@ -384,4 +382,4 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 Host permission `<all_urls>` allows the extension to operate on any website.
 
-Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "1.1.8"`. The background service worker is declared with `"type": "module"`.
+Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "2.2.0"`. The background service worker is declared with `"type": "module"`.
