@@ -10,6 +10,28 @@ permissions:
   pull-requests: read
 
 jobs:
+  server-tests:
+    name: Server tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run server tests
+        run: npm run test --workspace=packages/server-for-chrome-extension
+
   build:
     name: Build (windows)
     # Mac + Linux build legs are intentionally disabled until those platforms

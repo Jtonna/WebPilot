@@ -9,17 +9,36 @@ const FLAG = '--silent-debugger-extension-api';
 // per the spec, but the author cannot fully validate it on this Windows
 // machine. Cross-platform smoke testing required before relying on this.
 
-function extractUserDataDir(cmdLine) {
+function extractFlagValue(cmdLine, flag) {
   if (!cmdLine) return null;
-  let m = cmdLine.match(/--user-data-dir=(?:"([^"]*)"|(\S+))/);
-  if (m) return m[1] || m[2] || null;
+
+  const marker = `${flag}=`;
+  const start = cmdLine.indexOf(marker);
+  if (start === -1) return null;
+
+  const raw = cmdLine.slice(start + marker.length).trimStart();
+  if (!raw) return null;
+
+  if (raw.startsWith('"')) {
+    const endQuote = raw.indexOf('"', 1);
+    if (endQuote !== -1) return raw.slice(1, endQuote);
+    return raw.slice(1).trim() || null;
+  }
+
+  const nextFlag = raw.search(/\s--[A-Za-z0-9][A-Za-z0-9-]*(?:=|\s|$)/);
+  const value = nextFlag === -1 ? raw : raw.slice(0, nextFlag);
+  return value.trim() || null;
+}
+
+function extractUserDataDir(cmdLine) {
+  const value = extractFlagValue(cmdLine, '--user-data-dir');
+  if (value) return value;
   return null;
 }
 
 function extractProfileDirectory(cmdLine) {
-  if (!cmdLine) return null;
-  const m = cmdLine.match(/--profile-directory=(?:"([^"]*)"|(\S+))/);
-  if (m) return m[1] || m[2] || null;
+  const value = extractFlagValue(cmdLine, '--profile-directory');
+  if (value) return value;
   return null;
 }
 
@@ -92,4 +111,11 @@ async function detect() {
   return out;
 }
 
-module.exports = { detect, FLAG };
+module.exports = {
+  detect,
+  // Exposed for unit-test coverage of macOS ps command-line quirks.
+  _extractUserDataDir: extractUserDataDir,
+  _extractProfileDirectory: extractProfileDirectory,
+  _isBrowserParent: isBrowserParent,
+  FLAG,
+};
