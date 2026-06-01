@@ -16,6 +16,7 @@ const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
 const { getDataDir, getLogPath } = require('./service/paths');
+const { getReleaseInfo } = require('./release-info');
 
 /**
  * Resolve the absolute path to the WebPilot Chrome-extension folder the user
@@ -440,6 +441,18 @@ function mountWebUiRoutes(app, deps) {
   // Extra localhost gate layered onto every mutating admin endpoint. See
   // makeMutatingUiAuth() for the rationale.
   const mutatingAuth = makeMutatingUiAuth(hostBinding);
+
+  // Build provenance — channel, version, ref, builtAt. Read-only; no auth
+  // beyond the standard localhost gate. Returns the memoised release-info
+  // object (or dev fallback if release-info.json is absent).
+  app.get('/api/ui/release', auth, (req, res) => {
+    try {
+      res.json(getReleaseInfo());
+    } catch (e) {
+      console.error('[ui-api] /api/ui/release failed:', e.message);
+      res.status(500).json({ error: 'Failed to read release info' });
+    }
+  });
 
   app.get('/api/ui/status', auth, async (req, res) => {
     try {

@@ -52,6 +52,12 @@ export function getStatus() {
   return apiFetch('/api/ui/status');
 }
 
+// Build provenance — { ref, channel, version, builtAt }.
+// Returns dev fallback when release-info.json is absent (local dev checkout).
+export function getReleaseInfo() {
+  return apiFetch('/api/ui/release');
+}
+
 export function approvePairing(pairingId, profileId, newProfileName) {
   const body = { profileId: profileId || null };
   if (profileId === '__new__' && newProfileName) {
