@@ -137,11 +137,7 @@ updateJson(
   }
 );
 
-// 6. packages/server-for-chrome-extension/src/mcp-handler.js
-//    (no-op since #69) — serverInfo.version is now read dynamically from
-//    release-info.json via getReleaseInfo(). No literal to patch here.
-
-// 7. packages/server-for-chrome-extension/package-lock.json
+// 6. packages/server-for-chrome-extension/package-lock.json
 //    Update both top-level "version" and packages[""].version
 updateJson(
   path.join(ROOT, 'packages/server-for-chrome-extension/package-lock.json'),
@@ -155,7 +151,7 @@ updateJson(
   }
 );
 
-// 8. Root package-lock.json
+// 7. Root package-lock.json
 //    Update both top-level "version" and packages[""].version
 updateJson(path.join(ROOT, 'package-lock.json'), (obj) => {
   const old = obj.version;
