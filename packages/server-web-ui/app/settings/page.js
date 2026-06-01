@@ -8,6 +8,7 @@ import Toggle from '../../components/Toggle';
 import { useToast } from '../../components/ToastRegion';
 import {
   getStatus,
+  getReleaseInfo,
   setNetworkMode as apiSetNetworkMode,
   setNotificationSettings,
   restartServer,
@@ -40,6 +41,8 @@ export default function SettingsPage() {
   const [theme, setThemeState] = useState('system');
   const [notifOn, setNotifOn] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
+  // null = still loading; populated once /api/ui/release responds.
+  const [releaseInfo, setReleaseInfo] = useState(null);
   const toast = useToast();
   // The settings copy buttons toast success/failure with a per-call label.
   // We close over `pendingLabelRef` so the hook's onSuccess/onError handlers
@@ -77,6 +80,9 @@ export default function SettingsPage() {
     refresh();
     const storedTheme = getTheme();
     setThemeState(storedTheme || 'system');
+    // Load build provenance independently so a slow status call
+    // does not delay the version display.
+    getReleaseInfo().then(setReleaseInfo).catch(() => { /* non-fatal */ });
   }, []);
 
   function handleThemeChange(value) {
@@ -181,7 +187,13 @@ export default function SettingsPage() {
 
           <div className="wp-inset-row">
             <div className="wp-inset-row-grow">
-              <div className="wp-inset-row-title">WebPilot v1.0.0</div>
+              <div className="wp-inset-row-title">
+                {releaseInfo === null
+                  ? 'WebPilot …'
+                  : releaseInfo.channel === 'stable'
+                    ? `WebPilot v${releaseInfo.version}`
+                    : `WebPilot v${releaseInfo.version} (${releaseInfo.channel})`}
+              </div>
               <div className="wp-inset-row-sub">A local-first browser bridge for MCP agents.</div>
             </div>
           </div>
