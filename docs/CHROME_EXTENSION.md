@@ -206,7 +206,7 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The popup was gutted to a **minimal status-and-escape-hatch panel** themed to match the webapp. All admin (agent management, sites management, pairing approval, profile picker, network-mode toggle, site policy) moved to the server-hosted web UI at `http://localhost:3456/ui/`. The popup files are still `popup/popup.html` + `popup/popup.js` + `popup/popup.css`.
+The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`.
 
 ### What the popup shows
 
@@ -264,11 +264,8 @@ Writes a `source='user'` row to `global_site_rules` via `sitePolicy.setGlobalRul
 
 It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 
-### Per-profile reload required
-
-The popup change requires a **one-time chrome://extensions/ reload per profile** to install the new HTML/JS/CSS. The extension version was bumped to **`1.1.4`** when the popup was rewritten, and the 2026-05-17 auth cutover (transport-key retirement + `apiKey`-storage purge) shipped in subsequent `1.1.x` releases — the current manifest version is **`2.2.0`** (see `packages/chrome-extension-unpacked/manifest.json`). You can confirm which copy is live from `chrome://extensions/`.
-
-For developers: the `webpilot_dev_reload_extension` MCP tool automates the reload on the *calling agent's* paired profile (the server routes `reload_extension` to that one profile's WebSocket). Multi-profile installs still need one tool call per profile (or a manual reload in each profile's `chrome://extensions/` page) — see `accessibility-tree-formatters/DEV_GUIDE.md` for the per-profile-scope details.
+### Per-profile installation
+Each Chrome profile loads its own copy of the extension. The `webpilot_dev_reload_extension` MCP tool reloads the extension on the calling agent's paired profile; the server routes `reload_extension` to that one profile's WebSocket. Multi-profile installs need one tool call per profile, or a manual reload at `chrome://extensions/` in each profile (see `accessibility-tree-formatters/DEV_GUIDE.md`).
 
 ### Web UI takeover
 
