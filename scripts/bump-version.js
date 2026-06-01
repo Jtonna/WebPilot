@@ -138,13 +138,8 @@ updateJson(
 );
 
 // 6. packages/server-for-chrome-extension/src/mcp-handler.js
-//    Replace version: '...' inside the serverInfo object (single-line form).
-//    Pattern is anchored to the serverInfo object to avoid matching other version fields.
-updateJs(
-  path.join(ROOT, 'packages/server-for-chrome-extension/src/mcp-handler.js'),
-  /serverInfo:\s*\{[^}]*version:\s*'[^']*'/,
-  (matched) => matched.replace(/version:\s*'[^']*'/, "version: '" + newVersion + "'")
-);
+//    (no-op since #69) — serverInfo.version is now read dynamically from
+//    release-info.json via getReleaseInfo(). No literal to patch here.
 
 // 7. packages/server-for-chrome-extension/package-lock.json
 //    Update both top-level "version" and packages[""].version
