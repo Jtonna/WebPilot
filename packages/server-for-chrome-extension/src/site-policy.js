@@ -139,12 +139,18 @@ function _findAgentOverride(agentId, domain) {
 
 /**
  * Look up a global_site_rules row covering this domain (exact or suffix).
- * Returns the matching DB row or null.
+ * Returns the matching DB row or null. Rows with source='baseline' are
+ * omitted when baseline_blocklist_enabled is false.
  */
 function _findGlobalRule(domain) {
   if (!domain) return null;
+  const includeBaseline = require('./blocklist-updater').isBaselineEnabled();
   const db = dbModule.getDb();
-  const stmt = db.prepare('SELECT * FROM global_site_rules WHERE domain = ?');
+  const stmtAll = db.prepare('SELECT * FROM global_site_rules WHERE domain = ?');
+  const stmtNoBaseline = db.prepare(
+    "SELECT * FROM global_site_rules WHERE domain = ? AND source != 'baseline'"
+  );
+  const stmt = includeBaseline ? stmtAll : stmtNoBaseline;
   for (const candidate of _suffixCandidates(domain)) {
     const row = stmt.get(candidate);
     if (row) return row;

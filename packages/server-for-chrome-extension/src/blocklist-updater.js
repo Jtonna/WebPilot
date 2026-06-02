@@ -562,6 +562,7 @@ module.exports = {
   init,
   checkForUpdates,
   getStatus,
+  isBaselineEnabled: _isBaselineEnabled,
   // exposed for tests
   _parseHostsFile,
 };
