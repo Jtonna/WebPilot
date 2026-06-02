@@ -71,7 +71,7 @@ case 'browser_your_tool_name': {
 }
 ```
 
-Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers — it owns the policy / whitelist checks and the WebSocket round-trip to the extension via `extension-bridge.js`.
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers — it owns the site-policy checks and the WebSocket round-trip to the extension via `extension-bridge.js`.
 
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 

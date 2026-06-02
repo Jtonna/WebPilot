@@ -50,32 +50,20 @@ The web UI's Agents page exposes a profile dropdown per row. Selecting a differe
 
 Unauthenticated or invalid-key requests receive MCP error code `-32001`.
 
-## Security: Restricted Mode
+## Security: Site Policy
 
-**Restricted mode is ON by default.** All MCP commands that interact with web pages are blocked until the domain is explicitly whitelisted by the user. This prevents automated actions on sensitive sites without user consent.
+Site-policy enforcement is **server-side**, implemented by `isAllowed(agentId, url)` in `packages/server-for-chrome-extension/src/site-policy.js`. The extension does not enforce site policy — it executes commands. See `docs/MCP_SERVER.md` for the canonical reference.
 
-**Affected commands:**
-- `browser_create_tab`
-- `browser_close_tab`
-- `browser_get_accessibility_tree`
-- `browser_inject_script`
-- `browser_execute_js`
-- `browser_click`
-- `browser_scroll`
-- `browser_type`
+**Enforcement point:** every `browser_*` tool call (`browser_create_tab`, `browser_close_tab`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `browser_click`, `browser_scroll`, `browser_type`) and `webpilot_run_workflow` is checked by `mcp-handler.js` at MCP dispatch time (checkpoints A and B) before the command reaches the extension. `browser_get_tabs` is exempt (no URL context).
 
-**Unaffected commands:**
-- `browser_get_tabs` (read-only, no interaction)
-- `browser_request_chain` (orchestrator only -- individual steps are still subject to domain restrictions)
+**Precedence (highest first):**
 
-**Blocked command error:**
-When a command is blocked, the MCP server returns:
-```
-Blocked: [domain] is not whitelisted. The human must manually add this site to the whitelist in the WebPilot extension before automation can proceed.
-```
+1. **Per-agent overrides** — rows in the `agent_site_overrides` table, scoped to the calling agent.
+2. **Global user rules** — rows in `global_site_rules` with `source='user'`, applied to all agents on this host.
+3. **Baseline blocklist** — rows in `global_site_rules` with `source='baseline'`, populated by `blocklist-updater.js` from the bundled `baseline-blocklists/` and gated by `config.baseline_blocklist_enabled`.
+4. **Default: allow.**
 
-**Managing the whitelist:**
-Users can add domains to the whitelist via the WebPilot extension popup UI. Domain matching is domain-level (e.g., whitelisting `example.com` allows both `example.com` and `subdomain.example.com`).
+**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides, global user rules, and toggling the baseline blocklist.
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
