@@ -34,7 +34,7 @@ function loadSitePolicy() {
 
 function setConfigFlag(db, enabled) {
   db.prepare(
-    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('baseline_blocklist_enabled', ?, ?)`
+    `INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('global_site_blocklist_enabled', ?, ?)`
   ).run(enabled ? 'true' : 'false', new Date().toISOString());
 }
 
@@ -67,42 +67,42 @@ function clearTables(db) {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('site-policy isAllowed: baseline flag gate', () => {
+describe('site-policy isAllowed: global site blocklist flag gate', () => {
   beforeEach(() => {
     testDb = createTestDb();
     injectDb(testDb);
   });
 
-  test('1 — flag-on, baseline-block exact match → blocked', () => {
+  test('1 — flag-on, global-site-blocklist-block exact match → blocked', () => {
     setConfigFlag(testDb, true);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://evil.com');
     assert.equal(result.allowed, false);
-    assert.equal(result.source, 'baseline');
+    assert.equal(result.source, 'global_site_blocklist');
   });
 
-  test('2 — flag-on, baseline-block parent + subdomain request → blocked', () => {
+  test('2 — flag-on, global-site-blocklist-block parent + subdomain request → blocked', () => {
     setConfigFlag(testDb, true);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://www.sub.evil.com');
     assert.equal(result.allowed, false);
-    assert.equal(result.source, 'baseline');
+    assert.equal(result.source, 'global_site_blocklist');
   });
 
-  test('3 — flag-off, baseline-block exact → default allow', () => {
+  test('3 — flag-off, global-site-blocklist-block exact → default allow', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://evil.com');
     assert.equal(result.allowed, true);
     assert.equal(result.source, 'default');
   });
 
-  test('4 — flag-off, baseline-block parent + subdomain request → default allow', () => {
+  test('4 — flag-off, global-site-blocklist-block parent + subdomain request → default allow', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://sub.evil.com');
     assert.equal(result.allowed, true);
@@ -127,9 +127,9 @@ describe('site-policy isAllowed: baseline flag gate', () => {
     assert.equal(result.source, 'global_user');
   });
 
-  test('7 — flag-off: baseline on subdomain + user-block on parent → user-block wins', () => {
+  test('7 — flag-off: global-site-blocklist on subdomain + user-block on parent → user-block wins', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'api.evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'api.evil.com', decision: 'block', source: 'global_site_blocklist' });
     seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'user' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://api.evil.com');
@@ -138,9 +138,9 @@ describe('site-policy isAllowed: baseline flag gate', () => {
     assert.equal(result.matchedDomain, 'evil.com');
   });
 
-  test('8 — flag-off + per-agent block override on baseline domain → blocked via override', () => {
+  test('8 — flag-off + per-agent block override on global-site-blocklist domain → blocked via override', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     seedAgent(testDb, { id: 7 });
     seedAgentOverride(testDb, { agentId: 7, domain: 'evil.com', decision: 'block' });
     const { isAllowed } = loadSitePolicy();
@@ -149,9 +149,9 @@ describe('site-policy isAllowed: baseline flag gate', () => {
     assert.equal(result.source, 'agent_override');
   });
 
-  test('9 — flag-off + per-agent allow override on baseline domain → allowed via override', () => {
+  test('9 — flag-off + per-agent allow override on global-site-blocklist domain → allowed via override', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     seedAgent(testDb, { id: 7 });
     seedAgentOverride(testDb, { agentId: 7, domain: 'evil.com', decision: 'allow' });
     const { isAllowed } = loadSitePolicy();
@@ -160,44 +160,44 @@ describe('site-policy isAllowed: baseline flag gate', () => {
     assert.equal(result.source, 'agent_override');
   });
 
-  test('10 — flag absent (no config row) defaults to enabled → baseline block applies', () => {
+  test('10 — flag absent (no config row) defaults to enabled → global-site-blocklist block applies', () => {
     // No config row inserted
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://evil.com');
     assert.equal(result.allowed, false);
-    assert.equal(result.source, 'baseline');
+    assert.equal(result.source, 'global_site_blocklist');
   });
 
-  test('11 — getRulesForAgent returns baseline rows when flag is off (admin path unaffected)', () => {
+  test('11 — getRulesForAgent returns global-site-blocklist rows when flag is off (admin path unaffected)', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     seedGlobalRule(testDb, { domain: 'spam.com', decision: 'block', source: 'user' });
     const { getRulesForAgent } = loadSitePolicy();
     const rules = getRulesForAgent(null);
-    const baselineRow = rules.find(r => r.domain === 'evil.com');
+    const globalSiteBlocklistRow = rules.find(r => r.domain === 'evil.com');
     const userRow = rules.find(r => r.domain === 'spam.com');
-    assert.ok(baselineRow, 'baseline row should be present in getRulesForAgent results');
-    assert.equal(baselineRow.source, 'baseline');
+    assert.ok(globalSiteBlocklistRow, 'global-site-blocklist row should be present in getRulesForAgent results');
+    assert.equal(globalSiteBlocklistRow.source, 'global_site_blocklist');
     assert.ok(userRow, 'user row should be present in getRulesForAgent results');
   });
 
   test('12 — flag toggled mid-test → second call sees new behavior (no module-level caching)', () => {
     setConfigFlag(testDb, true);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const call1 = isAllowed(null, 'https://evil.com');
-    assert.equal(call1.allowed, false, 'call1: flag=true should block baseline');
-    assert.equal(call1.source, 'baseline');
+    assert.equal(call1.allowed, false, 'call1: flag=true should block global-site-blocklist');
+    assert.equal(call1.source, 'global_site_blocklist');
 
     setConfigFlag(testDb, false);
     const call2 = isAllowed(null, 'https://evil.com');
-    assert.equal(call2.allowed, true, 'call2: flag=false should allow baseline');
+    assert.equal(call2.allowed, true, 'call2: flag=false should allow global-site-blocklist');
     assert.equal(call2.source, 'default');
   });
 
   test('13 — URL parsing edge inputs: empty string and about:blank → default allow (both flag states)', () => {
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
 
     setConfigFlag(testDb, true);
     const { isAllowed: isAllowedOn } = loadSitePolicy();
@@ -214,18 +214,18 @@ describe('site-policy isAllowed: baseline flag gate', () => {
     assert.equal(isAllowedOff(null, 'about:blank').source, 'default');
   });
 
-  test('14 — agentId=null with flag off + baseline rule → allow (unauthenticated caller gated correctly)', () => {
+  test('14 — agentId=null with flag off + global-site-blocklist rule → allow (unauthenticated caller gated correctly)', () => {
     setConfigFlag(testDb, false);
-    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'evil.com', decision: 'block', source: 'global_site_blocklist' });
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(null, 'https://evil.com');
     assert.equal(result.allowed, true);
     assert.equal(result.source, 'default');
   });
 
-  test('15 — per-agent block override + flag ON + baseline allow on domain → override wins', () => {
+  test('15 — per-agent block override + flag ON + global-site-blocklist allow on domain → override wins', () => {
     setConfigFlag(testDb, true);
-    seedGlobalRule(testDb, { domain: 'oddly.com', decision: 'allow', source: 'baseline' });
+    seedGlobalRule(testDb, { domain: 'oddly.com', decision: 'allow', source: 'global_site_blocklist' });
     seedAgent(testDb, { id: 7 });
     seedAgentOverride(testDb, { agentId: 7, domain: 'oddly.com', decision: 'block' });
     const { isAllowed } = loadSitePolicy();

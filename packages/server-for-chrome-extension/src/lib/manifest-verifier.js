@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Cryptographic verification of formatter + baseline-blocklist releases.
+ * Cryptographic verification of formatter + global-site-blocklist releases.
  *
  * Threat model: even if an attacker takes over the maintainer's GitHub
  * account, they cannot push a malicious formatter that executes inside

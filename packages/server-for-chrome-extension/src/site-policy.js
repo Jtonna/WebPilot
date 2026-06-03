@@ -8,15 +8,15 @@
  * DB (see src/db/schema.sql):
  *
  *   - `agent_site_overrides`  per-agent (agent_id, domain) allow/block rows
- *   - `global_site_rules`     user-set OR baseline-blocked (domain, decision, source)
- *   - `baseline_blocklist_meta`  single-row meta about the auto-updated list
+ *   - `global_site_rules`     user-set OR global-site-blocklist-blocked (domain, decision, source)
+ *   - `global_site_blocklist_meta`  single-row meta about the auto-updated list
  *
  * Resolution order (highest precedence first):
  *
  *   1. agent_site_overrides   — exact match on the resolved domain
  *   2. agent_site_overrides   — suffix match on a parent registrable domain
- *   3. global_site_rules      — exact match (source: 'user' or 'baseline')
- *   4. global_site_rules      — suffix match (source: 'user' or 'baseline')
+ *   3. global_site_rules      — exact match (source: 'user' or 'global_site_blocklist')
+ *   4. global_site_rules      — suffix match (source: 'user' or 'global_site_blocklist')
  *   5. default                — allow
  *
  * Suffix matching uses the public suffix list via `psl`, so a rule on
@@ -139,18 +139,18 @@ function _findAgentOverride(agentId, domain) {
 
 /**
  * Look up a global_site_rules row covering this domain (exact or suffix).
- * Returns the matching DB row or null. Rows with source='baseline' are
- * omitted when baseline_blocklist_enabled is false.
+ * Returns the matching DB row or null. Rows with source='global_site_blocklist'
+ * are omitted when global_site_blocklist_enabled is false.
  */
 function _findGlobalRule(domain) {
   if (!domain) return null;
-  const includeBaseline = require('./blocklist-updater').isBaselineEnabled();
+  const includeGlobalSiteBlocklist = require('./global-site-blocklist-updater').isGlobalSiteBlocklistEnabled();
   const db = dbModule.getDb();
   const stmtAll = db.prepare('SELECT * FROM global_site_rules WHERE domain = ?');
-  const stmtNoBaseline = db.prepare(
-    "SELECT * FROM global_site_rules WHERE domain = ? AND source != 'baseline'"
+  const stmtNoGlobalSiteBlocklist = db.prepare(
+    "SELECT * FROM global_site_rules WHERE domain = ? AND source != 'global_site_blocklist'"
   );
-  const stmt = includeBaseline ? stmtAll : stmtNoBaseline;
+  const stmt = includeGlobalSiteBlocklist ? stmtAll : stmtNoGlobalSiteBlocklist;
   for (const candidate of _suffixCandidates(domain)) {
     const row = stmt.get(candidate);
     if (row) return row;
@@ -164,7 +164,7 @@ function _findGlobalRule(domain) {
  *   {
  *     allowed: boolean,
  *     decision: 'allow' | 'block',
- *     source: 'agent_override' | 'global_user' | 'baseline' | 'default',
+ *     source: 'agent_override' | 'global_user' | 'global_site_blocklist' | 'default',
  *     domain: string | null,         // normalized
  *     matchedDomain: string | null,  // the exact rule.domain that matched (null for default)
  *   }
@@ -203,13 +203,13 @@ function isAllowed(agentId, urlOrDomain) {
     }
   }
 
-  // 3+4. Global rule (exact then suffix). Distinguish user vs baseline.
+  // 3+4. Global rule (exact then suffix). Distinguish user vs global-site-blocklist.
   const global = _findGlobalRule(domain);
   if (global) {
     return {
       allowed: global.decision === 'allow',
       decision: global.decision,
-      source: global.source === 'baseline' ? 'baseline' : 'global_user',
+      source: global.source === 'global_site_blocklist' ? 'global_site_blocklist' : 'global_user',
       domain,
       matchedDomain: global.domain,
     };
@@ -268,7 +268,7 @@ function getRulesForAgent(agentId) {
     byDomain.set(r.domain, {
       domain: r.domain,
       decision: r.decision,
-      source: r.source, // 'user' | 'baseline'
+      source: r.source, // 'user' | 'global_site_blocklist'
       scope: 'global',
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -298,7 +298,7 @@ function setGlobalRule(domain, decision, source = 'user') {
   if (decision !== 'allow' && decision !== 'block') {
     throw new Error(`Invalid decision: ${decision}`);
   }
-  if (source !== 'user' && source !== 'baseline') {
+  if (source !== 'user' && source !== 'global_site_blocklist') {
     throw new Error(`Invalid source: ${source}`);
   }
   const db = dbModule.getDb();
