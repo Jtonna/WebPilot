@@ -160,7 +160,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with rename / revoke kebab. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
-**Sites** — Baseline blocklist card (toggle + version + last fetch + count). **Global rules** (domain / decision / source, filter chips `All` / `User` / `Baseline`, inline add). **Per-agent overrides** with agent picker.
+**Sites** — Global Blocklist card (toggle + version + last fetch + count, with a `What's in the pack?` disclosure listing the bundled domains read-only). **Custom rules** (domain / decision, inline add). **Per-agent overrides** with agent picker.
 
 **Formatters** — `Loaded from remote` + `Custom` sections; row = name + `HealthPill` + last error time; row links to `/ui/formatters/logs/?name=…`. REST poll every 30s.
 
@@ -176,7 +176,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Empty states:** one line + one icon (32px) + at most one action. Examples — `No pairings yet. They'll appear here after you approve or deny your first request.` / `No agents paired yet.` / `Nothing pending right now.`
 
-**Status pills:** `Active` (green, live extension + recent activity) → `Ready` (blue, set up but not connected) → `Needs setup` (amber, no extension installId yet). Dot + label. Active outranks Ready outranks Needs setup. Decision pills: `Allow` / `Block`. Source pills: `User` / `Baseline`. Health pills: `Healthy` / `Degraded` / `Unhealthy`.
+**Status pills:** `Active` (green, live extension + recent activity) → `Ready` (blue, set up but not connected) → `Needs setup` (amber, no extension installId yet). Dot + label. Active outranks Ready outranks Needs setup. Decision pills: `Allow` / `Block`. Health pills: `Healthy` / `Degraded` / `Unhealthy`.
 
 **Confirmation modals** (`ConfirmModal`): title is a short declarative question (`Revoke API key?` / `Restart server?`). Body: one sentence effect, one sentence recovery. Default focus on Cancel; Esc closes; Enter does not auto-confirm. Use `wp-btn-danger` for destructive, primary for non-destructive (restart). Every destructive action gets a modal — even in fast-moving lists.
 
