@@ -30,7 +30,7 @@ function $(id) { return document.getElementById(id); }
 // else triggers the fallback path (skip section, no pill).
 const STATE_LABEL = {
   allowed: 'Allowed',
-  blocked_baseline: 'Blocked (baseline)',
+  blocked_global_site_blocklist: 'Blocked (global blocklist)',
   blocked_user: 'Blocked (user)',
   allowed_override: 'Override · Allowed',
   blocked_override: 'Override · Blocked',
