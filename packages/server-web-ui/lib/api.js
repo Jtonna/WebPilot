@@ -234,8 +234,8 @@ export function createSiteRule({ domain, decision }) {
 }
 
 // DELETE /api/ui/sites/:domain — removes a user-source rule. Server refuses
-// baseline rows with a 400; the caller should treat the error message as
-// authoritative for the toast text.
+// attempts to delete baseline-source rows with a 400; the caller should treat
+// the error message as authoritative for the toast text.
 export function deleteSiteRule(domain) {
   return apiFetch(`/api/ui/sites/${encodeURIComponent(domain)}`, {
     method: 'DELETE',
@@ -267,6 +267,8 @@ export function deleteAgentSiteOverride(agentId, domain) {
 
 // POST /api/ui/sites/baseline/toggle — body { enabled: bool }. Returns
 // { enabled, baseline: { enabled, version, lastFetchedAt, domainCount } }.
+// The toggle gates baseline rule application in the runtime resolver;
+// per-agent overrides and user-set custom rules are unaffected.
 export function toggleBaselineBlocklist(enabled) {
   return apiFetch('/api/ui/sites/baseline/toggle', {
     method: 'POST',

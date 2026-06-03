@@ -26,13 +26,11 @@ import { formatRelativeTime } from '../../lib/format';
  * Sites — admin surface for the WebPilot site policy model.
  *
  * Three sections:
- *   1. Baseline blocklist  — small card: enabled toggle + version + last fetch
- *                            + domain count.
- *   2. Global rules        — list of (domain, decision, source) rows. Filter
- *                            by source (all / user / baseline). "+ Add rule"
- *                            opens an inline form. Baseline rows are
- *                            non-deletable; their Delete button is disabled
- *                            with an explanatory tooltip.
+ *   1. Global Blocklist    — bundled-pack toggle, version/last-fetch/domain-count
+ *                            metadata, "What's in the pack?" disclosure listing
+ *                            baseline domains read-only.
+ *   2. Custom rules        — user-set (domain, decision) rows. "+ Add rule"
+ *                            opens an inline form. All rows deletable.
  *   3. Per-agent overrides — agent dropdown, then the picked agent's
  *                            agent_site_overrides list. Same +Add / Delete
  *                            pattern; deletes always allowed (overrides only
@@ -40,19 +38,7 @@ import { formatRelativeTime } from '../../lib/format';
  *
  * Live updates via the `sites_changed` UI WebSocket event — every successful
  * write on the server side broadcasts it and the page refetches.
- *
- * Rendering note: with the baseline pack enabled, the global rules list can
- * easily hit 60+ rows. We render all rows (no pagination yet) but use the
- * source filter to let the user narrow on User-only when adding rules. If
- * the list grows large enough that this feels sluggish, swap in
- * react-window — the data shape is already row-uniform.
  */
-
-const SOURCE_FILTERS = [
-  { value: 'all', label: 'All' },
-  { value: 'user', label: 'User' },
-  { value: 'baseline', label: 'Baseline' },
-];
 
 // Lightweight domain syntactic check used in the +Add forms to render a
 // normalization preview without round-tripping the server. The real
@@ -77,12 +63,6 @@ function decisionPill(decision) {
   return <Pill state="danger" label="Block" />;
 }
 
-function sourcePill(source) {
-  if (source === 'baseline') {
-    return <Pill state="info" label="Baseline" />;
-  }
-  return <Pill state="active" label="User" />;
-}
 
 function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
   const [domain, setDomain] = useState('');
@@ -154,15 +134,12 @@ function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
 }
 
 function GlobalRuleRow({ rule, onDelete, busy }) {
-  const isBaseline = rule.source === 'baseline';
   return (
     <div className="wp-row">
       <div className="wp-row-grow">
         <div className="wp-row-title">{rule.domain}</div>
         <div className="wp-row-sub">
           <span>{decisionPill(rule.decision)}</span>
-          <span className="wp-row-sep">·</span>
-          <span>{sourcePill(rule.source)}</span>
           {rule.updatedAt ? (
             <>
               <span className="wp-row-sep">·</span>
@@ -176,12 +153,8 @@ function GlobalRuleRow({ rule, onDelete, busy }) {
           type="button"
           className="wp-btn wp-btn-compact"
           onClick={() => onDelete(rule)}
-          disabled={isBaseline || busy}
-          title={
-            isBaseline
-              ? 'baseline rules — toggle the pack off in Settings'
-              : 'Remove this rule'
-          }
+          disabled={busy}
+          title="Remove this rule"
         >
           Delete
         </button>
@@ -225,7 +198,6 @@ export default function SitesPage() {
   const [sitesData, setSitesData] = useState({ globalRules: [], baseline: null });
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState(null);
-  const [sourceFilter, setSourceFilter] = useState('all');
   const [addRuleOpen, setAddRuleOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const sitesFetcher = useRef(null);
@@ -340,11 +312,11 @@ export default function SitesPage() {
     try {
       const result = await toggleBaselineBlocklist(next);
       setSitesData((d) => ({ ...d, baseline: result.baseline || d.baseline }));
-      toast.info(`Baseline blocklist ${next ? 'enabled' : 'disabled'}.`);
+      toast.info(`Global blocklist ${next ? 'enabled' : 'disabled'}.`);
     } catch (e) {
       // Roll back on failure.
       setSitesData((d) => ({ ...d, baseline: prev }));
-      toast.error(e.message || 'Couldn’t update baseline setting.');
+      toast.error(e.message || 'Couldn’t update global blocklist setting.');
     }
   }
 
@@ -408,17 +380,13 @@ export default function SitesPage() {
     }
   }
 
-  const filteredRules = useMemo(() => {
-    if (sourceFilter === 'all') return sitesData.globalRules;
-    return sitesData.globalRules.filter((r) => r.source === sourceFilter);
-  }, [sitesData.globalRules, sourceFilter]);
+  const customRules = useMemo(
+    () => (sitesData?.globalRules || []).filter((r) => r.source === 'user'),
+    [sitesData?.globalRules]
+  );
 
   const userRuleCount = useMemo(
     () => sitesData.globalRules.filter((r) => r.source === 'user').length,
-    [sitesData.globalRules]
-  );
-  const baselineRuleCount = useMemo(
-    () => sitesData.globalRules.filter((r) => r.source === 'baseline').length,
     [sitesData.globalRules]
   );
 
@@ -429,18 +397,16 @@ export default function SitesPage() {
       <header className="wp-page-head">
         <h1 className="wp-page-title">Sites</h1>
         <p className="wp-page-sub">
-          Decide which sites WebPilot agents can touch. Per-agent overrides
-          beat global rules; global rules beat the default (allow). Baseline
-          blocklist rules ship with WebPilot and update automatically.
+          Decide which sites WebPilot agents can touch. Per-agent overrides beat custom rules; custom rules beat the bundled global blocklist; everything else is allowed.
         </p>
       </header>
 
       {sitesError ? <ErrorCard error={sitesError} /> : null}
 
-      {/* Baseline blocklist summary */}
+      {/* Global Blocklist summary */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Baseline blocklist</h2>
+          <h2 className="wp-section-title">Global Blocklist</h2>
         </div>
         <div className="wp-card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
           {sitesLoading ? (
@@ -450,7 +416,7 @@ export default function SitesPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s-4)' }}>
                 <div>
                   <div style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
-                    Baseline blocklist {baseline && baseline.enabled ? 'enabled' : 'disabled'}
+                    Global blocklist {baseline && baseline.enabled ? 'enabled' : 'disabled'}
                   </div>
                   <div className="wp-row-sub" style={{ marginTop: 4 }}>
                     {baseline && baseline.version ? (
@@ -461,11 +427,11 @@ export default function SitesPage() {
                         <span className="wp-row-sep">·</span>
                         <span>
                           <strong style={{ color: 'var(--wp-fg)' }}>{baseline.domainCount || 0}</strong>{' '}
-                          {((baseline && baseline.domainCount) || 0) === 1 ? 'domain' : 'domains'} in baseline
+                          {((baseline && baseline.domainCount) || 0) === 1 ? 'domain' : 'domains'} in the pack
                         </span>
                       </>
                     ) : (
-                      <span>No baseline pack fetched yet.</span>
+                      <span>No pack fetched yet.</span>
                     )}
                   </div>
                 </div>
@@ -473,42 +439,45 @@ export default function SitesPage() {
                   checked={!!(baseline && baseline.enabled)}
                   onChange={handleToggleBaseline}
                   label={baseline && baseline.enabled ? 'On' : 'Off'}
-                  title="When disabled, the auto-updater skips DB writes — existing baseline rows stay until the next fetch lands or the server restarts."
+                  title="When disabled, WebPilot ignores the bundled blocklist when deciding whether a request is allowed. Per-agent overrides and your custom rules still apply."
                 />
               </div>
+              <details style={{ marginTop: 'var(--s-3)' }}>
+                <summary>What's in the pack?</summary>
+                <div className="wp-row-list" style={{ marginTop: 'var(--s-2)' }}>
+                  {(() => {
+                    const baselineRules = (sitesData?.globalRules || []).filter((r) => r.source === 'baseline');
+                    if (baselineRules.length === 0) {
+                      return <EmptyState body="No pack domains loaded yet." />;
+                    }
+                    return baselineRules.map((r) => (
+                      <div key={r.domain} className="wp-row">
+                        <div className="wp-row-grow">
+                          <div className="wp-row-title">{r.domain}</div>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </details>
             </>
           )}
         </div>
       </section>
 
-      {/* Global rules */}
+      {/* Custom rules */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Global rules</h2>
+          <h2 className="wp-section-title">Custom rules</h2>
           <span className="wp-section-aside">
             {sitesLoading
               ? ''
-              : `${userRuleCount} user · ${baselineRuleCount} baseline`}
+              : `${userRuleCount} ${userRuleCount === 1 ? 'rule' : 'rules'}`}
           </span>
         </div>
 
         <SectionToolbar
-          left={(
-            <div role="tablist" aria-label="Filter rules by source" style={{ display: 'inline-flex', gap: 'var(--s-2)' }}>
-              {SOURCE_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={sourceFilter === f.value}
-                  className={`wp-btn wp-btn-compact${sourceFilter === f.value ? ' wp-btn-primary' : ''}`}
-                  onClick={() => setSourceFilter(f.value)}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          )}
+          left={null}
           right={(
             <button
               type="button"
@@ -539,17 +508,11 @@ export default function SitesPage() {
             <SkeletonRow titleWidth="52%" subWidth="40%" showTrailing />
             <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
           </div>
-        ) : filteredRules.length === 0 ? (
-          <EmptyState
-            body={sourceFilter === 'user'
-              ? 'No user-set rules yet. Click "+ Add rule" to allow or block a domain.'
-              : sourceFilter === 'baseline'
-                ? 'No baseline rules. The baseline pack may be disabled or not yet fetched.'
-                : 'No global rules yet.'}
-          />
+        ) : customRules.length === 0 ? (
+          <EmptyState body="No custom rules yet. Click &quot;+ Add rule&quot; to allow or block a domain." />
         ) : (
           <div className="wp-row-list">
-            {filteredRules.map((rule) => (
+            {customRules.map((rule) => (
               <GlobalRuleRow
                 key={`${rule.source}:${rule.domain}`}
                 rule={rule}
