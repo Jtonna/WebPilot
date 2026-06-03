@@ -1448,13 +1448,10 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/sites/baseline/toggle
-  // Body: { enabled: bool }. Updates the config table key
-  // `baseline_blocklist_enabled`. Note: the auto-update interval still runs
-  // in the background regardless — flipping this off means the next fetch
-  // skips DB writes, but existing baseline rows remain until a fetch lands
-  // (or the server is restarted). The webapp surfaces that subtlety in the
-  // baseline summary card.
+  // POST /api/ui/sites/baseline/toggle — writes config.baseline_blocklist_enabled.
+  // When false, site-policy.isAllowed ignores rows with source='baseline'; per-agent overrides and user rules still apply.
+  // The auto-updater also skips DB writes while the flag is off, leaving existing baseline rows in place for inspection.
+  // Broadcasts a sites_changed WS event so connected Sites pages re-render.
   app.post('/api/ui/sites/baseline/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = !!(req.body && req.body.enabled);

@@ -45,10 +45,10 @@
  *   - Lowercase + run through `normalizeDomain()` so we drop www. and reject
  *     ip-literals.
  *
- * The user can disable the baseline pack entirely via the
- * `config.baseline_blocklist_enabled` key — when `false`, the fetch still
- * happens (so we can show "next update would have added/removed N rows" in
- * the UI later if we want), but no DB writes occur.
+ * The baseline_blocklist_enabled flag has two effects:
+ *   1. The auto-updater skips DB writes while it is false (this module).
+ *   2. site-policy.isAllowed filters out rows with source='baseline' at lookup time when it is false (see site-policy.js).
+ * The flag defaults to true when the config row is absent. isBaselineEnabled() is the public read for both effects.
  */
 
 const fs = require('fs');
