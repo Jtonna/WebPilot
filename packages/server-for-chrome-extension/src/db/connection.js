@@ -139,8 +139,8 @@ function init() {
   // installs are rewritten and the subsequent IF-NOT-EXISTS schema apply
   // is a no-op for the renamed objects. See db/migration.js.
   try {
-    const migration = require('./migration');
-    migration.runSchemaMigrations(_db, { dataDir });
+    const migrations = require('./schema-migrations');
+    migrations.runAll(_db, { dataDir });
   } catch (e) {
     console.error('[db] schema migration failed:', e && e.message);
     throw e;
