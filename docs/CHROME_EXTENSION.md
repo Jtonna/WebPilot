@@ -213,7 +213,7 @@ The popup is a **minimal status-and-escape-hatch panel** themed to match the web
 Four components, top to bottom:
 
 1. **Connection status** — colored dot + one-word label (`Connected` / `Reconnecting…` / `Disconnected`). Reveals the bound profile and server URL underneath.
-2. **Current tab** — domain + state pill (`Allowed` / `Blocked (baseline)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
+2. **Current tab** — domain + state pill (`Allowed` / `Blocked (global blocklist)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
 3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
 4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
 
@@ -250,7 +250,7 @@ Response fields:
 - `profileId` — the bound Chrome profile directoryName.
 - `agent` — always `null` (popup is profile-scoped).
 - `serverUrl` — `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers, used by the popup to build the "Open dashboard" link.
-- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_baseline' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
+- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_global_site_blocklist' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
 
 #### `POST /api/popup/site-toggle`
 

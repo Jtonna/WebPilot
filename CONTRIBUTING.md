@@ -68,7 +68,7 @@ If you need to release a specific version without auto-bumping (e.g. rebuilding 
 
 ## Signing formatter releases
 
-WebPilot daemons fetch formatter and baseline-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
+WebPilot daemons fetch formatter and global-site-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
 
 ### Threat model
 

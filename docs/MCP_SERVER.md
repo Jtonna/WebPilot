@@ -239,7 +239,7 @@ The decision flow for `(agent_id, url)`:
 
 1. Normalize the URL's hostname (lowercase, strip scheme/port, drop leading `www.`).
 2. Look up `agent_site_overrides` for `(agent_id, domain)`. If present, the row's `decision` wins (per-agent fine-tuning).
-3. Else, look up `global_site_rules` for `domain`. If present, the row's `decision` wins. `source='user'` means a user-set rule (from the popup toggle or webapp `/ui/sites/`); `source='baseline'` means it came from the auto-updated baseline blocklist (`src/blocklist-updater.js`).
+3. Else, look up `global_site_rules` for `domain`. If present, the row's `decision` wins. `source='user'` means a user-set rule (from the popup toggle or webapp `/ui/sites/`); `source='global_site_blocklist'` means it came from the auto-updated global site blocklist (`src/global-site-blocklist-updater.js`).
 4. Else, default to `allow`.
 
 Subdomain matching is public-suffix-aware: a rule on `chase.com` covers `secure.chase.com` and `www.chase.com`. A rule on `secure.chase.com` covers only that subdomain.
@@ -343,10 +343,10 @@ Mounted under the same localhost-only `/api/ui/*` surface and gated by the same 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/ui/sites` | Returns `{ globalRules, baseline }`. `globalRules` is the full `global_site_rules` list (user + baseline) sorted by `(source, domain)` with `{ domain, decision, source, createdAt, updatedAt }` per row. `baseline` is a summary of the auto-updated blocklist pack (`enabled`, `version`, `lastFetchedAt`, `domainCount`). |
+| GET | `/api/ui/sites` | Returns `{ globalRules, globalSiteBlocklist }`. `globalRules` is the full `global_site_rules` list (user + global site blocklist) sorted by `(source, domain)` with `{ domain, decision, source, createdAt, updatedAt }` per row. `globalSiteBlocklist` is a summary of the auto-updated blocklist pack (`enabled`, `version`, `lastFetchedAt`, `domainCount`). |
 | POST | `/api/ui/sites` | Body `{ domain, decision: 'allow' \| 'block' }`. Upserts a `source='user'` global rule via `sitePolicy.setGlobalRule`. Returns 201 with the persisted row (`domain`, `decision`, `source`, `createdAt`, `updatedAt`) after normalizing the domain. 400 on invalid domain or decision. |
-| DELETE | `/api/ui/sites/:domain` | Removes a `source='user'` global rule. Refuses baseline rows with 400 and a hint pointing the operator at the baseline toggle. 404 if the rule doesn't exist. Returns `{ ok, domain }`. |
-| POST | `/api/ui/sites/baseline/toggle` | Body `{ enabled }`. Writes `config.baseline_blocklist_enabled = 'true' \| 'false'`. The flag is consulted at lookup time by `_findGlobalRule`, so disabling it suppresses every `source='baseline'` row from the next policy check onward without waiting for the fetch cycle or touching stored rows. The response includes a fresh `blocklistUpdater.getStatus()` snapshot. Returns `{ enabled, baseline }`. |
+| DELETE | `/api/ui/sites/:domain` | Removes a `source='user'` global rule. Refuses `source='global_site_blocklist'` rows with 400 and a hint pointing the operator at the global blocklist toggle. 404 if the rule doesn't exist. Returns `{ ok, domain }`. |
+| POST | `/api/ui/sites/global-site-blocklist/toggle` | Body `{ enabled }`. Writes `config.global_site_blocklist_enabled = 'true' \| 'false'`. The flag is consulted at lookup time by `_findGlobalRule`, so disabling it suppresses every `source='global_site_blocklist'` row from the next policy check onward without waiting for the fetch cycle or touching stored rows. The response includes a fresh `blocklistUpdater.getStatus()` snapshot. Returns `{ enabled, globalSiteBlocklist }`. |
 | GET | `/api/ui/agents/:agentId/site-overrides` | List per-agent overrides. `:agentId` is the `api_key_hash` exposed as `key` by `listKeys()`; the route resolves it to the numeric `agents.id` for the lookup. Returns an array of `{ domain, decision, createdAt }` sorted by domain. 404 if the agent isn't found. |
 | POST | `/api/ui/agents/:agentId/site-overrides` | Body `{ domain, decision: 'allow' \| 'block' }`. Upserts a per-agent override via `sitePolicy.setAgentOverride`. Returns 201 with the persisted row. 400 on invalid domain or decision; 404 if the agent isn't found. |
 | DELETE | `/api/ui/agents/:agentId/site-overrides/:domain` | Clears a single per-agent override row. 404 if no matching override exists. Returns `{ ok, domain }`. |
@@ -448,7 +448,7 @@ The legacy pre-1.1.6 in-install location (`../../data/` relative to the pkg bina
 
 Contents (post-P2):
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
-- `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `baseline_blocklist_meta`, `config`, and `extension_installs` tables. See `src/db/schema.sql`.
+- `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `global_site_blocklist_meta`, `config`, and `extension_installs` tables. See `src/db/schema.sql`.
 - `logs/` subdirectory.
 - `config/server.json` (port override file; still file-backed because it's read at the earliest possible bootstrap moment. A legacy `apiKey` field is silently ignored — the shared transport key was retired 2026-05-17).
 - `config/notifications.json` (per-user notification preferences — still file-backed for now).

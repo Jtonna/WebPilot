@@ -60,10 +60,10 @@ Site-policy enforcement is **server-side**, implemented by `isAllowed(agentId, u
 
 1. **Per-agent overrides** — rows in the `agent_site_overrides` table, scoped to the calling agent.
 2. **Global user rules** — rows in `global_site_rules` with `source='user'`, applied to all agents on this host.
-3. **Baseline blocklist** — rows in `global_site_rules` with `source='baseline'`, populated by `blocklist-updater.js` from the bundled `baseline-blocklists/` and gated by `config.baseline_blocklist_enabled`.
+3. **Global site blocklist** — rows in `global_site_rules` with `source='global_site_blocklist'`, populated by `global-site-blocklist-updater.js` from the bundled `global-site-blocklists/` and gated by `config.global_site_blocklist_enabled`.
 4. **Default: allow.**
 
-**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides, global user rules, and toggling the baseline blocklist.
+**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides, global user rules, and toggling the global site blocklist.
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
