@@ -25,7 +25,7 @@ const Tablist = () => (
   <div role="tablist" aria-label="Filter rules by source" style={{ display: 'inline-flex', gap: 'var(--s-2)' }}>
     <button type="button" role="tab" aria-selected="true" className="wp-btn wp-btn-compact wp-btn-primary">All</button>
     <button type="button" role="tab" aria-selected="false" className="wp-btn wp-btn-compact">User</button>
-    <button type="button" role="tab" aria-selected="false" className="wp-btn wp-btn-compact">Baseline</button>
+    <button type="button" role="tab" aria-selected="false" className="wp-btn wp-btn-compact">Global blocklist</button>
   </div>
 );
 

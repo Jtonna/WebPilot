@@ -17,7 +17,7 @@ import {
   getAgentSiteOverrides,
   setAgentSiteOverride,
   deleteAgentSiteOverride,
-  toggleBaselineBlocklist,
+  toggleGlobalSiteBlocklist,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 import { formatRelativeTime } from '../../lib/format';
@@ -26,15 +26,17 @@ import { formatRelativeTime } from '../../lib/format';
  * Sites — admin surface for the WebPilot site policy model.
  *
  * Three sections:
- *   1. Global Blocklist    — bundled-pack toggle, version/last-fetch/domain-count
- *                            metadata, "What's in the pack?" disclosure listing
- *                            baseline domains read-only.
- *   2. Custom rules        — user-set (domain, decision) rows. "+ Add rule"
- *                            opens an inline form. All rows deletable.
- *   3. Per-agent overrides — agent dropdown, then the picked agent's
- *                            agent_site_overrides list. Same +Add / Delete
- *                            pattern; deletes always allowed (overrides only
- *                            exist as user actions).
+ *   1. Global Blocklist       — bundled-pack toggle, version/last-fetch/domain-count
+ *                               metadata, "What's in the pack?" disclosure listing
+ *                               global_site_blocklist domains read-only.
+ *   2. Custom rules           — user-set (domain, decision) rows. "+ Add rule"
+ *                               opens an inline form. All rows deletable.
+ *   3. Per-agent overrides    — agent dropdown, then the picked agent's
+ *                               agent_site_overrides list. Same +Add / Delete
+ *                               pattern; deletes always allowed (overrides only
+ *                               exist as user actions).
+ *
+ * State shape from /api/ui/sites: { globalRules: [...], globalSiteBlocklist: {...} }.
  *
  * Live updates via the `sites_changed` UI WebSocket event — every successful
  * write on the server side broadcasts it and the page refetches.
@@ -194,8 +196,8 @@ function OverrideRow({ override, onDelete, busy }) {
 
 export default function SitesPage() {
   const toast = useToast();
-  // Global rules + baseline summary, from /api/ui/sites.
-  const [sitesData, setSitesData] = useState({ globalRules: [], baseline: null });
+  // Global rules + globalSiteBlocklist summary, from /api/ui/sites.
+  const [sitesData, setSitesData] = useState({ globalRules: [], globalSiteBlocklist: null });
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState(null);
   const [addRuleOpen, setAddRuleOpen] = useState(false);
@@ -226,7 +228,7 @@ export default function SitesPage() {
       if (isStale) return;
       setSitesData({
         globalRules: Array.isArray(data.globalRules) ? data.globalRules : [],
-        baseline: data.baseline || null,
+        globalSiteBlocklist: data.globalSiteBlocklist || null,
       });
       setSitesError(null);
     } catch (err) {
@@ -306,16 +308,16 @@ export default function SitesPage() {
     refreshOverrides(selectedAgentKey);
   }, [selectedAgentKey]);
 
-  async function handleToggleBaseline(next) {
-    const prev = sitesData.baseline;
-    setSitesData((d) => ({ ...d, baseline: { ...(d.baseline || {}), enabled: next } }));
+  async function handleToggleGlobalSiteBlocklist(next) {
+    const prev = sitesData.globalSiteBlocklist;
+    setSitesData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
     try {
-      const result = await toggleBaselineBlocklist(next);
-      setSitesData((d) => ({ ...d, baseline: result.baseline || d.baseline }));
+      const result = await toggleGlobalSiteBlocklist(next);
+      setSitesData((d) => ({ ...d, globalSiteBlocklist: result.globalSiteBlocklist || d.globalSiteBlocklist }));
       toast.info(`Global blocklist ${next ? 'enabled' : 'disabled'}.`);
     } catch (e) {
       // Roll back on failure.
-      setSitesData((d) => ({ ...d, baseline: prev }));
+      setSitesData((d) => ({ ...d, globalSiteBlocklist: prev }));
       toast.error(e.message || 'Couldn’t update global blocklist setting.');
     }
   }
@@ -390,7 +392,7 @@ export default function SitesPage() {
     [sitesData.globalRules]
   );
 
-  const baseline = sitesData.baseline;
+  const globalSiteBlocklist = sitesData.globalSiteBlocklist;
 
   return (
     <>
@@ -416,18 +418,18 @@ export default function SitesPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s-4)' }}>
                 <div>
                   <div style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
-                    Global blocklist {baseline && baseline.enabled ? 'enabled' : 'disabled'}
+                    Global blocklist {globalSiteBlocklist && globalSiteBlocklist.enabled ? 'enabled' : 'disabled'}
                   </div>
                   <div className="wp-row-sub" style={{ marginTop: 4 }}>
-                    {baseline && baseline.version ? (
+                    {globalSiteBlocklist && globalSiteBlocklist.version ? (
                       <>
-                        <span>version <strong style={{ color: 'var(--wp-fg)' }}>{baseline.version}</strong></span>
+                        <span>version <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.version}</strong></span>
                         <span className="wp-row-sep">·</span>
-                        <span>last fetched {formatRelativeTime(baseline.lastFetchedAt)}</span>
+                        <span>last fetched {formatRelativeTime(globalSiteBlocklist.lastFetchedAt)}</span>
                         <span className="wp-row-sep">·</span>
                         <span>
-                          <strong style={{ color: 'var(--wp-fg)' }}>{baseline.domainCount || 0}</strong>{' '}
-                          {((baseline && baseline.domainCount) || 0) === 1 ? 'domain' : 'domains'} in the pack
+                          <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.domainCount || 0}</strong>{' '}
+                          {((globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0) === 1 ? 'domain' : 'domains'} in the pack
                         </span>
                       </>
                     ) : (
@@ -436,9 +438,9 @@ export default function SitesPage() {
                   </div>
                 </div>
                 <Toggle
-                  checked={!!(baseline && baseline.enabled)}
-                  onChange={handleToggleBaseline}
-                  label={baseline && baseline.enabled ? 'On' : 'Off'}
+                  checked={!!(globalSiteBlocklist && globalSiteBlocklist.enabled)}
+                  onChange={handleToggleGlobalSiteBlocklist}
+                  label={globalSiteBlocklist && globalSiteBlocklist.enabled ? 'On' : 'Off'}
                   title="When disabled, WebPilot ignores the bundled blocklist when deciding whether a request is allowed. Per-agent overrides and your custom rules still apply."
                 />
               </div>
@@ -446,11 +448,11 @@ export default function SitesPage() {
                 <summary>What's in the pack?</summary>
                 <div className="wp-row-list" style={{ marginTop: 'var(--s-2)' }}>
                   {(() => {
-                    const baselineRules = (sitesData?.globalRules || []).filter((r) => r.source === 'baseline');
-                    if (baselineRules.length === 0) {
+                    const globalSiteBlocklistRules = (sitesData?.globalRules || []).filter((r) => r.source === 'global_site_blocklist');
+                    if (globalSiteBlocklistRules.length === 0) {
                       return <EmptyState body="No pack domains loaded yet." />;
                     }
-                    return baselineRules.map((r) => (
+                    return globalSiteBlocklistRules.map((r) => (
                       <div key={r.domain} className="wp-row">
                         <div className="wp-row-grow">
                           <div className="wp-row-title">{r.domain}</div>
