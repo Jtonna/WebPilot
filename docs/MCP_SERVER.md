@@ -448,7 +448,7 @@ The legacy pre-1.1.6 in-install location (`../../data/` relative to the pkg bina
 
 Contents (post-P2):
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
-- `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `global_site_blocklist_meta`, `config`, and `extension_installs` tables. See `src/db/schema.sql`.
+- `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `global_site_blocklist_meta`, `config`, `extension_installs`, and `schema_migrations` tables. See `src/db/schema.sql`. The `schema_migrations` table is the ledger written by the runner described in `docs/SCHEMA_MIGRATIONS.md`.
 - `logs/` subdirectory.
 - `config/server.json` (port override file; still file-backed because it's read at the earliest possible bootstrap moment. A legacy `apiKey` field is silently ignored — the shared transport key was retired 2026-05-17).
 - `config/notifications.json` (per-user notification preferences — still file-backed for now).

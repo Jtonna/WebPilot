@@ -6,6 +6,7 @@ WebPilot documentation covering system architecture, development guides, and API
 
 - [BUILD_ARCHITECTURE.md](BUILD_ARCHITECTURE.md) -- Build pipeline, pkg compilation, Electron packaging, deployment paths, and CLI flags. For anyone working on the build system or understanding how the pieces ship together.
 - [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, and service registration. For developers working on the server layer.
+- [SCHEMA_MIGRATIONS.md](SCHEMA_MIGRATIONS.md) -- SQLite schema migration system: runner, ledger table, dual-layer idempotency, naming convention, and how to add a migration. For developers making database schema changes.
 - [CHROME_EXTENSION.md](CHROME_EXTENSION.md) -- Chrome extension architecture: service worker, command handlers, formatters, utilities, popup UI, and communication protocol. For developers working on browser automation.
 - [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.
 - [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
