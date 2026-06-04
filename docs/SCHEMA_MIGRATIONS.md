@@ -64,7 +64,7 @@ Migration filenames follow the pattern `NNN-kebab-case-description.js`, where `N
 002-your-next-change.js
 ```
 
-The runner sorts files lexically. Lexical order matches numerical order through `999`. Past `999`, lexical sort breaks (`1000` sorts before `002` as a string). Stay within the 001–999 range; if that limit ever approaches, switch to 4-digit padding (`0001`-style) consistently across all files.
+The runner sorts files lexically. Lexical order matches numerical order through `999`. Past `999`, lexical sort breaks (`1000` sorts before `999` because `'1' < '9'` as characters), so new migrations appear in the wrong position in the list. Stay within the 001–999 range; if that limit ever approaches, switch to 4-digit padding (`0001`-style) consistently across all files.
 
 ## Migration File Shape
 
