@@ -22,6 +22,8 @@ Migrations run first so they can manipulate tables created by an older `schema.s
 
 ## The Runner
 
+`runAll(db, opts)` accepts an undocumented `opts._migrationsDir` override (test-only) that points the runner at a custom directory instead of `__dirname`; production code never sets this.
+
 `index.js` performs these steps in order:
 
 1. Scans `schema-migrations/` for files matching `/^\d{3}-.*\.js$/`, sorts them lexically, and `require`s each one.

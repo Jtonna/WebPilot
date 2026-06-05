@@ -32,14 +32,18 @@ function ensureLedger(db) {
   db.exec(LEDGER_DDL);
 }
 
-function listMigrations() {
-  const dir = __dirname;
+/**
+ * @param {string} [dir] - Directory to scan for migration files. Defaults to
+ *   `__dirname` (production migrations). Pass a custom path in tests only.
+ */
+function listMigrations(dir) {
+  const migrationsDir = dir || __dirname;
   return fs
-    .readdirSync(dir)
+    .readdirSync(migrationsDir)
     .filter(f => MIGRATION_FILE_RE.test(f))
     .sort()
     .map(filename => {
-      const migration = require(path.join(dir, filename));
+      const migration = require(path.join(migrationsDir, filename));
       if (!migration.id || typeof migration.id !== 'string' || typeof migration.up !== 'function') {
         throw new Error(`Invalid migration ${filename}: missing id or up()`);
       }
@@ -49,7 +53,7 @@ function listMigrations() {
 
 function runAll(db, opts) {
   ensureLedger(db);
-  const migrations = listMigrations();
+  const migrations = listMigrations(opts && opts._migrationsDir);
   for (const { id, description, up } of migrations) {
     const already = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(id);
     if (already) continue;

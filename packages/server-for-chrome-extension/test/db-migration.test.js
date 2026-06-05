@@ -428,3 +428,52 @@ describe('runner ledger + validation', () => {
     );
   });
 });
+
+// ── File-load validation tests (real .js files on disk → glob → require → validate) ──
+
+describe('file-load validation: malformed migration files', () => {
+  test('migration file with missing id throws on load', () => {
+    const fixtureDir = makeTmpDir();
+    fs.writeFileSync(
+      path.join(fixtureDir, '001-missing-id.js'),
+      'module.exports = { up: () => {} };\n'
+    );
+    const db = new Database(':memory:');
+    const dataDir = makeTmpDir();
+    assert.throws(
+      () => runAll(db, { dataDir, _migrationsDir: fixtureDir }),
+      /Invalid migration 001-missing-id\.js: missing id or up\(\)/
+    );
+    db.close();
+  });
+
+  test('migration file with non-callable up throws on load', () => {
+    const fixtureDir = makeTmpDir();
+    fs.writeFileSync(
+      path.join(fixtureDir, '002-bad-up.js'),
+      "module.exports = { id: '002-bad-up', up: 'not-a-function' };\n"
+    );
+    const db = new Database(':memory:');
+    const dataDir = makeTmpDir();
+    assert.throws(
+      () => runAll(db, { dataDir, _migrationsDir: fixtureDir }),
+      /Invalid migration 002-bad-up\.js: missing id or up\(\)/
+    );
+    db.close();
+  });
+
+  test('migration file with empty-string id throws on load', () => {
+    const fixtureDir = makeTmpDir();
+    fs.writeFileSync(
+      path.join(fixtureDir, '003-empty-id.js'),
+      "module.exports = { id: '', up: () => {} };\n"
+    );
+    const db = new Database(':memory:');
+    const dataDir = makeTmpDir();
+    assert.throws(
+      () => runAll(db, { dataDir, _migrationsDir: fixtureDir }),
+      /Invalid migration 003-empty-id\.js: missing id or up\(\)/
+    );
+    db.close();
+  });
+});
