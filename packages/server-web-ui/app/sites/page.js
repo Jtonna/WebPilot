@@ -8,6 +8,7 @@ import { useToast } from '../../components/ToastRegion';
 import EmptyState from '../../components/EmptyState';
 import Pill from '../../components/Pill';
 import SectionToolbar from '../../components/SectionToolbar';
+import Modal from '../../components/Modal';
 import {
   createSequencedFetcher,
   getStatus,
@@ -27,8 +28,9 @@ import { formatRelativeTime } from '../../lib/format';
  *
  * Three sections:
  *   1. Global Blocklist       — bundled-pack toggle, version/last-fetch/domain-count
- *                               metadata, "What's in the pack?" disclosure listing
- *                               global_site_blocklist domains read-only.
+ *                               metadata, and a "View global blocklist" button that
+ *                               opens a searchable, paginated modal listing the
+ *                               bundled global_site_blocklist domains read-only.
  *   2. Custom rules           — user-set (domain, decision) rows. "+ Add rule"
  *                               opens an inline form. All rows deletable.
  *   3. Per-agent overrides    — agent dropdown, then the picked agent's
@@ -194,6 +196,130 @@ function OverrideRow({ override, onDelete, busy }) {
   );
 }
 
+const BLOCKLIST_PAGE_SIZE = 25;
+
+function BlocklistViewerModal({ open, onClose, rules, version, lastFetchedAt, domainCount, returnFocusRef }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const searchRef = useRef(null);
+
+  // Reset internal state when the modal opens; restore focus to the trigger on close.
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setPage(0);
+    } else if (returnFocusRef && returnFocusRef.current) {
+      try { returnFocusRef.current.focus(); } catch (_) { /* ignore */ }
+    }
+  }, [open, returnFocusRef]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rules;
+    return rules.filter((r) => r.domain.toLowerCase().includes(q));
+  }, [rules, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / BLOCKLIST_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = useMemo(
+    () => filtered.slice(safePage * BLOCKLIST_PAGE_SIZE, (safePage + 1) * BLOCKLIST_PAGE_SIZE),
+    [filtered, safePage]
+  );
+
+  // If a search shrinks the result set below the current page, drift back.
+  useEffect(() => {
+    if (page > totalPages - 1) setPage(totalPages - 1);
+  }, [page, totalPages]);
+
+  return (
+    <Modal open={open} onClose={onClose} titleId="wp-blocklist-title" size="lg" initialFocusRef={searchRef}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
+        <div>
+          <h2 id="wp-blocklist-title" className="wp-modal-title">Global Blocklist Contents</h2>
+          <div className="wp-row-sub" style={{ marginTop: 4 }}>
+            {version ? (
+              <>
+                <span>version <strong style={{ color: 'var(--wp-fg)' }}>{version}</strong></span>
+                <span className="wp-row-sep">·</span>
+                <span>last fetched {formatRelativeTime(lastFetchedAt)}</span>
+                <span className="wp-row-sep">·</span>
+                <span>
+                  <strong style={{ color: 'var(--wp-fg)' }}>{domainCount || 0}</strong>{' '}
+                  {(domainCount || 0) === 1 ? 'domain' : 'domains'} in the pack
+                </span>
+              </>
+            ) : (
+              <span>No pack fetched yet.</span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="wp-btn wp-btn-compact"
+          onClick={onClose}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <input
+        ref={searchRef}
+        className="wp-input"
+        type="search"
+        autoComplete="off"
+        placeholder="Search domains…"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+      />
+
+      <div className="wp-row-list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
+        {filtered.length === 0 ? (
+          <EmptyState body={query.trim() ? `No domains match "${query.trim()}"` : 'No pack domains loaded yet.'} />
+        ) : (
+          pageRows.map((r) => (
+            <div key={r.domain} className="wp-row">
+              <div className="wp-row-grow">
+                <div className="wp-row-title">{r.domain}</div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
+        <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
+          {filtered.length} {filtered.length === 1 ? 'result' : 'results'}
+        </span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-3)' }}>
+          <button
+            type="button"
+            className="wp-link"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={safePage === 0}
+            style={safePage === 0 ? { opacity: 0.4, cursor: 'default' } : undefined}
+          >
+            ← Prev
+          </button>
+          <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
+            Page {safePage + 1} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="wp-link"
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={safePage >= totalPages - 1}
+            style={safePage >= totalPages - 1 ? { opacity: 0.4, cursor: 'default' } : undefined}
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function SitesPage() {
   const toast = useToast();
   // Global rules + globalSiteBlocklist summary, from /api/ui/sites.
@@ -201,6 +327,8 @@ export default function SitesPage() {
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState(null);
   const [addRuleOpen, setAddRuleOpen] = useState(false);
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
+  const viewBlocklistBtnRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const sitesFetcher = useRef(null);
   if (sitesFetcher.current === null) {
@@ -394,6 +522,11 @@ export default function SitesPage() {
 
   const globalSiteBlocklist = sitesData.globalSiteBlocklist;
 
+  const bundledBlocklistRules = useMemo(
+    () => (sitesData?.globalRules || []).filter((r) => r.source === 'global_site_blocklist'),
+    [sitesData?.globalRules]
+  );
+
   return (
     <>
       <header className="wp-page-head">
@@ -444,24 +577,16 @@ export default function SitesPage() {
                   title="When disabled, WebPilot ignores the bundled blocklist when deciding whether a request is allowed. Per-agent overrides and your custom rules still apply."
                 />
               </div>
-              <details style={{ marginTop: 'var(--s-3)' }}>
-                <summary>What's in the pack?</summary>
-                <div className="wp-row-list" style={{ marginTop: 'var(--s-2)' }}>
-                  {(() => {
-                    const globalSiteBlocklistRules = (sitesData?.globalRules || []).filter((r) => r.source === 'global_site_blocklist');
-                    if (globalSiteBlocklistRules.length === 0) {
-                      return <EmptyState body="No pack domains loaded yet." />;
-                    }
-                    return globalSiteBlocklistRules.map((r) => (
-                      <div key={r.domain} className="wp-row">
-                        <div className="wp-row-grow">
-                          <div className="wp-row-title">{r.domain}</div>
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              </details>
+              <div style={{ marginTop: 'var(--s-3)' }}>
+                <button
+                  ref={viewBlocklistBtnRef}
+                  type="button"
+                  className="wp-btn wp-btn-compact"
+                  onClick={() => setBlocklistOpen(true)}
+                >
+                  View global blocklist
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -614,6 +739,16 @@ export default function SitesPage() {
           </div>
         )}
       </section>
+
+      <BlocklistViewerModal
+        open={blocklistOpen}
+        onClose={() => setBlocklistOpen(false)}
+        rules={bundledBlocklistRules}
+        version={globalSiteBlocklist ? globalSiteBlocklist.version : null}
+        lastFetchedAt={globalSiteBlocklist ? globalSiteBlocklist.lastFetchedAt : null}
+        domainCount={globalSiteBlocklist ? globalSiteBlocklist.domainCount : 0}
+        returnFocusRef={viewBlocklistBtnRef}
+      />
     </>
   );
 }

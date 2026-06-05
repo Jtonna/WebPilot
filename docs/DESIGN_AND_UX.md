@@ -160,7 +160,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with rename / revoke kebab. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
-**Sites** — Global Blocklist card (toggle + version + last fetch + count, with a `What's in the pack?` disclosure listing the bundled domains read-only). **Custom rules** (domain / decision, inline add). **Per-agent overrides** with agent picker.
+**Sites** — Global Blocklist card (toggle + version + last fetch + count, with a `View global blocklist` button that opens a searchable, paginated modal listing the bundled domains read-only). **Custom rules** (domain / decision, inline add). **Per-agent overrides** with agent picker.
 
 **Formatters** — `Loaded from remote` + `Custom` sections; row = name + `HealthPill` + last error time; row links to `/ui/formatters/logs/?name=…`. REST poll every 30s.
 
