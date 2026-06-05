@@ -10,10 +10,9 @@ Migration files live at:
 packages/server-for-chrome-extension/src/db/schema-migrations/
   index.js                                         ← runner
   001-rename-baseline-to-global-site-blocklist.js  ← migration file
-  README.md                                        ← contributor summary
 ```
 
-Each migration file is a plain CommonJS module alongside the runner. See [`schema-migrations/README.md`](../packages/server-for-chrome-extension/src/db/schema-migrations/README.md) for the short contributor-facing summary.
+Each migration file is a plain CommonJS module alongside the runner.
 
 ## Boot Ordering
 
@@ -96,7 +95,6 @@ If `up()` throws, the `db.transaction(...)` wrapper rolls back: no schema change
 2. Create `NNN-your-description.js` exporting `{ id, description, up(db, opts) }`.
 3. Write `up()` to be idempotent in spirit (see [Dual-Layer Idempotency](#dual-layer-idempotency)): guard each step against the already-applied state.
 4. Test via `packages/server-for-chrome-extension/test/db-migration.test.js`: create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape.
-5. See [`schema-migrations/README.md`](../packages/server-for-chrome-extension/src/db/schema-migrations/README.md) for the short summary of conventions.
 
 ## Inspection Tips
 
