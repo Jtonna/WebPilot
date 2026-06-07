@@ -17,10 +17,11 @@ WebPilot documentation covering system architecture, development guides, and API
 
 - [ADDING_NEW_FEATURES.md](ADDING_NEW_FEATURES.md) -- Step-by-step guide for adding MCP tools, extension handlers, and site-specific formatters. Includes checklists and a worked example. For developers extending WebPilot's capabilities.
 - [WHY_DEPLOY_VIA_SIDELOADING.md](WHY_DEPLOY_VIA_SIDELOADING.md) -- Why the Chrome extension must be sideloaded via Developer Mode instead of distributed through the Chrome Web Store. For anyone wondering about the distribution model.
+- [RELEASE.md](RELEASE.md) -- Stable and nightly release channels: how to trigger each workflow and how channel-aware formatter publishing works. For maintainers cutting releases.
 
 ## Reference
 
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all fourteen MCP tools (nine `browser_*` tools plus async pairing, formatter inspection/reload, and request-chain orchestration): parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for WebPilot's MCP tools: parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
 
 ## Design
 

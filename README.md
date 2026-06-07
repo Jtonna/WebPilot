@@ -17,7 +17,7 @@ Download the latest installer from the [Releases page](https://github.com/Jtonna
 |----------|------|
 | Windows  | `WebPilot-<version>-windows.exe` |
 
-macOS and Linux builds are not yet shipping. Both platforms have scaffolded code paths that need verification on real hardware before they can be released — tracked in [#48 (macOS)](https://github.com/Jtonna/WebPilot/issues/48) and [#49 (Linux)](https://github.com/Jtonna/WebPilot/issues/49).
+WebPilot ships for Windows. macOS and Linux code paths exist in the source tree but are not released.
 
 The installer is currently **unsigned**. SmartScreen will warn on first run — click "More info" → "Run anyway".
 
@@ -41,7 +41,7 @@ The WebPilot service starts automatically on login. The Chrome extension is auto
 
 If your agent already has an API key (e.g. a subagent inheriting its parent's `.mcp.json`), `request_pairing` short-circuits and returns the existing identity — no re-pairing needed.
 
-For the full tool reference (17 MCP tools: ten `browser_*` + pairing + formatter inspection + workflow orchestration), see [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md).
+For the full tool reference, see [`docs/MCP_INTEGRATION.md`](docs/MCP_INTEGRATION.md).
 
 ## Architecture
 

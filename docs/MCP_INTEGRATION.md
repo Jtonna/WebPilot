@@ -8,7 +8,7 @@ The WebPilot MCP server provides browser automation capabilities to AI agents vi
 
 ## Authentication
 
-By default, all MCP tool calls (except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_reload_formatters`) require a valid API key obtained by pairing.
+By default, all MCP tool calls (except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_dev_get_formatter_logs`) require a valid API key obtained by pairing.
 
 `agent_name` is only required when calling `request_pairing` — it is shown in the approval UI. All other tools authenticate via the API key alone; the server resolves the bound Chrome profile from the key via `resolveTargetProfile` in `mcp-handler.js`.
 
@@ -20,7 +20,7 @@ Include the key with every request using any of these methods:
 - **Query parameter:** `?apiKey=<your-key>` on the `/sse` and `/message` endpoints
 - **Tool parameter:** `api_key: "<your-key>"` as a parameter in each `tools/call` request (useful for immediate use after pairing, before the client is reconfigured)
 
-The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` parameter in their schema for this purpose.
+The server checks `session.mcpApiKey` (set from header or query parameter) first, then falls back to `params.arguments.api_key` from the tool call. All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) include an optional `api_key` parameter in their schema for this purpose.
 
 ### First-Time Setup (async flow)
 
@@ -65,7 +65,7 @@ Site-policy enforcement is **server-side**, implemented by `isAllowed(agentId, u
 
 **Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides, global user rules, and toggling the global site blocklist.
 
-**Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
+**Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
 **Note on `intent` parameter (debug trace).** The navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, `browser_scroll`, `browser_type`, `webpilot_run_workflow`) accept an optional `intent` string — a one-line human-readable description of *why* the call is being made (e.g. `"opening Discord to find #general"`, `"clicking Send after typing message text"`). The value is logged server-side as `[mcp:intent] <tool>: <text>` and surfaced in the Formatters/MCP observability UI. It is purely additive — not validated, not required — and is omitted from the per-tool docs below for brevity. Use it for any non-trivial multi-step flow: traces become dramatically easier to read.
 
@@ -237,7 +237,7 @@ webpilot_get_formatter_info(platform="threads")
 ```
 
 **Notes:**
-- This tool does not require an API key (unauthenticated, like `request_pairing`, `check_pairing_status`, and `webpilot_reload_formatters`).
+- This tool does not require an API key (unauthenticated, like `request_pairing`, `check_pairing_status`, and `webpilot_dev_get_formatter_logs`).
 - Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
 - The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
 - Calling this tool also triggers a live reload of both manifests, so changes to `custom-formatters/manifest.json` are picked up immediately

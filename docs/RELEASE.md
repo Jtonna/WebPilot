@@ -32,7 +32,7 @@ for testing unreleased features. Not for production use.
 - If another nightly already ran on the same calendar day, a `.N` suffix is
   appended (e.g., `v2.0.4-nightly.20260530.2`).
 - Published as a prerelease GitHub Release.
-- Artifact: `WebPilot-X.Y.Z-nightly.YYYYMMDD-windows.exe`.
+- Artifact: `WebPilot-X.Y.Z-nightly.YYYYMMDD[.N]-windows.exe`.
 
 ---
 

@@ -9,7 +9,7 @@ Migration files live at:
 ```
 packages/server-for-chrome-extension/src/db/schema-migrations/
   index.js                                         ← runner
-  001-rename-baseline-to-global-site-blocklist.js  ← migration file
+  NNN-description.js                               ← migration file
 ```
 
 Each migration file is a plain CommonJS module alongside the runner.
@@ -61,7 +61,7 @@ Migrations are protected against double-application at two layers:
 Migration filenames follow the pattern `NNN-kebab-case-description.js`, where `NNN` is a 3-digit zero-padded sequence number:
 
 ```
-001-rename-baseline-to-global-site-blocklist.js
+001-first-change.js
 002-your-next-change.js
 ```
 
@@ -73,14 +73,14 @@ Each file exports a plain object:
 
 ```js
 module.exports = {
-  id:          '001-rename-baseline-to-global-site-blocklist',  // ledger PK
+  id:          '003-your-migration',  // ledger PK; matches the filename without `.js`
   description: 'Human-readable one-liner shown in runner log lines',
   up(db, opts) {
     // db  — open better-sqlite3 handle
     // opts — { dataDir: string }
     // The runner wraps this call in a transaction. Do not open your own
     // outer transaction. A nested savepoint inside up() is fine for
-    // advanced ops like SQLite's 12-step CHECK rewrite (see migration 001).
+    // advanced ops like SQLite's 12-step CHECK rewrite.
   },
 };
 ```
