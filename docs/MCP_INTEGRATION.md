@@ -248,8 +248,6 @@ webpilot_get_formatter_info(platform="threads")
 
 Reload all formatters (both auto-updated and custom) without restarting the server. Use this after adding or modifying custom formatter files in the `custom-formatters` directory. Returns the updated formatter state.
 
-This tool does not require authentication.
-
 **Parameters:** None
 
 **Returns:**
@@ -271,7 +269,6 @@ This tool does not require authentication.
 ```
 
 **Notes:**
-- This tool is unauthenticated — no API key required.
 - Triggers a full reload of both the auto-updated formatter manifest (`formatters/`) and the custom formatter manifest (`custom-formatters/`). Custom platform entries override auto-updated ones with the same key.
 - Use this after dropping new formatter files into `custom-formatters/` and updating `custom-formatters/manifest.json`, rather than restarting the server
 - The returned object merges `reloaded: true` with the full `getFormatterInfo()` response, so callers see the current state of all loaded formatters immediately

@@ -112,7 +112,7 @@ When the signing key needs to be rotated (founder turnover, suspected compromise
 1. On a clean workstation, delete `~/.webpilot-signing-key` and run `node scripts/generate-signing-key.js`.
 2. Base64-encode the new private key and update the `WEBPILOT_SIGNING_KEY_BASE64` repo secret in **Settings → Secrets and variables → Actions**.
 3. Commit the regenerated `accessibility-tree-formatters/PUBKEY.pem`.
-4. Cut a new release via one of the dispatcher workflows. The next daemon update tick will fetch the new signed manifest, verify it against the new bundled pubkey, and apply normally.
+4. Run `.github/workflows/release-stable.yml` from **Actions → Release (stable) → Run workflow**. The next daemon update tick fetches the new signed manifest, verifies it against the new bundled pubkey, and applies it normally.
 
 Old released installers continue to verify against the *old* pubkey they shipped with — the rotation does not invalidate previously installed daemons until they receive a new installer that ships the new pubkey. Plan rotation to coincide with a normal release.
 
