@@ -12,18 +12,10 @@ This single constraint determines the entire distribution strategy.
 
 ## Distribution Method Comparison
 
-Every standard Chrome extension installation method was evaluated:
-
-| Method | Works? | Why / Why Not |
-|--------|--------|---------------|
-| Chrome Web Store | No | `chrome.debugger` is a restricted permission; listing is rejected |
-| External CRX (local file) | No | Chrome blocks local `.crx` installs (since Chrome 33 on Windows, Chrome 44 on macOS) |
-| External CRX (self-hosted URL) | No | Windows requires a Web Store listing; macOS blocks external CRX entirely |
-| Registry/JSON preference + Web Store | No | Still requires a Web Store listing as the install source |
-| Enterprise Policy (self-hosted) | No | Requires a managed-device policy channel (Windows Group Policy / registry, macOS MDM profile, Linux JSON policy); not viable for individual users on unmanaged machines |
-| **Developer Mode sideload** | **Yes** | Works on all platforms without any external approval or infrastructure |
-
-Developer Mode sideloading is the only method that works for individual users without Chrome Web Store approval.
+| Method | Status | Reason |
+|--------|--------|--------|
+| Chrome Web Store | Blocked | `chrome.debugger` is treated as a restricted permission under the Developer Program Policies; listings are rejected |
+| Developer Mode sideload | Current method | Works on all platforms without external approval or infrastructure |
 
 ## How Sideloading Works
 
@@ -48,6 +40,6 @@ Sideloading via Developer Mode has trade-offs that users should be aware of:
 
 Google's Chrome Web Store Developer Program Policies single out a handful of high-risk permissions for stricter review. The `chrome.debugger` permission gets this treatment because it lets an extension attach to any tab and read/modify all network traffic, DOM content, and JavaScript execution -- effectively granting full control over the browser session via the Chrome DevTools Protocol.
 
-This is by design for WebPilot: CDP access is what enables MCP clients to interact with web pages. The permission is not optional, and no reduced-scope alternative (e.g. `activeTab` + content scripts) would cover the cross-tab, network-level, and execution-control surface that the MCP tools depend on.
+This is by design for WebPilot: CDP access is what enables MCP clients to interact with web pages. The Chrome DevTools Protocol -- which the extension uses for navigation control, accessibility-tree extraction, input dispatch, scroll, and script execution (see `packages/chrome-extension-unpacked/utils/debugger.js` and the handlers under `packages/chrome-extension-unpacked/handlers/`) -- is reachable from an extension only through `chrome.debugger`. Content scripts and the `activeTab` permission do not expose CDP, so no reduced-scope manifest can cover the same surface.
 
 Further reading: [Chrome Developer Program Policies — Permissions](https://developer.chrome.com/docs/webstore/program-policies/permissions).

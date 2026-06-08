@@ -6,7 +6,7 @@
  *
  * For each of:
  *   - accessibility-tree-formatters/manifest.json
- *   - baseline-blocklists/manifest.json
+ *   - global-site-blocklists/manifest.json
  *
  * we:
  *
@@ -192,7 +192,7 @@ function signBundle(dir, manifestKind) {
 function main() {
   const root = repoRoot();
   signBundle(path.join(root, 'accessibility-tree-formatters'), 'formatters');
-  signBundle(path.join(root, 'baseline-blocklists'), 'blocklists');
+  signBundle(path.join(root, 'global-site-blocklists'), 'blocklists');
 }
 
 main();

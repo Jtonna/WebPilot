@@ -242,7 +242,7 @@ html, body {
 }
 
 .wp-pill[data-state="allowed"]           .wp-pill-dot { background: var(--wp-success); }
-.wp-pill[data-state="blocked_baseline"]  .wp-pill-dot { background: var(--wp-danger); }
+.wp-pill[data-state="blocked_global_site_blocklist"]  .wp-pill-dot { background: var(--wp-danger); }
 .wp-pill[data-state="blocked_user"]      .wp-pill-dot { background: var(--wp-danger); }
 .wp-pill[data-state="allowed_override"]  .wp-pill-dot { background: var(--wp-info); }
 .wp-pill[data-state="blocked_override"]  .wp-pill-dot { background: var(--wp-info); }

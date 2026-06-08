@@ -8,6 +8,7 @@ import { useToast } from '../../components/ToastRegion';
 import EmptyState from '../../components/EmptyState';
 import Pill from '../../components/Pill';
 import SectionToolbar from '../../components/SectionToolbar';
+import Modal from '../../components/Modal';
 import {
   createSequencedFetcher,
   getStatus,
@@ -17,7 +18,7 @@ import {
   getAgentSiteOverrides,
   setAgentSiteOverride,
   deleteAgentSiteOverride,
-  toggleBaselineBlocklist,
+  toggleGlobalSiteBlocklist,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 import { formatRelativeTime } from '../../lib/format';
@@ -26,33 +27,22 @@ import { formatRelativeTime } from '../../lib/format';
  * Sites — admin surface for the WebPilot site policy model.
  *
  * Three sections:
- *   1. Baseline blocklist  — small card: enabled toggle + version + last fetch
- *                            + domain count.
- *   2. Global rules        — list of (domain, decision, source) rows. Filter
- *                            by source (all / user / baseline). "+ Add rule"
- *                            opens an inline form. Baseline rows are
- *                            non-deletable; their Delete button is disabled
- *                            with an explanatory tooltip.
- *   3. Per-agent overrides — agent dropdown, then the picked agent's
- *                            agent_site_overrides list. Same +Add / Delete
- *                            pattern; deletes always allowed (overrides only
- *                            exist as user actions).
+ *   1. Global Blocklist       — bundled-pack toggle, version/last-fetch/domain-count
+ *                               metadata, and a "View global blocklist" button that
+ *                               opens a searchable, paginated modal listing the
+ *                               bundled global_site_blocklist domains read-only.
+ *   2. Custom rules           — user-set (domain, decision) rows. "+ Add rule"
+ *                               opens an inline form. All rows deletable.
+ *   3. Per-agent overrides    — agent dropdown, then the picked agent's
+ *                               agent_site_overrides list. Same +Add / Delete
+ *                               pattern; deletes always allowed (overrides only
+ *                               exist as user actions).
+ *
+ * State shape from /api/ui/sites: { globalRules: [...], globalSiteBlocklist: {...} }.
  *
  * Live updates via the `sites_changed` UI WebSocket event — every successful
  * write on the server side broadcasts it and the page refetches.
- *
- * Rendering note: with the baseline pack enabled, the global rules list can
- * easily hit 60+ rows. We render all rows (no pagination yet) but use the
- * source filter to let the user narrow on User-only when adding rules. If
- * the list grows large enough that this feels sluggish, swap in
- * react-window — the data shape is already row-uniform.
  */
-
-const SOURCE_FILTERS = [
-  { value: 'all', label: 'All' },
-  { value: 'user', label: 'User' },
-  { value: 'baseline', label: 'Baseline' },
-];
 
 // Lightweight domain syntactic check used in the +Add forms to render a
 // normalization preview without round-tripping the server. The real
@@ -77,12 +67,6 @@ function decisionPill(decision) {
   return <Pill state="danger" label="Block" />;
 }
 
-function sourcePill(source) {
-  if (source === 'baseline') {
-    return <Pill state="info" label="Baseline" />;
-  }
-  return <Pill state="active" label="User" />;
-}
 
 function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
   const [domain, setDomain] = useState('');
@@ -154,15 +138,12 @@ function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
 }
 
 function GlobalRuleRow({ rule, onDelete, busy }) {
-  const isBaseline = rule.source === 'baseline';
   return (
     <div className="wp-row">
       <div className="wp-row-grow">
         <div className="wp-row-title">{rule.domain}</div>
         <div className="wp-row-sub">
           <span>{decisionPill(rule.decision)}</span>
-          <span className="wp-row-sep">·</span>
-          <span>{sourcePill(rule.source)}</span>
           {rule.updatedAt ? (
             <>
               <span className="wp-row-sep">·</span>
@@ -176,12 +157,8 @@ function GlobalRuleRow({ rule, onDelete, busy }) {
           type="button"
           className="wp-btn wp-btn-compact"
           onClick={() => onDelete(rule)}
-          disabled={isBaseline || busy}
-          title={
-            isBaseline
-              ? 'baseline rules — toggle the pack off in Settings'
-              : 'Remove this rule'
-          }
+          disabled={busy}
+          title="Remove this rule"
         >
           Delete
         </button>
@@ -219,14 +196,139 @@ function OverrideRow({ override, onDelete, busy }) {
   );
 }
 
+const BLOCKLIST_PAGE_SIZE = 25;
+
+function BlocklistViewerModal({ open, onClose, rules, version, lastFetchedAt, domainCount, returnFocusRef }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const searchRef = useRef(null);
+
+  // Reset internal state when the modal opens; restore focus to the trigger on close.
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setPage(0);
+    } else if (returnFocusRef && returnFocusRef.current) {
+      try { returnFocusRef.current.focus(); } catch (_) { /* ignore */ }
+    }
+  }, [open, returnFocusRef]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rules;
+    return rules.filter((r) => r.domain.toLowerCase().includes(q));
+  }, [rules, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / BLOCKLIST_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = useMemo(
+    () => filtered.slice(safePage * BLOCKLIST_PAGE_SIZE, (safePage + 1) * BLOCKLIST_PAGE_SIZE),
+    [filtered, safePage]
+  );
+
+  // If a search shrinks the result set below the current page, drift back.
+  useEffect(() => {
+    if (page > totalPages - 1) setPage(totalPages - 1);
+  }, [page, totalPages]);
+
+  return (
+    <Modal open={open} onClose={onClose} titleId="wp-blocklist-title" size="lg" initialFocusRef={searchRef}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
+        <div>
+          <h2 id="wp-blocklist-title" className="wp-modal-title">Global Blocklist Contents</h2>
+          <div className="wp-row-sub" style={{ marginTop: 4 }}>
+            {version ? (
+              <>
+                <span>version <strong style={{ color: 'var(--wp-fg)' }}>{version}</strong></span>
+                <span className="wp-row-sep">·</span>
+                <span>last fetched {formatRelativeTime(lastFetchedAt)}</span>
+                <span className="wp-row-sep">·</span>
+                <span>
+                  <strong style={{ color: 'var(--wp-fg)' }}>{domainCount || 0}</strong>{' '}
+                  {(domainCount || 0) === 1 ? 'domain' : 'domains'} in the pack
+                </span>
+              </>
+            ) : (
+              <span>No pack fetched yet.</span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="wp-btn wp-btn-compact"
+          onClick={onClose}
+          aria-label="Close"
+          title="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <input
+        ref={searchRef}
+        className="wp-input"
+        type="search"
+        autoComplete="off"
+        placeholder="Search domains…"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+      />
+
+      <div className="wp-row-list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
+        {filtered.length === 0 ? (
+          <EmptyState body={query.trim() ? `No domains match "${query.trim()}"` : 'No pack domains loaded yet.'} />
+        ) : (
+          pageRows.map((r) => (
+            <div key={r.domain} className="wp-row">
+              <div className="wp-row-grow">
+                <div className="wp-row-title">{r.domain}</div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
+        <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
+          {filtered.length} {filtered.length === 1 ? 'result' : 'results'}
+        </span>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-3)' }}>
+          <button
+            type="button"
+            className="wp-link"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={safePage === 0}
+            style={safePage === 0 ? { opacity: 0.4, cursor: 'default' } : undefined}
+          >
+            ← Prev
+          </button>
+          <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
+            Page {safePage + 1} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="wp-link"
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={safePage >= totalPages - 1}
+            style={safePage >= totalPages - 1 ? { opacity: 0.4, cursor: 'default' } : undefined}
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function SitesPage() {
   const toast = useToast();
-  // Global rules + baseline summary, from /api/ui/sites.
-  const [sitesData, setSitesData] = useState({ globalRules: [], baseline: null });
+  // Global rules + globalSiteBlocklist summary, from /api/ui/sites.
+  const [sitesData, setSitesData] = useState({ globalRules: [], globalSiteBlocklist: null });
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState(null);
-  const [sourceFilter, setSourceFilter] = useState('all');
   const [addRuleOpen, setAddRuleOpen] = useState(false);
+  const [blocklistOpen, setBlocklistOpen] = useState(false);
+  const viewBlocklistBtnRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const sitesFetcher = useRef(null);
   if (sitesFetcher.current === null) {
@@ -254,7 +356,7 @@ export default function SitesPage() {
       if (isStale) return;
       setSitesData({
         globalRules: Array.isArray(data.globalRules) ? data.globalRules : [],
-        baseline: data.baseline || null,
+        globalSiteBlocklist: data.globalSiteBlocklist || null,
       });
       setSitesError(null);
     } catch (err) {
@@ -334,17 +436,17 @@ export default function SitesPage() {
     refreshOverrides(selectedAgentKey);
   }, [selectedAgentKey]);
 
-  async function handleToggleBaseline(next) {
-    const prev = sitesData.baseline;
-    setSitesData((d) => ({ ...d, baseline: { ...(d.baseline || {}), enabled: next } }));
+  async function handleToggleGlobalSiteBlocklist(next) {
+    const prev = sitesData.globalSiteBlocklist;
+    setSitesData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
     try {
-      const result = await toggleBaselineBlocklist(next);
-      setSitesData((d) => ({ ...d, baseline: result.baseline || d.baseline }));
-      toast.info(`Baseline blocklist ${next ? 'enabled' : 'disabled'}.`);
+      const result = await toggleGlobalSiteBlocklist(next);
+      setSitesData((d) => ({ ...d, globalSiteBlocklist: result.globalSiteBlocklist || d.globalSiteBlocklist }));
+      toast.info(`Global blocklist ${next ? 'enabled' : 'disabled'}.`);
     } catch (e) {
       // Roll back on failure.
-      setSitesData((d) => ({ ...d, baseline: prev }));
-      toast.error(e.message || 'Couldn’t update baseline setting.');
+      setSitesData((d) => ({ ...d, globalSiteBlocklist: prev }));
+      toast.error(e.message || 'Couldn’t update global blocklist setting.');
     }
   }
 
@@ -408,39 +510,38 @@ export default function SitesPage() {
     }
   }
 
-  const filteredRules = useMemo(() => {
-    if (sourceFilter === 'all') return sitesData.globalRules;
-    return sitesData.globalRules.filter((r) => r.source === sourceFilter);
-  }, [sitesData.globalRules, sourceFilter]);
+  const customRules = useMemo(
+    () => (sitesData?.globalRules || []).filter((r) => r.source === 'user'),
+    [sitesData?.globalRules]
+  );
 
   const userRuleCount = useMemo(
     () => sitesData.globalRules.filter((r) => r.source === 'user').length,
     [sitesData.globalRules]
   );
-  const baselineRuleCount = useMemo(
-    () => sitesData.globalRules.filter((r) => r.source === 'baseline').length,
-    [sitesData.globalRules]
-  );
 
-  const baseline = sitesData.baseline;
+  const globalSiteBlocklist = sitesData.globalSiteBlocklist;
+
+  const bundledBlocklistRules = useMemo(
+    () => (sitesData?.globalRules || []).filter((r) => r.source === 'global_site_blocklist'),
+    [sitesData?.globalRules]
+  );
 
   return (
     <>
       <header className="wp-page-head">
         <h1 className="wp-page-title">Sites</h1>
         <p className="wp-page-sub">
-          Decide which sites WebPilot agents can touch. Per-agent overrides
-          beat global rules; global rules beat the default (allow). Baseline
-          blocklist rules ship with WebPilot and update automatically.
+          Decide which sites WebPilot agents can touch. Per-agent overrides beat custom rules; custom rules beat the bundled global blocklist; everything else is allowed.
         </p>
       </header>
 
       {sitesError ? <ErrorCard error={sitesError} /> : null}
 
-      {/* Baseline blocklist summary */}
+      {/* Global Blocklist summary */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Baseline blocklist</h2>
+          <h2 className="wp-section-title">Global Blocklist</h2>
         </div>
         <div className="wp-card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
           {sitesLoading ? (
@@ -450,65 +551,60 @@ export default function SitesPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s-4)' }}>
                 <div>
                   <div style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
-                    Baseline blocklist {baseline && baseline.enabled ? 'enabled' : 'disabled'}
+                    Global blocklist {globalSiteBlocklist && globalSiteBlocklist.enabled ? 'enabled' : 'disabled'}
                   </div>
                   <div className="wp-row-sub" style={{ marginTop: 4 }}>
-                    {baseline && baseline.version ? (
+                    {globalSiteBlocklist && globalSiteBlocklist.version ? (
                       <>
-                        <span>version <strong style={{ color: 'var(--wp-fg)' }}>{baseline.version}</strong></span>
+                        <span>version <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.version}</strong></span>
                         <span className="wp-row-sep">·</span>
-                        <span>last fetched {formatRelativeTime(baseline.lastFetchedAt)}</span>
+                        <span>last fetched {formatRelativeTime(globalSiteBlocklist.lastFetchedAt)}</span>
                         <span className="wp-row-sep">·</span>
                         <span>
-                          <strong style={{ color: 'var(--wp-fg)' }}>{baseline.domainCount || 0}</strong>{' '}
-                          {((baseline && baseline.domainCount) || 0) === 1 ? 'domain' : 'domains'} in baseline
+                          <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.domainCount || 0}</strong>{' '}
+                          {((globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0) === 1 ? 'domain' : 'domains'} in the pack
                         </span>
                       </>
                     ) : (
-                      <span>No baseline pack fetched yet.</span>
+                      <span>No pack fetched yet.</span>
                     )}
                   </div>
                 </div>
                 <Toggle
-                  checked={!!(baseline && baseline.enabled)}
-                  onChange={handleToggleBaseline}
-                  label={baseline && baseline.enabled ? 'On' : 'Off'}
-                  title="When disabled, the auto-updater skips DB writes — existing baseline rows stay until the next fetch lands or the server restarts."
+                  checked={!!(globalSiteBlocklist && globalSiteBlocklist.enabled)}
+                  onChange={handleToggleGlobalSiteBlocklist}
+                  label={globalSiteBlocklist && globalSiteBlocklist.enabled ? 'On' : 'Off'}
+                  title="When disabled, WebPilot ignores the bundled blocklist when deciding whether a request is allowed. Per-agent overrides and your custom rules still apply."
                 />
+              </div>
+              <div style={{ marginTop: 'var(--s-3)' }}>
+                <button
+                  ref={viewBlocklistBtnRef}
+                  type="button"
+                  className="wp-btn wp-btn-compact"
+                  onClick={() => setBlocklistOpen(true)}
+                >
+                  View global blocklist
+                </button>
               </div>
             </>
           )}
         </div>
       </section>
 
-      {/* Global rules */}
+      {/* Custom rules */}
       <section className="wp-section">
         <div className="wp-section-head">
-          <h2 className="wp-section-title">Global rules</h2>
+          <h2 className="wp-section-title">Custom rules</h2>
           <span className="wp-section-aside">
             {sitesLoading
               ? ''
-              : `${userRuleCount} user · ${baselineRuleCount} baseline`}
+              : `${userRuleCount} ${userRuleCount === 1 ? 'rule' : 'rules'}`}
           </span>
         </div>
 
         <SectionToolbar
-          left={(
-            <div role="tablist" aria-label="Filter rules by source" style={{ display: 'inline-flex', gap: 'var(--s-2)' }}>
-              {SOURCE_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={sourceFilter === f.value}
-                  className={`wp-btn wp-btn-compact${sourceFilter === f.value ? ' wp-btn-primary' : ''}`}
-                  onClick={() => setSourceFilter(f.value)}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          )}
+          left={null}
           right={(
             <button
               type="button"
@@ -539,17 +635,11 @@ export default function SitesPage() {
             <SkeletonRow titleWidth="52%" subWidth="40%" showTrailing />
             <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
           </div>
-        ) : filteredRules.length === 0 ? (
-          <EmptyState
-            body={sourceFilter === 'user'
-              ? 'No user-set rules yet. Click "+ Add rule" to allow or block a domain.'
-              : sourceFilter === 'baseline'
-                ? 'No baseline rules. The baseline pack may be disabled or not yet fetched.'
-                : 'No global rules yet.'}
-          />
+        ) : customRules.length === 0 ? (
+          <EmptyState body="No custom rules yet. Click &quot;+ Add rule&quot; to allow or block a domain." />
         ) : (
           <div className="wp-row-list">
-            {filteredRules.map((rule) => (
+            {customRules.map((rule) => (
               <GlobalRuleRow
                 key={`${rule.source}:${rule.domain}`}
                 rule={rule}
@@ -649,6 +739,16 @@ export default function SitesPage() {
           </div>
         )}
       </section>
+
+      <BlocklistViewerModal
+        open={blocklistOpen}
+        onClose={() => setBlocklistOpen(false)}
+        rules={bundledBlocklistRules}
+        version={globalSiteBlocklist ? globalSiteBlocklist.version : null}
+        lastFetchedAt={globalSiteBlocklist ? globalSiteBlocklist.lastFetchedAt : null}
+        domainCount={globalSiteBlocklist ? globalSiteBlocklist.domainCount : 0}
+        returnFocusRef={viewBlocklistBtnRef}
+      />
     </>
   );
 }

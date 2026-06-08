@@ -64,11 +64,9 @@ The server resolves the binding in five ordered steps (see `server.js` around li
 2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
 3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
 4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
-5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the popup, which renders the picker via `profileIdentifyView`. Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
+5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; the actual profile picker is rendered by the webapp's `/pairings` flow (see `background.js` around lines 400-401). Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
 
-The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the popup surfaces a profile picker via `profileIdentifyView`). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
-
-> Step 4 (inference-by-exclusion) is the path most likely to "auto-bind to the wrong profile" when a user has several profiles whose `Local State` entries lack a `gaia_email`. If that happens, click **Change** on the popup's profile row to force `RESET_PROFILE_ID` and pick explicitly.
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list and the webapp's `/pairings` flow surfaces the picker). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
 
 ### Message handlers
 
@@ -89,11 +87,6 @@ The current minimal popup does **not** send any `chrome.runtime.sendMessage` —
 | `FORGET_CONFIG` | Disconnects, clears stored config (`serverUrl`, `enabled`, legacy `apiKey`), resets state, and restarts auto-connect to pick up server again. `webpilot.installId` is intentionally preserved. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
-
-> Removed once the popup was rewritten as a minimal status-and-escape-hatch panel and these runtime messages had no remaining listeners in the extension:
-> `GET_STATUS`, `DISCONNECT`, `RETRY_AUTO_CONNECT`, `RESET_PROFILE_ID`, `SET_PROFILE_ID`, `GET_PROFILE_IDENTITY`, `CHECK_FORMATTER_UPDATES`. Background broadcasts `IDENTIFY_REQUIRED` and `CONNECTION_STATUS_CHANGED` also removed for the same reason.
->
-> Also removed: `SET_NETWORK_MODE` — network mode is configured via `POST /api/ui/settings/network-mode` from the web UI.
 
 ## Handlers
 
@@ -213,7 +206,7 @@ The popup is a **minimal status-and-escape-hatch panel** themed to match the web
 Four components, top to bottom:
 
 1. **Connection status** — colored dot + one-word label (`Connected` / `Reconnecting…` / `Disconnected`). Reveals the bound profile and server URL underneath.
-2. **Current tab** — domain + state pill (`Allowed` / `Blocked (baseline)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
+2. **Current tab** — domain + state pill (`Allowed` / `Blocked (global blocklist)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
 3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
 4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
 
@@ -250,7 +243,7 @@ Response fields:
 - `profileId` — the bound Chrome profile directoryName.
 - `agent` — always `null` (popup is profile-scoped).
 - `serverUrl` — `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers, used by the popup to build the "Open dashboard" link.
-- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_baseline' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
+- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_global_site_blocklist' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
 
 #### `POST /api/popup/site-toggle`
 
@@ -295,7 +288,7 @@ Settings and state are stored in `chrome.storage.local`:
 | `pendingPairingRequests` | array | `[]` | (legacy) Cached pending requests; no longer surfaced in the popup |
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 | `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
-| `webpilot.profileId` | string | null | Bound Chrome profile directoryName (cleared on `RESET_PROFILE_ID`) |
+| `webpilot.profileId` | string | null | Bound Chrome profile directoryName |
 | `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
 
 `webpilot.installId` is intentionally **not** cleared on config resets (e.g. `FORGET_CONFIG`) so the server's `installId → profileId` mapping survives storage wipes. Any pre-1.2.0 `apiKey` value left in `chrome.storage.local` is purged on first startup after upgrade (one-time migration; the legacy transport key was retired 2026-05-17).
@@ -318,13 +311,9 @@ Standard command envelope:
 | Type | Envelope | Params / Fields | Description |
 |------|----------|-----------------|-------------|
 | `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. |
-| `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; popup surfaces a profile picker. |
+| `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; extension caches the list and the webapp's `/pairings` flow surfaces the picker. |
 | `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
-
-> Removed: `pairing_request`. Pairing approval no longer goes through the extension popup — pending pairings are surfaced and approved/denied via the web UI at `/ui/pairings`. The legacy `pairing_request` push has no consumer in the current extension.
->
-> Removed: `formatter_update_result`. The minimal-popup rewrite removed the extension-side `CHECK_FORMATTER_UPDATES` runtime message and the corresponding `check_formatter_updates` WebSocket request, so the server's push response no longer has a consumer in the extension. Formatter update checks are now driven from the web UI.
 
 ### Extension to Server (WebSocket)
 
@@ -350,14 +339,12 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the popup picker). |
+| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile via the webapp). |
 | `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
 | `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
 | `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |
 
-> **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. The extension popup no longer sends these. Network mode and pairing config are now owned by the web UI.
->
-> **Removed from the extension:** `check_formatter_updates`. The minimal-popup rewrite dropped the runtime listener and the WebSocket sender. Formatter update checks now run from the server-hosted web UI.
+> **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. Network mode and pairing config are owned by the web UI.
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 
@@ -379,4 +366,4 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 Host permission `<all_urls>` allows the extension to operate on any website.
 
-Manifest fields: `manifest_version: 3`, `name: "WebPilot"`, `version: "2.2.0"`. The background service worker is declared with `"type": "module"`.
+Manifest fields: `manifest_version: 3`, `name: "WebPilot"`. See `packages/chrome-extension-unpacked/manifest.json` for the current version. The background service worker is declared with `"type": "module"`.

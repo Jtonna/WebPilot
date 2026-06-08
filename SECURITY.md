@@ -58,7 +58,7 @@ The same advice applies to any other client config that embeds the WebPilot API 
 
 ## Supply chain integrity
 
-WebPilot's daemon fetches accessibility-tree formatters and the baseline blocklist from this repo at runtime. To stop an attacker who compromises a maintainer's GitHub account from pushing malicious JavaScript that gets executed inside every user's daemon process, every released formatter + blocklist update is cryptographically signed.
+WebPilot's daemon fetches accessibility-tree formatters and the global site blocklist from this repo at runtime. To stop an attacker who compromises a maintainer's GitHub account from pushing malicious JavaScript that gets executed inside every user's daemon process, every released formatter + blocklist update is cryptographically signed.
 
 - **Signing key.** A single Ed25519 keypair signs all formatter / blocklist releases. The private key is held offline by the maintainer and configured in GitHub Actions as the `WEBPILOT_SIGNING_KEY_BASE64` repo secret; it never lives on a developer machine that pushes to `main`.
 - **Pubkey distribution.** `accessibility-tree-formatters/PUBKEY.pem` is committed to the repo AND bundled into the daemon binary (via `pkg.assets`) and the Electron installer (via `extraResources`). The verifier reads the pubkey from disk — it never trusts a key fetched over the network.

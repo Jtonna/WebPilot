@@ -213,13 +213,13 @@ export function dismissAllForFormatter(name) {
 // Sites
 //
 // CRUD over the site-policy tables (global_site_rules and
-// agent_site_overrides) plus the baseline-pack on/off toggle.
+// agent_site_overrides) plus the global-site-blocklist on/off toggle.
 //
 // All helpers follow the existing convention: throw on non-2xx, return the
 // parsed JSON body otherwise. The Sites page subscribes to the
 // `sites_changed` WebSocket event to refetch after any write.
 
-// GET /api/ui/sites — returns { globalRules: [...], baseline: {...} }.
+// GET /api/ui/sites — returns { globalRules: [...], globalSiteBlocklist: {...} }.
 export function getSites() {
   return apiFetch('/api/ui/sites');
 }
@@ -234,8 +234,8 @@ export function createSiteRule({ domain, decision }) {
 }
 
 // DELETE /api/ui/sites/:domain — removes a user-source rule. Server refuses
-// baseline rows with a 400; the caller should treat the error message as
-// authoritative for the toast text.
+// attempts to delete global_site_blocklist-source rows with a 400; the caller
+// should treat the error message as authoritative for the toast text.
 export function deleteSiteRule(domain) {
   return apiFetch(`/api/ui/sites/${encodeURIComponent(domain)}`, {
     method: 'DELETE',
@@ -265,10 +265,12 @@ export function deleteAgentSiteOverride(agentId, domain) {
   );
 }
 
-// POST /api/ui/sites/baseline/toggle — body { enabled: bool }. Returns
-// { enabled, baseline: { enabled, version, lastFetchedAt, domainCount } }.
-export function toggleBaselineBlocklist(enabled) {
-  return apiFetch('/api/ui/sites/baseline/toggle', {
+// POST /api/ui/sites/global-site-blocklist/toggle — body { enabled: bool }.
+// Returns { enabled, globalSiteBlocklist: { enabled, version, lastFetchedAt, domainCount } }.
+// The toggle gates global-site-blocklist rule application in the runtime resolver;
+// per-agent overrides and user-set custom rules are unaffected.
+export function toggleGlobalSiteBlocklist(enabled) {
+  return apiFetch('/api/ui/sites/global-site-blocklist/toggle', {
     method: 'POST',
     body: { enabled: !!enabled },
   });

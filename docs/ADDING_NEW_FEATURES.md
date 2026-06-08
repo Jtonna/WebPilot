@@ -174,6 +174,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 - **MCP_SERVER.md** - Add to the MCP Tools table
 - **MCP_INTEGRATION.md** - Add full documentation with parameters, return format, errors, and usage notes
 
+#### Database changes
+
+If your feature requires a schema change, add a migration under `packages/server-for-chrome-extension/src/db/schema-migrations/`. See [`docs/SCHEMA_MIGRATIONS.md`](../docs/SCHEMA_MIGRATIONS.md).
+
 ## Adding a Site-Specific Formatter
 
 Site-specific formatters extract structured data (posts, feeds, listings) from accessibility trees. They auto-route by URL inside the existing `browser_get_accessibility_tree` tool -- no new MCP tools or command types are needed.

@@ -40,7 +40,7 @@ Closing the window does **not** quit the app — `win.on('close')` preempts the 
 - `env.WEBPILOT_NO_OPEN = '1'` — suppresses the server's default-browser pop; the dashboard renders inside our window instead.
 - `env.WEBPILOT_DATA_DIR = app.getPath('userData')` — pins the daemon's data dir to Electron's `userData` path so the shell and the daemon agree.
 
-The child handle is retained (no `detached`/`unref`). `killServer()` runs from tray Exit and `before-quit`, and tries **both** the spawned handle and the PID written to `<dataDir>/server.pid` — the latter covers the case where the server was auto-started outside the Electron shell (e.g. Registry Run key) and the Electron app attached to an already-running daemon.
+The child handle is retained (no `detached`/`unref`). `killServer()` runs from tray Exit and `before-quit`, and tries **both** the spawned handle and the PID written to `<dataDir>/server.pid` — the PID-file fallback covers the case where the Electron app attached to an already-running daemon rather than spawning it itself.
 
 If the server binary is missing, `startServer()` logs and skips; the window will then fall through to the 30-second timeout and show its error page.
 
@@ -109,7 +109,7 @@ Electron-builder output directory is `../../dist`, placing built installers in t
 
 ## Current Status
 
-The package is `@webpilot/onboarding`, version `1.1.8` (unified with the rest of the monorepo on the QOL-Features branch).
+The package is `@webpilot/onboarding` (see `packages/electron/package.json` for the current version, which tracks the rest of the monorepo).
 
 ```
 packages/electron/

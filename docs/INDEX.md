@@ -6,6 +6,7 @@ WebPilot documentation covering system architecture, development guides, and API
 
 - [BUILD_ARCHITECTURE.md](BUILD_ARCHITECTURE.md) -- Build pipeline, pkg compilation, Electron packaging, deployment paths, and CLI flags. For anyone working on the build system or understanding how the pieces ship together.
 - [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, and service registration. For developers working on the server layer.
+- [SCHEMA_MIGRATIONS.md](SCHEMA_MIGRATIONS.md) -- SQLite schema migration system: runner, ledger table, dual-layer idempotency, naming convention, and how to add a migration. For developers making database schema changes.
 - [CHROME_EXTENSION.md](CHROME_EXTENSION.md) -- Chrome extension architecture: service worker, command handlers, formatters, utilities, popup UI, and communication protocol. For developers working on browser automation.
 - [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.
 - [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
@@ -16,10 +17,11 @@ WebPilot documentation covering system architecture, development guides, and API
 
 - [ADDING_NEW_FEATURES.md](ADDING_NEW_FEATURES.md) -- Step-by-step guide for adding MCP tools, extension handlers, and site-specific formatters. Includes checklists and a worked example. For developers extending WebPilot's capabilities.
 - [WHY_DEPLOY_VIA_SIDELOADING.md](WHY_DEPLOY_VIA_SIDELOADING.md) -- Why the Chrome extension must be sideloaded via Developer Mode instead of distributed through the Chrome Web Store. For anyone wondering about the distribution model.
+- [RELEASE.md](RELEASE.md) -- Stable and nightly release channels: how to trigger each workflow and how channel-aware formatter publishing works. For maintainers cutting releases.
 
 ## Reference
 
-- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for all fourteen MCP tools (nine `browser_*` tools plus async pairing, formatter inspection/reload, and request-chain orchestration): parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) -- Full API reference for WebPilot's MCP tools: parameters, return formats, error codes, usage examples, and best practices. For AI agents and developers integrating with WebPilot.
 
 ## Design
 

@@ -1868,9 +1868,10 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       const requestedLimit = Math.max(1, Math.min(50, args.limit || 20));
       const health = formatterLogs.getStatus(platform);
       // getLogs returns the error ring buffer newest-first. Entry shape:
-      // { timestamp, phase: 'format'|'workflow', workflow?, message, stack,
-      // params?, tabId? }. Success invocations only update counters; they
-      // are NOT stored in the ring, so this is implicitly an error log.
+      // { id, formatter, timestamp, phase: 'format'|'workflow', workflow,
+      // message, stack, params, tabId, dismissedAt, dismissedBy }. Success
+      // invocations only update counters; they are NOT stored in the ring,
+      // so this is implicitly an error log.
       const entries = formatterLogs.getLogs(platform, requestedLimit);
       return {
         content: [{ type: 'text', text: JSON.stringify({

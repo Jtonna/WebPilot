@@ -133,6 +133,19 @@ function init() {
     throw e;
   }
 
+  // Run idempotent rename migrations BEFORE applying schema.sql. The
+  // baseline → global_site_blocklist rename predates schema.sql being
+  // updated to the new shape; running the migration first means existing
+  // installs are rewritten and the subsequent IF-NOT-EXISTS schema apply
+  // is a no-op for the renamed objects. See db/migration.js.
+  try {
+    const migrations = require('./schema-migrations');
+    migrations.runAll(_db, { dataDir });
+  } catch (e) {
+    console.error('[db] schema migration failed:', e && e.message);
+    throw e;
+  }
+
   try {
     _db.exec(schemaSql);
   } catch (e) {

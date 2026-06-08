@@ -182,7 +182,7 @@ No file copying or deployment occurs. The server binary and extension files run 
 |----------|-------------|
 | Windows  | `%LOCALAPPDATA%\Programs\WebPilot\` |
 | macOS    | `/Applications/WebPilot.app/` |
-| Linux    | `/opt/WebPilot/` or AppImage |
+| Linux    | AppImage (portable; runs from wherever the user places it) |
 
 ### Bundled Resources (inside install directory)
 

@@ -1,4 +1,4 @@
-# WebPilot baseline blocklist — financial-institutions
+# WebPilot global site blocklist — financial-institutions
 # version: 1
 #
 # Format: hosts.txt style. One domain per line, prefixed by `0.0.0.0 `.
@@ -9,12 +9,12 @@
 # This file is auto-updated by the WebPilot server (`blocklist-updater.js`)
 # on boot and every 24 hours. Users override per-domain in the WebPilot
 # webapp (Sites page) via per-agent or per-user allow rules — those
-# overrides take precedence over baseline-block entries below.
+# overrides take precedence over entries below.
 #
 # Curated set: major US retail banks + brokerages + credit unions + a few
 # international names. NOT exhaustive; the intent is to cover the institutions
 # a user would expect to see flagged out of the box. Add/remove via PRs to
-# the WebPilot repo's `baseline-blocklists/` directory.
+# the WebPilot repo's `global-site-blocklists/` directory.
 
 # ── US retail banks ─────────────────────────────────────────────────────
 0.0.0.0 chase.com

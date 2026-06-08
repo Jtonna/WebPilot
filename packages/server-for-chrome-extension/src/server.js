@@ -10,7 +10,7 @@ const pairedKeys = require('./paired-keys');
 const extensionInstalls = require('./extension-installs');
 const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
-const blocklistUpdater = require('./blocklist-updater');
+const globalSiteBlocklistUpdater = require('./global-site-blocklist-updater');
 const formatterLogs = require('./formatter-logs');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
@@ -578,12 +578,12 @@ function mountWebUiRoutes(app, deps) {
         // Settings page; the daemon also consults this when firing pairing
         // notifications.
         notifications: notificationsSettings.getSettings(),
-        // Baseline blocklist summary read by the webapp Sites page.
+        // Global site blocklist summary read by the webapp Sites page.
         // Shape: { enabled, version, lastFetchedAt, domainCount }.
-        baselineBlocklist: (() => {
-          try { return blocklistUpdater.getStatus(); }
+        globalSiteBlocklist: (() => {
+          try { return globalSiteBlocklistUpdater.getStatus(); }
           catch (e) {
-            console.log(`[ui-api:status] baselineBlocklist getStatus failed: ${e.message}`);
+            console.log(`[ui-api:status] globalSiteBlocklist getStatus failed: ${e.message}`);
             return { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
           }
         })(),
@@ -1231,8 +1231,8 @@ function mountWebUiRoutes(app, deps) {
   }
 
   // GET /api/ui/sites
-  // Returns the full global_site_rules list (user + baseline) plus a small
-  // summary of the baseline pack.
+  // Returns the full global_site_rules list (user + global site blocklist) plus a small
+  // summary of the global site blocklist.
   app.get('/api/ui/sites', auth, (req, res) => {
     try {
       const db = require('./db/connection').getDb();
@@ -1248,13 +1248,13 @@ function mountWebUiRoutes(app, deps) {
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       }));
-      let baseline;
+      let globalSiteBlocklist;
       try {
-        baseline = blocklistUpdater.getStatus();
+        globalSiteBlocklist = globalSiteBlocklistUpdater.getStatus();
       } catch (e) {
-        baseline = { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
+        globalSiteBlocklist = { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
       }
-      res.json({ globalRules, baseline });
+      res.json({ globalRules, globalSiteBlocklist });
     } catch (e) {
       console.error('[ui-api] GET /sites failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -1306,8 +1306,9 @@ function mountWebUiRoutes(app, deps) {
   });
 
   // DELETE /api/ui/sites/:domain
-  // Only removes source='user' rows. Refuses baseline rows with a 400 and a
-  // message that nudges the user toward the baseline toggle in Settings.
+  // Only removes source='user' rows. Refuses global-site-blocklist rows with a
+  // 400 and a message that nudges the user toward the global site blocklist
+  // toggle in Settings.
   app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
     try {
       const rawDomain = req.params.domain;
@@ -1327,9 +1328,9 @@ function mountWebUiRoutes(app, deps) {
       }
       if (existing.source !== 'user') {
         return res.status(400).json({
-          error: 'cannot delete baseline rule',
+          error: 'cannot delete global site blocklist rule',
           reason:
-            "this rule comes from the baseline blocklist pack — toggle the pack off in Settings to remove all baseline rules",
+            "this rule comes from the global site blocklist — toggle the global site blocklist off in Settings to remove all global-site-blocklist rules",
           domain: normalized,
           source: existing.source,
         });
@@ -1448,14 +1449,11 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/sites/baseline/toggle
-  // Body: { enabled: bool }. Updates the config table key
-  // `baseline_blocklist_enabled`. Note: the auto-update interval still runs
-  // in the background regardless — flipping this off means the next fetch
-  // skips DB writes, but existing baseline rows remain until a fetch lands
-  // (or the server is restarted). The webapp surfaces that subtlety in the
-  // baseline summary card.
-  app.post('/api/ui/sites/baseline/toggle', auth, mutatingAuth, express.json(), (req, res) => {
+  // POST /api/ui/sites/global-site-blocklist/toggle — writes config.global_site_blocklist_enabled.
+  // When false, site-policy.isAllowed ignores rows with source='global_site_blocklist'; per-agent overrides and user rules still apply.
+  // The auto-updater also skips DB writes while the flag is off, leaving existing global-site-blocklist rows in place for inspection.
+  // Broadcasts a sites_changed WS event so connected Sites pages re-render.
+  app.post('/api/ui/sites/global-site-blocklist/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = !!(req.body && req.body.enabled);
       const db = require('./db/connection').getDb();
@@ -1464,18 +1462,18 @@ function mountWebUiRoutes(app, deps) {
         `INSERT INTO config (key, value, updated_at)
          VALUES (?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
-      ).run('baseline_blocklist_enabled', enabled ? 'true' : 'false', nowIso);
-      console.log(`[ui-api:sites] baseline toggle enabled=${enabled}`);
-      _broadcastSitesChanged('baseline_toggle');
+      ).run('global_site_blocklist_enabled', enabled ? 'true' : 'false', nowIso);
+      console.log(`[ui-api:sites] global site blocklist toggle enabled=${enabled}`);
+      _broadcastSitesChanged('global_site_blocklist_toggle');
       let status;
       try {
-        status = blocklistUpdater.getStatus();
+        status = globalSiteBlocklistUpdater.getStatus();
       } catch (_e) {
         status = { enabled, version: null, lastFetchedAt: null, domainCount: 0 };
       }
-      res.json({ enabled, baseline: status });
+      res.json({ enabled, globalSiteBlocklist: status });
     } catch (e) {
-      console.error('[ui-api] POST /sites/baseline/toggle failed:', e.message);
+      console.error('[ui-api] POST /sites/global-site-blocklist/toggle failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1956,21 +1954,21 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     3600000
   );
 
-  // Baseline-blocklist auto-updater. Fetches the curated
+  // Global site blocklist auto-updater. Fetches the curated
   // financial-institutions list from the WebPilot repo, replaces every
-  // `source='baseline'` row in `global_site_rules` if the manifest version
-  // bumped. User-set rules are never touched. Boot fetch is delayed a few
-  // seconds so a slow/unreachable GitHub doesn't drag out cold-start; daily
-  // interval runs the same check.
-  blocklistUpdater.init({});
+  // `source='global_site_blocklist'` row in `global_site_rules` if the
+  // manifest version bumped. User-set rules are never touched. Boot fetch is
+  // delayed a few seconds so a slow/unreachable GitHub doesn't drag out
+  // cold-start; daily interval runs the same check.
+  globalSiteBlocklistUpdater.init({});
   setTimeout(
-    () => blocklistUpdater.checkForUpdates()
-      .catch(err => console.error('[server] Boot baseline blocklist check failed:', err)),
+    () => globalSiteBlocklistUpdater.checkForUpdates()
+      .catch(err => console.error('[server] Boot global site blocklist check failed:', err)),
     5000
   ).unref();
   setInterval(
-    () => blocklistUpdater.checkForUpdates()
-      .catch(err => console.error('[server] Periodic baseline blocklist check failed:', err)),
+    () => globalSiteBlocklistUpdater.checkForUpdates()
+      .catch(err => console.error('[server] Periodic global site blocklist check failed:', err)),
     24 * 60 * 60 * 1000
   ).unref();
 
@@ -2171,14 +2169,14 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }
 
     // Map (decision, source) into a single state-pill key consumed by the
-    // popup UI: 'allowed' | 'blocked_baseline' | 'blocked_user'
+    // popup UI: 'allowed' | 'blocked_global_site_blocklist' | 'blocked_user'
     // | 'allowed_override' | 'blocked_override'.
     function _statePillFromPolicy(policy) {
       if (policy.source === 'agent_override') {
         return policy.decision === 'allow' ? 'allowed_override' : 'blocked_override';
       }
       if (policy.decision === 'allow') return 'allowed';
-      if (policy.source === 'baseline') return 'blocked_baseline';
+      if (policy.source === 'global_site_blocklist') return 'blocked_global_site_blocklist';
       return 'blocked_user';
     }
 

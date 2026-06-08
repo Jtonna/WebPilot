@@ -7,8 +7,8 @@ under `%LOCALAPPDATA%/WebPilot/custom-formatters/` (or the equivalent
 on macOS/Linux).
 
 The schema is consumed by `formatter-manager.js`, surfaced to agents
-via `webpilot_get_formatter_info`, and (in the upcoming Web UI
-Formatters tab) rendered to humans.
+via `webpilot_get_formatter_info`, and rendered to humans by the Web UI
+Formatters tab.
 
 ---
 
@@ -78,8 +78,9 @@ that points at each formatter's entry file and lists files to sync.
 ### `source` semantics
 
 - **`remote`**: Lives in the auto-updated formatters dir
-  (`getFormatterDir()`). Replaced wholesale on each manifest version
-  bump. Users should not edit these — changes are clobbered.
+  (`getFormatterDir()`). Files listed in the signed manifest are
+  re-downloaded on each version bump. Users should not edit these —
+  changes are clobbered.
 - **`custom`**: Lives in the user's custom-formatters dir
   (`getCustomFormatterDir()`). Never touched by the updater. Survives
   server upgrades.

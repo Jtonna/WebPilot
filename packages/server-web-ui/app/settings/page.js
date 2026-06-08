@@ -131,9 +131,6 @@ export default function SettingsPage() {
     try {
       restartServer().catch(() => { /* expected: connection dropped */ });
       toast.info('Restarting…');
-      setTimeout(() => {
-        try { window.location.reload(); } catch (_e) { /* ignore */ }
-      }, 2000);
     } catch (e) {
       toast.error(e.message || 'Couldn’t restart server.');
       setBusy(false);

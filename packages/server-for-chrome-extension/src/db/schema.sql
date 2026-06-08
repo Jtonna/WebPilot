@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_pairings_state ON pairings(state, requested_at DE
 CREATE TABLE IF NOT EXISTS global_site_rules (
   domain TEXT PRIMARY KEY,                  -- normalized (lowercased, no scheme, no port)
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
-  source TEXT NOT NULL CHECK(source IN ('user','baseline')),
+  source TEXT NOT NULL CHECK(source IN ('user','global_site_blocklist')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS agent_site_overrides (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_overrides ON agent_site_overrides(agent_id, domain);
 
-CREATE TABLE IF NOT EXISTS baseline_blocklist_meta (
+CREATE TABLE IF NOT EXISTS global_site_blocklist_meta (
   id INTEGER PRIMARY KEY CHECK(id=1),       -- single row table
   version TEXT NOT NULL,
   last_fetched_at TEXT NOT NULL,

@@ -56,19 +56,17 @@ When you delete a lore-laden comment, salvage anything that's actually useful an
 
 ## Releasing
 
-Releases are cut by a maintainer from the GitHub Actions tab. Pick the workflow that matches the impact of the changes being shipped:
+Releases are cut by a maintainer from the GitHub Actions tab via **Release (stable)** (`.github/workflows/release-stable.yml`). The workflow takes a `bump` input:
 
-- **Release (patch)** — `.github/workflows/release-patch.yml` — bug fixes, internal refactors, security fixes (`X.Y.Z` → `X.Y.(Z+1)`).
-- **Release (minor)** — `.github/workflows/release-minor.yml` — new user-visible features, backwards-compatible (`X.Y.Z` → `X.(Y+1).0`).
-- **Release (major)** — `.github/workflows/release-major.yml` — breaking changes, incompatible API/config/protocol changes (`X.Y.Z` → `(X+1).0.0`).
+- `patch` — bug fixes, internal refactors, security fixes (`X.Y.Z` → `X.Y.(Z+1)`).
+- `minor` — new user-visible features, backwards-compatible (`X.Y.Z` → `X.(Y+1).0`).
+- `major` — breaking changes, incompatible API/config/protocol changes (`X.Y.Z` → `(X+1).0.0`).
 
-Each dispatcher reads the current version from root `package.json`, runs `scripts/bump-version.js` to sync the new version across the monorepo, commits the bump to `main` as `github-actions[bot]`, tags `v<new-version>`, pushes both, and then invokes `release.yml` to build the Windows installer and publish the GitHub Release.
-
-If you need to release a specific version without auto-bumping (e.g. rebuilding an existing tag, or shipping a hotfix tagged locally), push a `v*` tag to `origin` and `release.yml` will fire on the tag push.
+The workflow reads the current version from root `package.json`, runs `scripts/bump-version.js` to sync the new version across the monorepo, signs the formatter + blocklist manifests, writes `release-info.json`, builds the Windows installer, commits the version bump to `main` as `github-actions[bot]`, creates and pushes an annotated `v<new-version>` tag, generates categorised release notes, and publishes the GitHub Release.
 
 ## Signing formatter releases
 
-WebPilot daemons fetch formatter and baseline-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
+WebPilot daemons fetch formatter and global-site-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
 
 ### Threat model
 
@@ -105,9 +103,7 @@ That writes `signed-manifest.json` + `signed-manifest.json.sig` next to each top
 
 ### Production signing
 
-Production signing happens inside the release workflows. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). The dispatcher workflows (`release-patch.yml`, `release-minor.yml`, `release-major.yml`) decode it to a temp file with mode `0o600`, run `scripts/sign-formatters.js`, commit the regenerated `signed-manifest.json` + `.sig` files alongside the version bump, then tag and push.
-
-`release.yml` also re-runs the signing step on its build leg as a belt-and-braces defence against signed manifests drifting out of sync with the actual formatter sources at the tagged ref.
+Production signing happens inside the release workflow. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). `release-stable.yml` decodes it to a temp file with mode `0o600`, runs `scripts/sign-formatters.js`, and commits the regenerated `signed-manifest.json` + `.sig` files alongside the version bump before tagging and pushing. The signing step runs before the build leg so the signed manifests bundled into the binary match the formatter sources at the tagged ref.
 
 ### Key rotation
 
@@ -116,7 +112,7 @@ When the signing key needs to be rotated (founder turnover, suspected compromise
 1. On a clean workstation, delete `~/.webpilot-signing-key` and run `node scripts/generate-signing-key.js`.
 2. Base64-encode the new private key and update the `WEBPILOT_SIGNING_KEY_BASE64` repo secret in **Settings → Secrets and variables → Actions**.
 3. Commit the regenerated `accessibility-tree-formatters/PUBKEY.pem`.
-4. Cut a new release via one of the dispatcher workflows. The next daemon update tick will fetch the new signed manifest, verify it against the new bundled pubkey, and apply normally.
+4. Run `.github/workflows/release-stable.yml` from **Actions → Release (stable) → Run workflow**. The next daemon update tick fetches the new signed manifest, verifies it against the new bundled pubkey, and applies it normally.
 
 Old released installers continue to verify against the *old* pubkey they shipped with — the rotation does not invalidate previously installed daemons until they receive a new installer that ships the new pubkey. Plan rotation to coincide with a normal release.
 

@@ -190,9 +190,8 @@ profiles).** Extension reloads are per-profile — neither path is global:
 This is the most common "I edited the extension and my fix isn't live" gotcha
 when you're testing the same change against more than one profile at once.
 
-If you bump `manifest.json#version` in the extension too, you can read the
-current version off `webpilot_get_formatter_info` (extension version is
-included in some responses) or by inspecting `chrome://extensions/` manually.
+If you bump `manifest.json#version` in the extension too, inspect
+`chrome://extensions/` to verify the loaded copy.
 
 ---
 
@@ -206,10 +205,11 @@ included in some responses) or by inspecting `chrome://extensions/` manually.
   `webpilot_dev_reload_extension`, the loaded path is probably the deployed
   copy — the user needs to repoint Chrome at the source directory.
 
-- **The `error` field in `webpilot_dev_get_formatter_logs` is per-entry.**
-  Each entry's `phase` tells you whether it came from the formatter
-  (`'format'`) or a workflow (`'workflow'`). The health summary's
-  `lastError` is the most recent error of *either* kind.
+- **`webpilot_dev_get_formatter_logs` returns one entry per error.** The
+  `phase` field tells you whether the error came from the formatter
+  (`'format'`) or a workflow (`'workflow'`); `message` and `stack` carry the
+  error itself. The health summary's `lastError` is the most recent error of
+  *either* phase.
 
 - **`webpilot_reload_formatters` does NOT call the auto-updater.** It just
   re-reads from disk. If you want the latest formatters from the WebPilot
