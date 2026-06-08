@@ -50,7 +50,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # PAT (admin user) is required to push the version-bump commit + tag
+          # to `main`. The default GITHUB_TOKEN authenticates as the GitHub
+          # Actions Integration, which the main-branch ruleset cannot list as
+          # a bypass actor on personal (non-org) repos.
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Setup Node
         uses: actions/setup-node@v4

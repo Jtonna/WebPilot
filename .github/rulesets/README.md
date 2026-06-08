@@ -24,10 +24,20 @@ Enforces the following on the `main` branch:
 
 | Actor | Type | ID | Reason |
 |-------|------|----|--------|
-| Repository admin (Jtonna) | `RepositoryRole` | `5` | Hotfix access without ceremony |
-| `github-actions[bot]` | `User` | `41898282` | `release-stable.yml` pushes version-bump commit directly to main |
+| Repository admin (Jtonna) | `RepositoryRole` | `5` | Hotfix access without ceremony; also the mechanism release workflows use (see below) |
 
-> Note: The original spec called for `actor_type: "Integration"` with the GitHub Actions app ID (15368), but GitHub's API rejects that for personal (non-org) repos — the Integration actor type requires org-level app installation. Using `actor_type: "User"` with the bot's user ID (41898282) achieves the same result.
+### How the release workflows push to main
+
+`release-stable.yml` and `release-nightly.yml` push version-bump commits and tags directly to `main`. The default `GITHUB_TOKEN` authenticates the workflow as the GitHub Actions Integration (app id `15368`), which the ruleset cannot list as a bypass actor on personal (non-org) repos — `actor_type: "Integration"` is rejected by the API for these repos.
+
+Both workflows check out using a fine-grained personal access token stored as the `RELEASE_PAT` repo secret. The PAT belongs to the admin user, whose `RepositoryRole` (id `5`) is in `bypass_actors`. Pushes from the workflow authenticate as that user, so the ruleset bypass applies.
+
+The PAT needs:
+- Repository access: this repo only (`Jtonna/WebPilot`).
+- Permissions: `Contents: Read and write`.
+- Expiry: set per your rotation cadence; 90 days is a common floor.
+
+When the PAT expires or rotates, replace the secret value at **Settings → Secrets and variables → Actions → `RELEASE_PAT`**.
 
 ---
 
