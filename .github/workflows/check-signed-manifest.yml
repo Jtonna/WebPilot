@@ -4,10 +4,12 @@ on:
   pull_request:
     paths:
       - 'accessibility-tree-formatters/**'
+      - 'global-site-blocklists/**'
   push:
     branches: [main]
     paths:
       - 'accessibility-tree-formatters/**'
+      - 'global-site-blocklists/**'
 
 permissions:
   contents: read
@@ -45,3 +47,29 @@ jobs:
             exit 1
           fi
           echo "All formatter file hashes match signed-manifest.json"
+
+      - name: Verify signed-manifest hashes match current blocklist files
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST=global-site-blocklists/signed-manifest.json
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::signed-manifest.json missing from global-site-blocklists/"
+            exit 1
+          fi
+          # Iterate every file claimed in signed-manifest, compute actual hash, compare.
+          fail=0
+          while IFS=$'\t' read -r file claimed; do
+            actual=$(sha256sum "global-site-blocklists/$file" | awk '{print $1}')
+            if [ "$actual" != "$claimed" ]; then
+              echo "::error file=global-site-blocklists/$file::hash mismatch — claimed $claimed, actual $actual. Run 'node scripts/sign-formatters.js' and commit the regenerated signed-manifest.json."
+              fail=1
+            fi
+          done < <(node -e '
+            const m = require("./global-site-blocklists/signed-manifest.json");
+            for (const [f, h] of Object.entries(m.files)) console.log(f + "\t" + h);
+          ')
+          if [ $fail -ne 0 ]; then
+            exit 1
+          fi
+          echo "All blocklist file hashes match signed-manifest.json"
