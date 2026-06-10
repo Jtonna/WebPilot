@@ -1,1 +1,3 @@
-[]
+[
+  {"issue": 84, "body": "**Approved plan** (autonomous nightly)\n\n**Sub-task 1** (light): Cache the better-sqlite3 native binding in the `server-tests` job of `.github/workflows/pr.yml`.\n\n- Insert an `actions/cache@v4` step (id `bs3-cache`) between `Install dependencies` and `Rebuild better-sqlite3 native binding`.\n  - path: `node_modules/better-sqlite3/build/Release`\n  - key: `bs3-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json') }}`\n- Add `if: steps.bs3-cache.outputs.cache-hit != 'true'` to the rebuild step.\n- No edits outside `.github/workflows/pr.yml`. `--ignore-scripts`, setup-node `cache: npm`, and the `build` job left untouched.\n\nVerification is CI-observable across two runs (cache miss -> rebuild runs; cache hit -> rebuild skipped)."}
+]
