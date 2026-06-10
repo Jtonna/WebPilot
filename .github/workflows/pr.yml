@@ -29,7 +29,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Cache better-sqlite3 native binding
+        id: bs3-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules/better-sqlite3/build/Release
+          key: bs3-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json') }}
+
       - name: Rebuild better-sqlite3 native binding
+        if: steps.bs3-cache.outputs.cache-hit != 'true'
         run: npm rebuild better-sqlite3
 
       - name: Run server tests
