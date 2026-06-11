@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "issue": 86,
+    "body": "**Plan approved (autonomous nightly).** Sub-tasks:\n1. Delete src/db/migration.js (JSON-store importer)\n2. server.js: remove migration call + network.enabled flag-file fallback in /api/status\n3. cli.js: remove --reimport flag/help/env forwarding\n4. index.js: remove migrateLegacyInstallData + network.enabled flag-file fallbacks; prune dead fs/path/getDataDir imports\n5. paths.js: remove migrateLegacyInstallData() + legacyInstallDataDir()\n6. connection.js + schema.sql: repoint stale db/migration.js comment references to schema-migrations/\n7. Verify: npm test, grep-zero, boot smokes"
+  },
+  {
+    "issue": 86,
+    "body": "[implementation] DONE: legacy migration paths removed. Tests: `npm test` = 32 passed / 0 failed across 7 test files (db-migration, formatter-diagnostics, formatter-updater-ref, macos-detector, platform-guide-gate, release-info, site-policy). Grep-zero: ZERO hits across packages/ source for all tokens (db/migration, runImportFromJsonStores, migrateLegacyInstallData, legacyInstallDataDir, WEBPILOT_REIMPORT/--reimport, network.enabled, .migrated-from-install, .imported.). Boot smokes: fresh empty data dir -> daemon boots, /health = 200, webpilot.db created. Existing data dir -> daemon boots, /health = 200, network mode falls through to CLI/env default. NOTE (pre-existing, out of scope for #86): schema-migration `001-rename-baseline-to-global-site-blocklist` runs before schema.sql is applied in connection.js init(), so on a fresh DB it fails with `no such table: config` and only the schema_migrations table is created (the config table is never created). Reproduced identically on the stashed baseline before any #86 changes, so it is not introduced by this work. The daemon still boots because the error is caught. Flagging for a separate ticket."
+  }
+]
