@@ -123,7 +123,7 @@ function init() {
 
   // Apply schema. Every CREATE uses IF NOT EXISTS so this is a no-op on
   // subsequent boots. If we ever need a non-idempotent migration, add it
-  // to db/migration.js — NOT here.
+  // to ./schema-migrations — NOT here.
   const schemaPath = path.join(__dirname, 'schema.sql');
   let schemaSql;
   try {
@@ -137,7 +137,7 @@ function init() {
   // baseline → global_site_blocklist rename predates schema.sql being
   // updated to the new shape; running the migration first means existing
   // installs are rewritten and the subsequent IF-NOT-EXISTS schema apply
-  // is a no-op for the renamed objects. See db/migration.js.
+  // is a no-op for the renamed objects. See ./schema-migrations.
   try {
     const migrations = require('./schema-migrations');
     migrations.runAll(_db, { dataDir });
