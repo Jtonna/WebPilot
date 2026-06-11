@@ -551,9 +551,8 @@ function mountWebUiRoutes(app, deps) {
         actionItems: formatterActionItems,
         pairedAgents: pairedKeys.listKeys(),
         networkMode: (() => {
-          // Prefer DB row; fall back to legacy flag file only if the row is
-          // absent (first-boot-before-migration path). The DB is the source
-          // of truth once migration runs.
+          // The DB `config.network_enabled` row is the source of truth for
+          // network mode.
           try {
             const row = require('./db/connection').getDb()
               .prepare('SELECT value FROM config WHERE key = ?')
@@ -561,11 +560,8 @@ function mountWebUiRoutes(app, deps) {
             if (row && typeof row.value === 'string') {
               return row.value === 'true' || row.value === '1';
             }
-          } catch (_e) { /* fall through to flag file */ }
-          try {
-            const fp = path.join(getDataDir(), 'network.enabled');
-            return fs.existsSync(fp) && fs.readFileSync(fp, 'utf8').trim() === '1';
-          } catch (e) { return false; }
+          } catch (_e) { /* fall through to default */ }
+          return false;
         })(),
         // Surfaces the canonical filesystem locations the Settings page and
         // ProfileSetupModal need to render copyable absolute paths.
@@ -1486,12 +1482,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
   // Stand up SQLite before any stateful module loads so paired-keys,
   // formatter-logs, extension-installs, etc. find the DB ready when they
-  // initialize. Migration imports the legacy JSON stores on first boot;
-  // see src/db/migration.js.
+  // initialize.
   try {
     console.log('[server] initializing SQLite…');
     require('./db/connection').init();
-    require('./db/migration').runImportFromJsonStores();
   } catch (e) {
     console.error('[server] SQLite init failed:', e && e.message);
     // TODO: once the DB is mandatory across all stateful modules, rethrow
