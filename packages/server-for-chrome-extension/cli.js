@@ -18,11 +18,6 @@ const options = {
   version:   { type: 'boolean', default: false },
   // --network is forwarded to the server (index.js reads process.argv directly)
   network:   { type: 'boolean', default: false },
-  // --reimport forces db/migration.js to re-run the JSON→SQLite import even
-  // when the destination tables are already populated. Useful for dev
-  // recovery after the user manually renames `.imported` files back to
-  // `.json`. See `db/migration.js`.
-  reimport:  { type: 'boolean', default: false },
 };
 
 let parsed;
@@ -52,11 +47,7 @@ Options:
   --stop         Stop the running server
   --status       Check service status
   --network      Bind the server to all interfaces (0.0.0.0) instead of localhost.
-                 Same effect as setting NETWORK=1; overridden by
-                 <dataDir>/network.enabled if present.
-  --reimport     Force re-import of legacy JSON stores into SQLite even when
-                 the destination tables are populated. Use after renaming
-                 `.imported` files back to `.json` to recover from a bad import.
+                 Same effect as setting NETWORK=1.
   --help         Show this help message
   --version      Show version number
 
@@ -204,13 +195,6 @@ function autoRegister() {
 // Forward --network flag via env var so index.js picks it up
 if (flags.network || process.env.NETWORK === '1') {
   process.env.NETWORK = '1';
-}
-
-// Forward --reimport via env var so db/migration.js picks it up regardless of
-// whether it was launched directly (foreground) or via the daemon spawn (the
-// child process inherits the env but not the argv).
-if (flags.reimport) {
-  process.env.WEBPILOT_REIMPORT = '1';
 }
 
 if (flags.foreground || process.env.WEBPILOT_FOREGROUND === '1') {
