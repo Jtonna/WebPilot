@@ -50,10 +50,7 @@ The dedicated macOS files are:
   (darwin branch in `platformUserDataDir()`) — WebPilot's own data dir
   resolves to `~/Library/Application Support/WebPilot` in both dev and
   pkg-binary modes. The `WEBPILOT_DATA_DIR` env var overrides this when
-  set (Electron main passes `app.getPath('userData')` that way). A
-  legacy in-install path (`<install>/../../data`) is only consulted by
-  `legacyInstallDataDir()` for the one-time pre-1.1.6 migration, not as
-  a runtime data dir.
+  set (Electron main passes `app.getPath('userData')` that way).
 - `packages/server-for-chrome-extension/src/service/open-browser.js`
   (`spawnOpen` darwin branch) — opens the web UI on `--foreground`
   startup via `open <url>`.

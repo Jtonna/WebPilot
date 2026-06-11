@@ -54,7 +54,7 @@ The `apiKey` field in `server.json` (and the legacy `API_KEY` env var) is no lon
 |--------|----------|---------|-------------|
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
-| SQLite row | `config.network_enabled` | (absent) | Persisted network mode preference (`'true'` / `'false'`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. The legacy `<dataDir>/network.enabled` flag file is read as a fallback only when the DB row is absent (first-boot path) — migration imports it on first boot and renames it to `network.enabled.imported.<ISO>`. |
+| SQLite row | `config.network_enabled` | (absent) | Persisted network mode preference (`'true'` / `'false'`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -105,7 +105,7 @@ WebSocket bridge supporting **multiple simultaneous extension connections**, key
 
 ### `src/extension-installs.js`
 
-Persistent `installId → profileId` map. SQLite-backed (P2 phase 7) via the `extension_installs` table — replaces the legacy `<dataDir>/config/extension-installs.json` JSON store (imported on first boot and renamed to `.imported.<TS>`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `last_seen_at` older than 90 days.
+Persistent `installId → profileId` map. SQLite-backed (P2 phase 7) via the `extension_installs` table (formerly stored in `<dataDir>/config/extension-installs.json`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `last_seen_at` older than 90 days.
 
 ### `src/chrome/`
 
@@ -134,7 +134,7 @@ Reads / writes `<dataDir>/config/notifications.json` (`systemNotifications`, `so
 
 ### `src/paired-keys.js`
 
-Manages paired agent API keys **and** the async pending-pairings ledger. SQLite-backed (P2 phase 2) — replaces the legacy JSON stores `<dataDir>/config/paired-keys.json` and `<dataDir>/config/pending-pairings.json` (imported on first boot and renamed to `.imported.<TS>`):
+Manages paired agent API keys **and** the async pending-pairings ledger. SQLite-backed (P2 phase 2); the `agents` and `pairings` tables are the durable store:
 
 - `agents` table — approved/active agents, columns `{ id, name, api_key_hash, profile_id, created_at, last_seen_at, state }`. API keys are HMAC-SHA-256 hashed with a per-server pepper stored in `config.api_key_pepper`.
 - `pairings` table — async pairing ledger, columns `{ id, pairing_id, agent_name, requested_at, expires_at, decided_at, state, approved_agent_id, metadata_json }`. Pending entries TTL out at 24 hours of inactivity; terminal-state entries (approved/denied/expired) are hard-dropped after 7 days by the periodic cleanup.
@@ -168,7 +168,7 @@ Loads and runs accessibility tree formatters:
 
 ### `src/formatter-logs.js`
 
-In-memory cache (10 most recent per formatter) + SQLite write-through for per-formatter health tracking (P2 phase 3). Records success and error invocations of `format()` plus workflow runtime errors as rows in the `formatter_incidents` table. The cache hydrates from the DB on boot; the legacy `<dataDir>/formatter-logs.json` JSON ring buffer is imported on first boot and renamed to `.imported.<TS>`. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `STACK_MAX`.
+In-memory cache (10 most recent per formatter) + SQLite write-through for per-formatter health tracking (P2 phase 3). Records success and error invocations of `format()` plus workflow runtime errors as rows in the `formatter_incidents` table. The cache hydrates from the DB on boot. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `STACK_MAX`.
 
 ### `src/lib/tree-query.js`
 
@@ -364,7 +364,7 @@ The server reads `<dataDir>/config/server.json` if it exists. This file can spec
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3456` | Server port (overridden by config file if present) |
-| `NETWORK` | `0` | Set to `1` for network mode (overridden by SQLite `config.network_enabled` if present; legacy `<dataDir>/network.enabled` flag file is consulted only as a fallback before first-boot migration) |
+| `NETWORK` | `0` | Set to `1` for network mode (overridden by SQLite `config.network_enabled` if present) |
 | `WEBPILOT_FOREGROUND` | unset | Set to `1` to run in foreground (used internally by daemon self-spawn) |
 
 ### Network Mode
@@ -444,8 +444,6 @@ The data directory is resolved by `getDataDir()` in `src/service/paths.js`:
    - macOS: `~/Library/Application Support/WebPilot`
    - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-The legacy pre-1.1.6 in-install location (`../../data/` relative to the pkg binary's `execPath`) is consulted only by the one-shot `migrateLegacyInstallData()` upgrade path and is not used at runtime.
-
 Contents (post-P2):
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
 - `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `global_site_blocklist_meta`, `config`, `extension_installs`, and `schema_migrations` tables. See `src/db/schema.sql`. The `schema_migrations` table is the ledger written by the runner described in `docs/SCHEMA_MIGRATIONS.md`.
@@ -454,7 +452,6 @@ Contents (post-P2):
 - `config/notifications.json` (per-user notification preferences — still file-backed for now).
 - `formatters/` (auto-updated formatters from GitHub).
 - `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater).
-- `*.imported.<ISO>` — legacy JSON stores (`paired-keys.json`, `pending-pairings.json`, `formatter-logs.json`, `extension-installs.json`) and the `network.enabled` flag file, renamed after first-boot import. Safe to delete once the new version has been verified.
 
 ## Build
 

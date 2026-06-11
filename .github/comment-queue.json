@@ -1,1 +1,6 @@
-[]
+[
+  {
+    "issue": 86,
+    "body": "[docs] DONE: updated MCP_SERVER.md, MCP_INTEGRATION.md, BUILD_ARCHITECTURE.md, CHROME_MAC.md to present-tense SQLite-backed descriptions; removed all legacy first-boot-import / network.enabled flag-file / .imported. narrative. Docs grep-zero verified."
+  }
+]

@@ -221,9 +221,7 @@ The Windows path uses `@webpilot\onboarding` — not `WebPilot` — because `app
 <userDataDir>/
   config/
     server.json                                    Port configuration (apiKey field is silently ignored — legacy)
-    paired-keys.json                               Paired agent API keys
   daemon.log                                       Daemon log output
-  network.enabled                                  Persisted network mode preference (1 or 0)
   server.pid                                       PID of running daemon
   server.port                                      Port of running daemon
   logs/
