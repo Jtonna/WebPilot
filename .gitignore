@@ -66,13 +66,14 @@ packages/server-web-ui/debug-storybook.log
 
 # Additional editor files
 *.code-workspace
-.claude/settings.local.json
 
 # starterpack — these paths must be tracked by git
 !.starterpack/
 !.starterpack/**
 !.claude/
 !.claude/**
+# ...but settings.local.json is per-user local state — never track it.
+.claude/settings.local.json
 !.github/
 !.github/**
 !CLAUDE.md
