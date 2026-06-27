@@ -1,7 +1,7 @@
 -- WebPilot SQLite schema.
 -- All CREATEs use IF NOT EXISTS so connection.js can run this idempotently
 -- on every boot. Hand-rolled per-version migration code lives in
--- db/migration.js; this file is the ground-truth.
+-- src/db/schema-migrations/; this file is the ground-truth.
 
 -- ─── Agents and pairing ───────────────────────────────────────────────────
 

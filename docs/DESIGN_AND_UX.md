@@ -137,8 +137,8 @@ Two sidebar groups. Order matches `components/AppShell.js`.
 /ui                        Dashboard
 /ui/profiles               Profiles
 /ui/agents                 Agents
-/ui/sites                  Sites               (P2 phase 5)
-/ui/formatters             Formatters          (P2 phase 6)
+/ui/sites                  Sites
+/ui/formatters             Formatters
 /ui/formatters/logs/?name= Per-formatter logs
 /ui/pairings               Pairings
 /ui/settings               Settings

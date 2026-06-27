@@ -78,7 +78,7 @@ The server replies with either `hello_ack` (handshake complete; `profileId` is t
 
 #### From popup / other extension contexts (chrome.runtime.onMessage)
 
-The current minimal popup does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates, future programmatic disconnect paths):
+The current minimal popup does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates):
 
 | Message type | Action |
 |--------------|--------|

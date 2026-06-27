@@ -121,7 +121,7 @@ If you intended to register as a *separate* agent identity (e.g. so the human ca
 A text response with `status: denied` and instructions not to retry automatically.
 
 **Notes:**
-- The async flow is server-side. The pairing entry is persisted to `<dataDir>/config/pending-pairings.json` and aged out after 24h of inactivity. Terminal-state entries (`approved`/`denied`/`expired`) are hard-dropped after 7 days by an hourly cleanup pass.
+- The async flow is server-side. The pairing entry is persisted in the SQLite `pairings` table and aged out after 24h of inactivity. Terminal-state entries (`approved`/`denied`/`expired`) are hard-dropped after 7 days by an hourly cleanup pass.
 - The human picks **which Chrome profile** the agent binds to during approval. That profile is persisted on the paired-keys entry and used for tool-call routing.
 - `agent_name` is required here only. Other tools authenticate via the API key alone.
 - This tool and `check_pairing_status` do not require an API key.
@@ -547,7 +547,7 @@ Ghost posts are ephemeral content on Threads that appear inline but don't have p
 - `likeRef`: Element ref for the Like button
 
 **Element Refs:**
-Refs (e1, e2, e3...) are stable identifiers for each element. These can be used for future interaction tools like `browser_click(ref="e7")`.
+Refs (e1, e2, e3...) are stable identifiers for each element. These can be used with interaction tools like `browser_click(ref="e7")`.
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
