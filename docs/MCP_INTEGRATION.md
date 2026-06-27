@@ -547,7 +547,7 @@ Ghost posts are ephemeral content on Threads that appear inline but don't have p
 - `likeRef`: Element ref for the Like button
 
 **Element Refs:**
-Refs (e1, e2, e3...) are stable identifiers for each element. These can be used for future interaction tools like `browser_click(ref="e7")`.
+Refs (e1, e2, e3...) are stable identifiers for each element. These can be used with interaction tools like `browser_click(ref="e7")`.
 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter

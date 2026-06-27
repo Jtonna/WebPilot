@@ -105,7 +105,7 @@ WebSocket bridge supporting **multiple simultaneous extension connections**, key
 
 ### `src/extension-installs.js`
 
-Persistent `installId → profileId` map. SQLite-backed (P2 phase 7) via the `extension_installs` table (formerly stored in `<dataDir>/config/extension-installs.json`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `last_seen_at` older than 90 days.
+Persistent `installId → profileId` map. SQLite-backed via the `extension_installs` table (formerly stored in `<dataDir>/config/extension-installs.json`). The extension mints a UUID `webpilot.installId` on first install (kept across `FORGET_CONFIG` resets), sends it in the `hello` handshake, and the server uses it to skip the profile-picker UI on subsequent connects. Includes housekeeping to drop entries with `last_seen_at` older than 90 days.
 
 ### `src/chrome/`
 
@@ -134,7 +134,7 @@ Reads / writes `<dataDir>/config/notifications.json` (`systemNotifications`, `so
 
 ### `src/paired-keys.js`
 
-Manages paired agent API keys **and** the async pending-pairings ledger. SQLite-backed (P2 phase 2); the `agents` and `pairings` tables are the durable store:
+Manages paired agent API keys **and** the async pending-pairings ledger. SQLite-backed; the `agents` and `pairings` tables are the durable store:
 
 - `agents` table — approved/active agents, columns `{ id, name, api_key_hash, profile_id, created_at, last_seen_at, state }`. API keys are HMAC-SHA-256 hashed with a per-server pepper stored in `config.api_key_pepper`.
 - `pairings` table — async pairing ledger, columns `{ id, pairing_id, agent_name, requested_at, expires_at, decided_at, state, approved_agent_id, metadata_json }`. Pending entries TTL out at 24 hours of inactivity; terminal-state entries (approved/denied/expired) are hard-dropped after 7 days by the periodic cleanup.
@@ -168,7 +168,7 @@ Loads and runs accessibility tree formatters:
 
 ### `src/formatter-logs.js`
 
-In-memory cache (10 most recent per formatter) + SQLite write-through for per-formatter health tracking (P2 phase 3). Records success and error invocations of `format()` plus workflow runtime errors as rows in the `formatter_incidents` table. The cache hydrates from the DB on boot. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `STACK_MAX`.
+In-memory cache (10 most recent per formatter) + SQLite write-through for per-formatter health tracking. Records success and error invocations of `format()` plus workflow runtime errors as rows in the `formatter_incidents` table. The cache hydrates from the DB on boot. Health rule: HEALTHY if total invocations < 3, OR if the last 10 invocations contain no errors; UNHEALTHY otherwise; UNKNOWN if the formatter has never run. Stack traces are truncated to ~1024 chars. Exports: `recordSuccess`, `recordError`, `getStatus`, `getLogs`, `listAll`, `flush`. Constants named at the top: `RING_CAPACITY`, `STACK_MAX`.
 
 ### `src/lib/tree-query.js`
 
@@ -231,7 +231,7 @@ Every comparison of a caller-supplied API key against a stored key uses `crypto.
 
 The Web UI admin surface is **localhost-only**. The general `makeUiAuth` middleware rejects every `/api/ui/*` request whose remote address is not `127.0.0.1` or `::1` with HTTP 403, and the `/api/ui/events` WebSocket upgrade is gated identically. On top of that, the mutating endpoints (`POST /api/ui/agents`, `POST /api/ui/agents/:key/rename`, `PATCH /api/ui/agents/:key`, `DELETE /api/ui/agents/:key`, `POST /api/ui/profiles`, `POST /api/ui/settings/network-mode`) layer a second, narrower `mutatingUiAuth` localhost check as defense-in-depth — if the broader UI auth policy is ever relaxed to permit read-only network access, those mutating admin actions stay loopback-only. Read-only endpoints (`GET /api/ui/status`, the events WebSocket) do not use the extra gate, so they remain reachable if a future change exposes read-only views over the network.
 
-### Site-policy gate (P2 phase 4)
+### Site-policy gate
 
 Independently of API-key authentication, every `browser_*` tool call (`browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`) and `webpilot_run_workflow` runs through a server-side site-policy check before any extension command is dispatched. See `src/site-policy.js`.
 
@@ -444,7 +444,7 @@ The data directory is resolved by `getDataDir()` in `src/service/paths.js`:
    - macOS: `~/Library/Application Support/WebPilot`
    - Linux: `$XDG_CONFIG_HOME/WebPilot` (defaults to `~/.config/WebPilot`)
 
-Contents (post-P2):
+Contents:
 - `daemon.log`, `server.pid`, `server.port` — process bookkeeping.
 - `webpilot.db` (plus `webpilot.db-wal` + `webpilot.db-shm` sidecars when WAL mode is active) — primary durable store. Holds the `agents`, `pairings`, `formatter_incidents`, `global_site_rules`, `agent_site_overrides`, `global_site_blocklist_meta`, `config`, `extension_installs`, and `schema_migrations` tables. See `src/db/schema.sql`. The `schema_migrations` table is the ledger written by the runner described in `docs/SCHEMA_MIGRATIONS.md`.
 - `logs/` subdirectory.

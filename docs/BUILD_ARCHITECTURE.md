@@ -162,7 +162,7 @@ resources/
 The Electron app provides:
 
 1. A minimal status pane (server up/down, extension files present), polled via `/health` every 3 seconds.
-2. A placeholder for future onboarding — the canonical setup UI is the server-hosted web UI at `/ui/`, not the Electron window.
+2. A placeholder pane — the canonical setup UI is the server-hosted web UI at `/ui/`, not the Electron window.
 
 ## What the App Does on Launch
 
