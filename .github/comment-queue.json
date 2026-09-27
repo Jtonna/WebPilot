@@ -1,1 +1,6 @@
-[]
+[
+  {
+    "issue": 103,
+    "body": "Implementation status (auto-approved gate, epic #99 autonomous run)\n\n[sub-task 1] DONE: schema site_policy_events + module + 30 unit tests + EXPECTED_TABLES (7d8e0e8, cc71466, 050644d)\n[sub-task 2] DONE: mcp-handler _recordPolicyEvent hook at both checkpoints + gate stub + 7 end-to-end gate tests (041de36, 385d63f)\n[sub-task 3] DONE: routes module (GET /api/ui/sites/events, POST .../site-events/allow|revoke) + 31 HTTP tests + server wiring (WS bridge, hourly retention) (447656d, 471dcac, 76218c1)\n[sub-task 4] DONE: web UI api wrappers (d69eb6b)\n[sub-task 5] DONE: CHANGELOG Added entry (df9b530)\n[extra] DONE: migration-002 DDL test made line-ending agnostic for Windows checkouts (b489d87)\n[sub-task 6] DONE: verification — 133/133 tests, web UI build green, booted-daemon smoke through MCP gate → event log → revoke → flip passed, no review findings"
+  }
+]
