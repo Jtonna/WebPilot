@@ -14,9 +14,13 @@ const fs = require('node:fs');
  *      Done via the SQLite 12-step table-rewrite inside an immediate transaction.
  *   4. on-disk cache dir `<dataDir>/baseline-blocklists/` → `<dataDir>/global-site-blocklists/`
  *
- * MUST run BEFORE `_db.exec(schemaSql)` in connection.js:init(). Every step is
- * guarded against the already-renamed state so re-running this on a fresh or
- * post-migration DB is a clean no-op.
+ * MUST run BEFORE `_db.exec(schemaSql)` in connection.js:init(). Every step
+ * first checks that its target table exists before touching it, so a truly
+ * empty DB (only the `schema_migrations` ledger table, no app tables yet) is
+ * a clean no-op, and so is re-running this on an already-migrated DB. Note
+ * that on a fresh DB the ledger row for 001 is written before the app tables
+ * exist — that's harmless because schema.sql creates the modern shape
+ * immediately afterward in connection.js:init().
  *
  * @param {object} db  better-sqlite3 Database handle
  * @param {{ dataDir: string }} opts
@@ -31,21 +35,27 @@ module.exports = {
     // ─── 1. config key rename ───────────────────────────────────────────────
     // If the new key isn't present, rename the old row in place. If both keys
     // coexist (an interrupted earlier rename), the new key wins and the old
-    // is dropped.
-    const renameRes = db.prepare(
-      `UPDATE config SET key = 'global_site_blocklist_enabled'
-       WHERE key = 'baseline_blocklist_enabled'
-         AND NOT EXISTS (SELECT 1 FROM config WHERE key = 'global_site_blocklist_enabled')`
-    ).run();
-    if (renameRes.changes > 0) {
-      console.log('[migration] renamed config key baseline_blocklist_enabled → global_site_blocklist_enabled');
-    }
-    const dropRes = db.prepare(
-      `DELETE FROM config WHERE key = 'baseline_blocklist_enabled'
-         AND EXISTS (SELECT 1 FROM config WHERE key = 'global_site_blocklist_enabled')`
-    ).run();
-    if (dropRes.changes > 0) {
-      console.log('[migration] dropped stale config key baseline_blocklist_enabled (new key already present)');
+    // is dropped. Guarded on the `config` table existing at all — on a fresh
+    // or pre-schema DB this step is a no-op.
+    const configTableExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='config'"
+    ).get();
+    if (configTableExists) {
+      const renameRes = db.prepare(
+        `UPDATE config SET key = 'global_site_blocklist_enabled'
+         WHERE key = 'baseline_blocklist_enabled'
+           AND NOT EXISTS (SELECT 1 FROM config WHERE key = 'global_site_blocklist_enabled')`
+      ).run();
+      if (renameRes.changes > 0) {
+        console.log('[migration] renamed config key baseline_blocklist_enabled → global_site_blocklist_enabled');
+      }
+      const dropRes = db.prepare(
+        `DELETE FROM config WHERE key = 'baseline_blocklist_enabled'
+           AND EXISTS (SELECT 1 FROM config WHERE key = 'global_site_blocklist_enabled')`
+      ).run();
+      if (dropRes.changes > 0) {
+        console.log('[migration] dropped stale config key baseline_blocklist_enabled (new key already present)');
+      }
     }
 
     // ─── 2. baseline_blocklist_meta table rename ────────────────────────────
