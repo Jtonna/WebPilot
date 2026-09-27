@@ -5,6 +5,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import TypedConfirmModal from '../../components/TypedConfirmModal';
 import EmptyState from '../../components/EmptyState';
 import ErrorCard from '../../components/ErrorCard';
+import Pill from '../../components/Pill';
 import SectionToolbar from '../../components/SectionToolbar';
 import { SkeletonRow } from '../../components/Skeleton';
 import { formatRelativeTime } from '../../lib/format';
@@ -13,7 +14,7 @@ const SOURCE_LABELS = {
   agent_rule: 'Agent rule',
   global_user: 'Your global rule',
   global_site_blocklist: 'Signed block list',
-  default: 'Default',
+  default: 'No rule (allowed by default)',
 };
 
 export function eventKey(entry) {
@@ -30,8 +31,8 @@ function toIso(value) {
  * SiteEventLog — "Site access log" table: one row per agent + domain,
  * newest last-seen first, with per-agent Allow / Revoke actions.
  *
- * Allow asks for a typed "i understand" (it can punch through a global
- * block); Revoke is a plain confirm and only affects that agent.
+ * Allow asks for a typed random confirmation code (it can punch through a
+ * global block); Revoke is a plain confirm and only affects that agent.
  *
  * Props:
  *   agents                 — [{ key, name }] for the agent filter
@@ -90,6 +91,7 @@ export default function SiteEventLog({
         <thead>
           <tr>
             <th scope="col" className="wp-site-events-col-domain">Domain</th>
+            <th scope="col" className="wp-site-events-col-agent">Agent</th>
             <th scope="col" className="wp-site-events-col-status">Status</th>
             <th scope="col" className="wp-site-events-col-seen">Last seen</th>
             <th scope="col" className="wp-site-events-col-action">Action</th>
@@ -116,10 +118,17 @@ export default function SiteEventLog({
                       : null}
                   </div>
                 </td>
+                <td data-label="Agent">
+                  <a href={`/ui/agents/?agent=${encodeURIComponent(entry.agentKey)}`} className="wp-link">
+                    {name}
+                  </a>
+                </td>
                 <td data-label="Status">
-                  {entry.decision === 'allow'
-                    ? `Access approved for ${name}`
-                    : `Access blocked for ${name}`}
+                  <span className="wp-site-events-status">
+                    {entry.decision === 'allow'
+                      ? <Pill state="active" label="Approved" />
+                      : <Pill state="danger" label="Blocked" />}
+                  </span>
                   {ruleDiffers ? (
                     <div className="wp-site-events-hint">
                       Agent rule: {entry.agentRuleDecision === 'allow' ? 'Allow' : 'Block'} · applies on next visit
@@ -176,8 +185,8 @@ export default function SiteEventLog({
 
       <SectionToolbar
         left={(
-          <div className="wp-sites-actions" style={{ gap: 'var(--s-3)' }}>
-            <label htmlFor={agentSelectId} className="wp-sites-field-label">Agent</label>
+          <div className="wp-site-policy-actions" style={{ gap: 'var(--s-3)' }}>
+            <label htmlFor={agentSelectId} className="wp-site-policy-field-label">Agent</label>
             <select
               id={agentSelectId}
               className="wp-select"
@@ -190,7 +199,7 @@ export default function SiteEventLog({
                 <option key={a.key} value={a.key}>{a.name}</option>
               ))}
             </select>
-            <label htmlFor={decisionSelectId} className="wp-sites-field-label">Decision</label>
+            <label htmlFor={decisionSelectId} className="wp-site-policy-field-label">Decision</label>
             <select
               id={decisionSelectId}
               className="wp-select"
@@ -232,7 +241,6 @@ export default function SiteEventLog({
         body={pendingAllow
           ? `${allowName} will be able to open ${pendingAllow.domain} even if a global rule blocks it. Other agents are unaffected; revoke it from this log or Per-agent rules.`
           : ''}
-        phrase="i understand"
         confirmLabel="Allow for this agent"
         confirmDanger
         onConfirm={() => {

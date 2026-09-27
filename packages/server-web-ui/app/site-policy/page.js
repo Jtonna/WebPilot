@@ -8,36 +8,38 @@ import { useToast } from '../../components/ToastRegion';
 import {
   createSequencedFetcher,
   getStatus,
-  getSites,
-  createSiteRule,
-  deleteSiteRule,
+  getGlobalRules,
+  createGlobalRule,
+  deleteGlobalRule,
   getAgentSiteRules,
   setAgentSiteRule,
   deleteAgentSiteRule,
   toggleGlobalTier,
-  getSiteEvents,
+  getSitePolicyEvents,
   allowSiteForAgent,
   revokeSiteForAgent,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
-import GlobalListModal, { apiErrorMessage, relTime } from './GlobalListModal';
+import RulesModal, { apiErrorMessage, relTime } from './RulesModal';
 import AgentRulesPanel from './AgentRulesPanel';
 import SiteEventLog, { eventKey } from './SiteEventLog';
 
 /**
- * Sites — admin surface for the WebPilot site policy model.
+ * Site Policy — admin surface for the WebPilot site policy model.
  *
- *   - Enable Global Block List (left card): global tier toggle, signed list
- *     facts, and "View / manage list" opening GlobalListModal (your global
- *     allows / blocks plus the signed list; add + delete your own rules).
- *   - Per-agent rules (right card): agent picker + that agent's rules,
- *     including a `*` default.
- *   - Site access log (below): one row per agent + domain with per-agent
- *     Allow (typed confirm) / Revoke actions.
+ *   - Global block list (left card): global tier toggle, one facts line,
+ *     and a Manage button opening RulesModal (scope="global") — your
+ *     global allows / blocks plus the signed list; add + delete your own
+ *     rules there.
+ *   - Per-agent rules (right card): agent picker + a one-line summary, and
+ *     a Manage button opening RulesModal (scope="agent") for that agent.
+ *   - Site access log (below, the dominant element): one row per agent +
+ *     domain with per-agent Allow (typed confirm) / Revoke actions.
  *
- * Live updates: `sites_changed` (any reason) refetches sites, the selected
- * agent's rules and the log; `site_policy_events_changed` refetches the log;
- * `agents_changed` refetches agents + log; `reconnected` refetches all.
+ * Live updates: `site_policy_changed` (any reason) refetches global rules,
+ * the selected agent's rules and the log; `site_policy_events_changed`
+ * refetches the log; `agents_changed` refetches agents + log; `reconnected`
+ * refetches all.
  */
 
 const EVENTS_PAGE_SIZE = 50;
@@ -49,17 +51,17 @@ function makeFetcher(ref) {
   return ref.current;
 }
 
-export default function SitesPage() {
+export default function SitePolicyPage() {
   const toast = useToast();
 
-  // --- Global rules + signed list summary (/api/ui/sites) -------------------
-  const [sitesData, setSitesData] = useState({ globalRules: [], globalSiteBlocklist: null });
-  const [sitesLoading, setSitesLoading] = useState(true);
-  const [sitesError, setSitesError] = useState(null);
+  // --- Global rules + signed list summary (/api/ui/site-policy/global-rules) -
+  const [globalData, setGlobalData] = useState({ globalRules: [], globalSiteBlocklist: null });
+  const [globalDataLoading, setGlobalDataLoading] = useState(true);
+  const [globalDataError, setGlobalDataError] = useState(null);
   const [globalBusy, setGlobalBusy] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
-  const viewListBtnRef = useRef(null);
-  const sitesFetcherRef = useRef(null);
+  const [globalModalOpen, setGlobalModalOpen] = useState(false);
+  const manageGlobalBtnRef = useRef(null);
+  const globalFetcherRef = useRef(null);
 
   // --- Agents (/api/ui/status) ---------------------------------------------
   const [agents, setAgents] = useState([]);
@@ -72,6 +74,8 @@ export default function SitesPage() {
   const [agentRulesLoading, setAgentRulesLoading] = useState(false);
   const [agentRulesError, setAgentRulesError] = useState(null);
   const [agentRulesBusy, setAgentRulesBusy] = useState(false);
+  const [agentModalOpen, setAgentModalOpen] = useState(false);
+  const manageAgentBtnRef = useRef(null);
   const agentRulesFetcherRef = useRef(null);
 
   // --- Site access log -------------------------------------------------------
@@ -99,19 +103,19 @@ export default function SitesPage() {
     setEvents(list);
   }
 
-  async function refreshSites() {
+  async function refreshGlobalRules() {
     try {
-      const { data, isStale } = await makeFetcher(sitesFetcherRef).fetch(() => getSites());
+      const { data, isStale } = await makeFetcher(globalFetcherRef).fetch(() => getGlobalRules());
       if (isStale || unmountedRef.current) return;
-      setSitesData({
+      setGlobalData({
         globalRules: Array.isArray(data && data.globalRules) ? data.globalRules : [],
         globalSiteBlocklist: (data && data.globalSiteBlocklist) || null,
       });
-      setSitesError(null);
+      setGlobalDataError(null);
     } catch (err) {
-      if (!unmountedRef.current) setSitesError(err);
+      if (!unmountedRef.current) setGlobalDataError(err);
     } finally {
-      if (!unmountedRef.current) setSitesLoading(false);
+      if (!unmountedRef.current) setGlobalDataLoading(false);
     }
   }
 
@@ -160,7 +164,7 @@ export default function SitesPage() {
     setEventsLoading(true);
     setEventsLoadingMore(false);
     try {
-      const { data, isStale } = await makeFetcher(eventsFetcherRef).fetch(() => getSiteEvents({
+      const { data, isStale } = await makeFetcher(eventsFetcherRef).fetch(() => getSitePolicyEvents({
         agentId: agentFilterRef.current || undefined,
         decision: decisionFilterRef.current || undefined,
         limit,
@@ -194,7 +198,7 @@ export default function SitesPage() {
     const gen = eventsGenRef.current;
     setEventsLoadingMore(true);
     try {
-      const data = await getSiteEvents({
+      const data = await getSitePolicyEvents({
         agentId: agentFilterRef.current || undefined,
         decision: decisionFilterRef.current || undefined,
         limit: EVENTS_PAGE_SIZE,
@@ -260,7 +264,7 @@ export default function SitesPage() {
 
   useEffect(() => {
     unmountedRef.current = false;
-    refreshSites();
+    refreshGlobalRules();
     refreshAgents();
     refreshEvents();
     const client = createUiEventsClient();
@@ -268,8 +272,8 @@ export default function SitesPage() {
     const unsubs = [
       // Every reason (global/agent rule writes, tier toggle, popup toggle,
       // log allow/revoke) is handled the same way: full refetch.
-      client.subscribe('sites_changed', () => {
-        refreshSites();
+      client.subscribe('site_policy_changed', () => {
+        refreshGlobalRules();
         if (selectedAgentKeyRef.current) refreshAgentRules(selectedAgentKeyRef.current);
         scheduleEventsRefetch();
       }),
@@ -279,7 +283,7 @@ export default function SitesPage() {
         scheduleEventsRefetch();
       }),
       client.subscribe('reconnected', () => {
-        refreshSites();
+        refreshGlobalRules();
         refreshAgents();
         if (selectedAgentKeyRef.current) refreshAgentRules(selectedAgentKeyRef.current);
         scheduleEventsRefetch();
@@ -300,17 +304,17 @@ export default function SitesPage() {
   // --- Global tier + global rules -------------------------------------------
 
   async function handleToggleGlobalTier(next) {
-    const prev = sitesData.globalSiteBlocklist;
-    setSitesData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
+    const prev = globalData.globalSiteBlocklist;
+    setGlobalData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
     try {
       const result = await toggleGlobalTier(next);
-      setSitesData((d) => ({
+      setGlobalData((d) => ({
         ...d,
         globalSiteBlocklist: (result && result.globalSiteBlocklist) || d.globalSiteBlocklist,
       }));
       toast.info(`Global block list ${next ? 'enabled' : 'disabled'}.`);
     } catch (err) {
-      setSitesData((d) => ({ ...d, globalSiteBlocklist: prev }));
+      setGlobalData((d) => ({ ...d, globalSiteBlocklist: prev }));
       toast.error(apiErrorMessage(err, 'Couldn’t update the global block list.'));
     }
   }
@@ -319,9 +323,9 @@ export default function SitesPage() {
     if (domain.includes('*')) return false; // wildcards are per-agent only
     setGlobalBusy(true);
     try {
-      await createSiteRule({ domain, decision });
+      await createGlobalRule({ domain, decision });
       toast.success(`Added ${decision} rule for ${domain}.`);
-      await refreshSites();
+      await refreshGlobalRules();
       return true;
     } catch (err) {
       toast.error(apiErrorMessage(err, 'Couldn’t add rule.'));
@@ -334,9 +338,9 @@ export default function SitesPage() {
   async function handleDeleteGlobalRule(domain) {
     setGlobalBusy(true);
     try {
-      await deleteSiteRule(domain);
+      await deleteGlobalRule(domain);
       toast.info(`Removed rule for ${domain}.`);
-      await refreshSites();
+      await refreshGlobalRules();
       return true;
     } catch (err) {
       toast.error(apiErrorMessage(err, 'Couldn’t remove rule.'));
@@ -346,10 +350,10 @@ export default function SitesPage() {
     }
   }
 
-  function closeGlobalList() {
-    setListOpen(false);
-    // Modal does not restore focus on close.
-    try { viewListBtnRef.current && viewListBtnRef.current.focus(); } catch (_) { /* ignore */ }
+  function closeGlobalModal() {
+    setGlobalModalOpen(false);
+    // RulesModal does not restore focus on close.
+    try { manageGlobalBtnRef.current && manageGlobalBtnRef.current.focus(); } catch (_) { /* ignore */ }
   }
 
   // --- Per-agent rules -------------------------------------------------------
@@ -390,6 +394,11 @@ export default function SitesPage() {
     }
   }
 
+  function closeAgentModal() {
+    setAgentModalOpen(false);
+    try { manageAgentBtnRef.current && manageAgentBtnRef.current.focus(); } catch (_) { /* ignore */ }
+  }
+
   // --- Site access log actions ----------------------------------------------
 
   async function runEventAction(entry, action, successText) {
@@ -421,32 +430,34 @@ export default function SitesPage() {
 
   // --- Derived ---------------------------------------------------------------
 
-  const globalSiteBlocklist = sitesData.globalSiteBlocklist;
+  const globalSiteBlocklist = globalData.globalSiteBlocklist;
   const tierEnabled = !!(globalSiteBlocklist && globalSiteBlocklist.enabled);
   const userRuleCount = useMemo(
-    () => sitesData.globalRules.reduce((n, r) => (r.source === 'user' ? n + 1 : n), 0),
-    [sitesData.globalRules]
+    () => globalData.globalRules.reduce((n, r) => (r.source === 'user' ? n + 1 : n), 0),
+    [globalData.globalRules]
   );
   const signedCount = (globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0;
-  const hasSitesData = !!globalSiteBlocklist || sitesData.globalRules.length > 0;
+  const hasGlobalData = !!globalSiteBlocklist || globalData.globalRules.length > 0;
+  const selectedAgent = agents.find((a) => a.key === selectedAgentKey) || null;
+  const selectedAgentName = selectedAgent ? selectedAgent.name : 'This agent';
 
   return (
     <>
       <header className="wp-page-head">
-        <h1 className="wp-page-title">Sites</h1>
+        <h1 className="wp-page-title">Site Policy</h1>
         <p className="wp-page-sub">
           Control which sites your agents can open: per-agent rules beat global rules, and anything unmatched is allowed.
         </p>
       </header>
 
-      <div className="wp-sites-cols">
-        <section className="wp-card wp-sites-card" aria-labelledby="wp-sites-global-title">
-          <div className="wp-sites-card-head">
+      <div className="wp-site-policy-cols">
+        <section className="wp-card wp-site-policy-card" aria-labelledby="wp-site-policy-global-title">
+          <div className="wp-site-policy-card-head">
             <div>
-              <h2 id="wp-sites-global-title" className="wp-sites-card-title">Enable Global Block List</h2>
-              <p className="wp-sites-card-sub">Applies to all agents, but can be overridden by custom agent rules.</p>
+              <h2 id="wp-site-policy-global-title" className="wp-site-policy-card-title">Global block list</h2>
+              <p className="wp-site-policy-card-sub">Applies to all agents, but can be overridden by custom agent rules.</p>
             </div>
-            {hasSitesData ? (
+            {hasGlobalData ? (
               <Toggle
                 checked={tierEnabled}
                 onChange={handleToggleGlobalTier}
@@ -455,28 +466,28 @@ export default function SitesPage() {
             ) : null}
           </div>
 
-          {sitesError ? (
-            <ErrorCard title="Couldn’t load global rules." error={sitesError} onRetry={refreshSites} />
+          {globalDataError ? (
+            <ErrorCard title="Couldn’t load global rules." error={globalDataError} onRetry={refreshGlobalRules} />
           ) : null}
 
-          {sitesLoading && !hasSitesData ? (
+          {globalDataLoading && !hasGlobalData ? (
             <SkeletonRow titleWidth="70%" subWidth="45%" padded={false} />
-          ) : hasSitesData ? (
+          ) : hasGlobalData ? (
             <>
-              <div className="wp-sites-facts">
+              <div className="wp-site-policy-facts">
                 {signedCount} signed domains · {userRuleCount} custom {userRuleCount === 1 ? 'rule' : 'rules'} · updated {relTime(globalSiteBlocklist && globalSiteBlocklist.lastFetchedAt)}
               </div>
               {!tierEnabled ? (
-                <div className="wp-sites-note">Global rules are off. Only per-agent rules and defaults apply.</div>
+                <div className="wp-site-policy-note">Global rules are off. Only per-agent rules and defaults apply.</div>
               ) : null}
-              <div className="wp-sites-actions">
+              <div className="wp-site-policy-actions">
                 <button
-                  ref={viewListBtnRef}
+                  ref={manageGlobalBtnRef}
                   type="button"
                   className="wp-btn"
-                  onClick={() => setListOpen(true)}
+                  onClick={() => setGlobalModalOpen(true)}
                 >
-                  View / manage list
+                  Manage
                 </button>
               </div>
             </>
@@ -490,11 +501,7 @@ export default function SitesPage() {
           onSelectAgent={selectAgent}
           rules={agentRules}
           rulesLoading={agentRulesLoading}
-          rulesError={agentRulesError}
-          onRetry={() => refreshAgentRules(selectedAgentKeyRef.current)}
-          busy={agentRulesBusy}
-          onAddRule={handleAddAgentRule}
-          onDeleteRule={handleDeleteAgentRule}
+          onManage={() => setAgentModalOpen(true)}
         />
       </div>
 
@@ -516,14 +523,29 @@ export default function SitesPage() {
         onRevoke={handleRevokeEvent}
       />
 
-      <GlobalListModal
-        open={listOpen}
-        onClose={closeGlobalList}
-        globalRules={sitesData.globalRules}
+      <RulesModal
+        open={globalModalOpen}
+        onClose={closeGlobalModal}
+        scope="global"
+        globalRules={globalData.globalRules}
         globalSiteBlocklist={globalSiteBlocklist}
         busy={globalBusy}
         onAddRule={handleAddGlobalRule}
         onDeleteRule={handleDeleteGlobalRule}
+      />
+
+      <RulesModal
+        open={agentModalOpen}
+        onClose={closeAgentModal}
+        scope="agent"
+        agentName={selectedAgentName}
+        rules={agentRules}
+        rulesLoading={agentRulesLoading}
+        rulesError={agentRulesError}
+        onRetry={() => refreshAgentRules(selectedAgentKeyRef.current)}
+        busy={agentRulesBusy}
+        onAddRule={handleAddAgentRule}
+        onDeleteRule={handleDeleteAgentRule}
       />
     </>
   );
