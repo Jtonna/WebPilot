@@ -8,7 +8,7 @@
  *   POST /api/popup/site-toggle   { domain, action: 'block' | 'allow' }
  *        (`decision` is accepted as an alias for `action`; `action` wins
  *        when both are present.) Upserts a GLOBAL user rule through the
- *        same shared write path the Sites page uses (global-user-rules.js),
+ *        same shared write path the Site Policy page uses (global-user-rules.js),
  *        so validation, error strings and rule semantics are identical.
  *
  * Auth: the popup identifies itself with `X-Install-Id` — the same
@@ -130,7 +130,7 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
   // POST /api/popup/site-toggle  { domain, action: 'block' | 'allow' }
   // Sets a GLOBAL user rule for the domain (per the locked design decision —
   // the popup's toggle is the "no AI touches this site" fast button; per-
-  // agent rules live on the webapp Sites page).
+  // agent rules live on the webapp Site Policy page).
   app.post('/api/popup/site-toggle', express.json(), (req, res) => {
     try {
       const auth = _authPopup(req);
@@ -157,8 +157,8 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
       // Compute new pill state (global-only, no agent rule).
       const policy = sitePolicy.isAllowed(null, domain);
       const newState = _statePillFromPolicy(policy);
-      // Tell the webapp Sites page (and any other UI consumer) the rule list
-      // changed. Same event name the Sites admin routes emit.
+      // Tell the webapp Site Policy page (and any other UI consumer) the rule list
+      // changed. Same event name the Site Policy admin routes emit.
       try {
         broadcastUiEvent && broadcastUiEvent({ type: 'site_policy_changed', reason: 'popup_toggle' });
       } catch (_e) { /* non-fatal */ }

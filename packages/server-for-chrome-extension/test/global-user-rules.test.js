@@ -63,7 +63,7 @@ describe('upsertGlobalUserRule', () => {
     assert.equal(result.body.error, 'invalid domain');
     assert.equal(
       result.body.reason,
-      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page"
+      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Site Policy page"
     );
   });
 
@@ -74,7 +74,7 @@ describe('upsertGlobalUserRule', () => {
     assert.equal(result.body.error, 'invalid domain');
     assert.equal(
       result.body.reason,
-      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page"
+      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Site Policy page"
     );
   });
 
@@ -174,7 +174,7 @@ describe('clearGlobalUserRule', () => {
     assert.equal(result.body.error, 'cannot delete signed blocklist rule');
     assert.equal(
       result.body.reason,
-      "signed block list entries can't be deleted; turn off the global block list on the Sites page"
+      "signed block list entries can't be deleted; turn off the global block list on the Site Policy page"
     );
     assert.equal(result.body.domain, 'bad.com');
     assert.equal(result.body.source, 'global_site_blocklist');
@@ -208,7 +208,7 @@ describe('clearGlobalUserRule', () => {
     assert.equal(result.body.reason, `domain ${JSON.stringify('*')} did not normalize to a usable hostname`);
     assert.notEqual(
       result.body.reason,
-      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page"
+      "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Site Policy page"
     );
   });
 });

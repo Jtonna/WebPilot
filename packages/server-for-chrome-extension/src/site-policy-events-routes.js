@@ -97,7 +97,7 @@ function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agent
           .prepare('SELECT created_at FROM agent_site_rules WHERE agent_id = ? AND domain = ?')
           .get(agentId, normalized);
         console.log(
-          `[ui-api:sites] site-event ${action} agentId=${agentId} domain=${normalized}`
+          `[ui-api:site-policy] site-event ${action} agentId=${agentId} domain=${normalized}`
         );
         _broadcast(`site_event_${action}`);
         res.status(201).json({
