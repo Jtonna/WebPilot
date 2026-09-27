@@ -419,6 +419,9 @@ Opens a new browser tab with the specified URL.
 | `title` | string | Page title (may be empty if page hasn't finished loading) |
 | `warning` | string | Optional. Present when the requested URL matches a platform with a formatter. Names the formatter and the unlock call needed before interacting with the tab. |
 
+**Errors:**
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+
 **Notes:**
 - Title may be empty if the page hasn't finished loading
 - The new tab is **not** active by default (`focusNewTabs` defaults to `false`). This is a user-configurable setting stored in `chrome.storage.local`.

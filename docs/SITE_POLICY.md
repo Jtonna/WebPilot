@@ -45,7 +45,7 @@ Source: `packages/server-for-chrome-extension/test/site-policy.test.js:76-180`.
 | | | null | allow | `global_user` |
 | Amex (`:103-124`) | signed block on `americanexpress.com`; agent 1 has an allow rule | 1 (also `www.`) | allow | `agent_rule` |
 | | | 2, 3, null | block | `global_site_blocklist` |
-| LinkedIn (`:126-163`) | toggle off; signed `linkedin.com`; agent 1 has `*` block and a `linkedin.com` allow | 1 → `linkedin.com`, `www.linkedin.com` | allow | `agent_rule` (named) |
+| LinkedIn (`:126-163`) | toggle off; signed `linkedin.com`; global user allow on `example.com`; agent 1 has `*` block and a `linkedin.com` allow | 1 → `linkedin.com`, `www.linkedin.com` | allow | `agent_rule` (named) |
 | | | 1 → `example.com`, `chase.com`, `192.168.1.1`, `localhost:3000` | block | `agent_rule` (`*`) |
 | | | 2 → `example.com` | allow | `default` |
 | example.com (`:165-179`) | global user block on `example.com` | 1, toggle off | allow | `default` |

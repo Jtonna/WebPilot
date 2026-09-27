@@ -86,7 +86,7 @@ The daemon refuses to apply a formatter / blocklist update unless:
 
 The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never has to fetch the pubkey from the network. Only `PUBKEY.pem` is bundled into the binary this way — the signed manifests themselves are not; they're fetched at runtime.
 
-Verification failure is logged and the update is skipped. For formatters, the previously-installed formatters keep running. For the global site blocklist, the updater falls back to its local on-disk cache (itself re-verified before use) and, failing that, keeps whatever rows are already in the `global_site_blocklist_rules` table — it never clobbers existing data on a failed tick.
+Verification failure is logged and the update is skipped. For formatters, the previously-installed formatters keep running. For the global site blocklist, the updater falls back to its local on-disk cache (re-verified before use). A hash mismatch after a valid signature aborts the run and leaves the DB unchanged. If there is no remote and no cache, it currently writes an empty placeholder that empties the signed tier (tracked in #101). See [Failure modes](docs/SITE_POLICY.md#failure-modes).
 
 CI's `check-signed-manifest.yml` guards against a stale-but-unsigned commit: on any PR or push to `main` touching either bundle, it recomputes the SHA-256 of every file listed in `signed-manifest.json` and compares it against the claimed hash. It does **not** verify the Ed25519 signature — only that the hashes are internally consistent with what's committed. Since `sign-formatters.js` re-signs both bundles on every run, only commit the files you actually meant to change.
 
@@ -117,12 +117,14 @@ Production signing happens inside the release workflow. The signing key lives in
 
 ### Updating the global site blocklist
 
-Unlike formatters, updating the global site blocklist does not require cutting a release — the updater always fetches from `main`, so merging a properly-signed commit is enough for it to reach users on their next update tick. In short:
+Unlike formatters, updating the global site blocklist does not require cutting a release — the updater always fetches from `main`, so merging a properly-signed commit is enough for it to reach users on their next update tick. In short (Procedure A, sign locally):
 
 1. Edit `global-site-blocklists/financial-institutions.txt`.
 2. Bump `version` in `global-site-blocklists/manifest.json` — **mandatory**; the updater only applies a fetched bundle when its version differs from what's already stored.
 3. Run `node scripts/sign-formatters.js` with `WEBPILOT_SIGNING_KEY` set to your local private key path.
 4. Commit all four files (`financial-institutions.txt`, `manifest.json`, `signed-manifest.json`, `signed-manifest.json.sig`) together.
+
+Alternatively (Procedure B), merge the edits unsigned. `check-signed-manifest` then fails on the PR and on `main`, and daemons keep the last good list, until `release-stable.yml` re-signs and commits. The list goes live within 24 h of the next stable release. Nightly re-signs only inside the runner. See [Procedure B](docs/SITE_POLICY.md#procedure-b-merge-unsigned-and-let-release-stable-re-sign).
 
 See [docs/SITE_POLICY.md#updating-the-blocklist](docs/SITE_POLICY.md#updating-the-blocklist) for the full procedure, including the two supported signing workflows.
 
