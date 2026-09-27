@@ -265,6 +265,43 @@ export function deleteAgentSiteOverride(agentId, domain) {
   );
 }
 
+// GET /api/ui/sites/events — returns { entries: [{ agentKey, agentName, domain,
+// decision, source, matchedDomain, firstSeenAt, lastSeenAt, decisionChangedAt,
+// hitCount, actionable, agentRuleDecision }], hasMore, nextCursor }. One row per
+// agent+domain, newest last-seen first. Refetch on WS events `sites_changed` and
+// `site_policy_events_changed`.
+export function getSiteEvents({ agentId, decision, limit, cursor } = {}) {
+  const params = new URLSearchParams();
+  if (agentId) params.set('agentId', agentId);
+  if (decision) params.set('decision', decision);
+  if (limit) params.set('limit', String(limit));
+  if (cursor) params.set('cursor', cursor);
+  const qs = params.toString();
+  return apiFetch(`/api/ui/sites/events${qs ? `?${qs}` : ''}`);
+}
+
+// POST /api/ui/agents/:agentId/site-events/allow — body { domain }. Creates a
+// per-agent allow rule. Returns 201 { agentKey, domain, decision, createdAt }; 400 for
+// non-actionable domains (IPs, localhost, `*`); 404 unknown/revoked agent.
+// Note: the event row itself is not changed immediately; it flips on the agent's next
+// request, and `agentRuleDecision` in `getSiteEvents` shows the new rule immediately.
+export function allowSiteForAgent(agentId, domain) {
+  return apiFetch(
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-events/allow`,
+    { method: 'POST', body: { domain } }
+  );
+}
+
+// POST /api/ui/agents/:agentId/site-events/revoke — body { domain }. Creates a
+// per-agent block rule for THIS agent only (overwrites a same-domain per-agent allow
+// in place; never deletes). Same response and error codes as allowSiteForAgent.
+export function revokeSiteForAgent(agentId, domain) {
+  return apiFetch(
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-events/revoke`,
+    { method: 'POST', body: { domain } }
+  );
+}
+
 // POST /api/ui/sites/global-tier/toggle — body { enabled: bool }.
 // Returns { enabled, globalSiteBlocklist: { enabled, version, lastFetchedAt, domainCount } }.
 // The toggle disables the whole global tier (signed blocklist AND global user rules),
