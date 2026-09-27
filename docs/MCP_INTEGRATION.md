@@ -52,20 +52,28 @@ Unauthenticated or invalid-key requests receive MCP error code `-32001`.
 
 ## Security: Site Policy
 
-Site-policy enforcement is **server-side**, implemented by `isAllowed(agentId, url)` in `packages/server-for-chrome-extension/src/site-policy.js`. The extension does not enforce site policy — it executes commands. See `docs/MCP_SERVER.md` for the canonical reference.
+Site-policy enforcement is **server-side** — see [`docs/SITE_POLICY.md`](./SITE_POLICY.md) for the canonical reference; the extension does not enforce site policy, it only executes commands.
 
-**Enforcement point:** every `browser_*` tool call (`browser_create_tab`, `browser_close_tab`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `browser_click`, `browser_scroll`, `browser_type`) and `webpilot_run_workflow` is checked by `mcp-handler.js` at MCP dispatch time (checkpoints A and B) before the command reaches the extension. `browser_get_tabs` is exempt (no URL context).
+**Precedence (highest first; a higher tier beats a more specific rule in a lower tier — see [precedence](./SITE_POLICY.md#precedence)):**
 
-**Precedence (highest first):**
+1. Per-agent rule (named domain, then that agent's `*` default)
+2. Global user rule
+3. Signed global blocklist
+4. Default: allow
 
-1. **Per-agent rules** — rows in the `agent_site_rules` table, scoped to the calling agent (skipped when no agent is known). Named-domain rules are checked most-specific first; then the agent's `*` row, if any, applies as that agent's default for every site (including IP/`localhost` network URLs). A named rule always beats `*`.
-2. **Global user rules** — rows in `global_user_site_rules` (allow or block, exact domains only), applied to all agents on this host.
-3. **Global site blocklist** — rows in `global_site_blocklist_rules` (block-only), populated by `global-site-blocklist-updater.js` from the bundled `global-site-blocklists/`.
-4. **Default: allow.**
+**Checked vs. exempt** (see [checked-and-exempt tools](./SITE_POLICY.md#checked-and-exempt-tools)):
+- **Checked** against the tab's current URL (or, for `browser_create_tab`, the URL being opened): `browser_create_tab` (on its `url`), `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow` — and each individual step of a `browser_request_chain`.
+- **Exempt** (no site involved): `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call itself, `request_pairing`, `check_pairing_status`, and the `webpilot_get_formatter_info` / `webpilot_reload_formatters` / `webpilot_dev_*` tools.
 
-Tiers 2 and 3 together form the **global tier**, gated by the config key `global_tier_enabled` (missing key or config read error = enabled). Turning it off disables the whole global tier — both global user rules and the global site blocklist stop applying, and every call without an agent-tier match defaults to allow. Per-agent rules are never affected. The blocklist updater keeps refreshing `global_site_blocklist_rules` while the tier is off, so the data is current when it is re-enabled. Resolution is first-match-wins and tiers beat specificity: a broad rule in a higher tier (e.g. an agent `*`) beats a narrow rule in a lower tier.
+**Chains:** each step of a `browser_request_chain` is checked again independently. A policy-blocked step returns the blocked envelope (see [Blocked by Site Policy](#blocked-by-site-policy)) as that step's result, and the chain **continues** with later steps — a block is not treated as a step failure. If the blocked step targets a `tab_id`, that tab still gets the standard 5-second auto-close.
 
-**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent rules (including an agent-wide `*` rule), global user rules, and toggling the global tier (global user rules + global site blocklist together).
+**Agent-relevant notes:**
+- Without a valid API key, calls have no agent identity, so the per-agent tier is skipped entirely.
+- IP addresses and `localhost` are matched only by an agent's `*` rule — they never match named-domain rules in any tier.
+- Non-network URLs (`about:`, `chrome:`, `data:`, `file:`) are never policy-managed and always default-allow.
+- Some internal failure paths let the call through rather than blocking it — see [fail-open cases](./SITE_POLICY.md#fail-open-cases) and #100.
+- The signed global blocklist is **fetched from the WebPilot repo, signature-verified, cached locally, and refreshed at boot and every 24 hours** — not bundled with the package.
+- Toggling the global tier and managing rules is done at `http://localhost:3456/ui/sites/` — see [global tier toggle](./SITE_POLICY.md#global-tier-toggle).
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
@@ -311,6 +319,7 @@ Internally this workflow fetches the formatted accessibility tree, locates the c
 
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `Workflow not found: <workflow>` — Workflow does not exist or is not implemented (`implemented: false` in manifest).
 - `Invalid workflow parameters: ...` — Parameter types do not match the workflow declaration.
 
@@ -554,6 +563,7 @@ Refs (e1, e2, e3...) are stable identifiers for each element. These can be used 
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `Another debugger is already attached to this tab` - DevTools or another extension is debugging the tab
 - `Failed to attach debugger: ...` - Tab may not exist or be a protected page (chrome://, etc.)
 - Formatter errors return `{ ok: false, error: "<message>", diagnostics: {...} }` (rather than throwing). The `diagnostics` object includes `phase`, `platform`, `tabId`, and error context.
@@ -599,6 +609,7 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `Fetched script is empty` - Script fetch returned empty content
 - `Cannot inject scripts into protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Unsupported protocol: ...` - Script URL uses non-HTTP(S) protocol
@@ -666,6 +677,7 @@ browser_execute_js(tab_id, 'fetch("/api/data").then(r => r.json())')
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `code is required` - Missing code parameter
 - `Cannot execute scripts on protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Another debugger is already attached to this tab` - Close DevTools or other debuggers first
@@ -809,6 +821,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `Either selector, ref, or x,y coordinates are required` - No click target provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist in stored refs
 - `Element for ref "eX" no longer exists in DOM` - Page changed since tree fetch
@@ -924,6 +937,7 @@ browser_scroll(tab_id, ref="e5")
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `Either ref/selector OR pixels is required` - No scroll target provided
 - `Cannot specify both element target and pixels - use one or the other` - Both ref/selector and pixels provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
@@ -1008,6 +1022,7 @@ browser_type(tab_id, text="test", delay=100)
 **Errors:**
 - `tab_id is required` - Missing tab_id parameter
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
 - `text is required` - Missing text parameter
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
 - `Another debugger is already attached to this tab` - Close DevTools first
@@ -1086,8 +1101,11 @@ browser_request_chain(
 
 **Per-step locking behavior:** If a step targets a tab that's locked behind a formatter guide, that step's result is the inline `platform_guide_required` block envelope (with `platform`, `tab_id`, `unlock_call`). Other steps continue executing. An earlier step that calls `webpilot_get_formatter_info({platform, tab_id})` unlocks the tab for subsequent steps in the same chain.
 
+**Per-step site-policy behavior:** Each step is re-checked against site policy independently (the same gate documented in [Security: Site Policy](#security-site-policy) — checking the outer `browser_request_chain` call itself would be meaningless, since it has no single URL). If a step is blocked, that step's result is the [`Blocked by Site Policy`](#blocked-by-site-policy) envelope, and **the chain continues** with the remaining steps — a policy block is not treated as a step failure and does not stop execution (see "On step failure" below, which covers thrown errors from the underlying tool, not policy blocks). A blocked step that targets a `tab_id` still triggers the standard 5-second auto-close of that tab.
+
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
+- Blocked by site policy — a step's result is the [Blocked by Site Policy](#blocked-by-site-policy) envelope; the chain continues past it (see "Per-step site-policy behavior" above)
 - `Unknown tool(s) in chain: step 0: "nonexistent_tool"` -- invalid tool name
 - `Step 2 references $2 which has not executed yet` -- forward or self reference
 - `Cannot use return_mode "last" with an empty steps array` -- empty steps with last mode
@@ -1095,8 +1113,8 @@ browser_request_chain(
 
 **Notes:**
 - Steps execute sequentially; there is no parallel step execution
-- On step failure, execution stops and returns all prior successful results plus the error
-- Domain restriction rules still apply to each individual step
+- On step failure (the underlying tool throws), execution stops and returns all prior successful results plus the error. A site-policy block is **not** a step failure — see "Per-step site-policy behavior" above; the chain keeps going.
+- Site policy is re-checked on each individual step; see [Security: Site Policy](#security-site-policy)
 - `browser_request_chain` cannot be used as a step tool (no recursive chaining)
 
 ---
@@ -1179,6 +1197,35 @@ If a tool call is made without a valid API key (or with no key at all):
 **Cause:** Missing or invalid API key. The server checks `session.mcpApiKey` (from the `X-API-Key` header or `apiKey` query parameter on the SSE/message endpoints) and falls back to `params.arguments.api_key` (the per-tool-call parameter).
 
 **Solution:** Call `request_pairing` to obtain an API key, then include it with all subsequent requests via the `X-API-Key` header or as the `api_key` parameter in tool call arguments.
+
+### Blocked by Site Policy
+
+If a tool call resolves to a domain that site policy blocks (checkpoint A, `browser_create_tab`):
+```json
+{
+  "ok": false,
+  "error": "site blocked by policy",
+  "domain": "example.com",
+  "policySource": "agent_rule | global_user | global_site_blocklist"
+}
+```
+
+If the block happens on an existing tab (checkpoint B — any `TAB_ID_TOOLS` call, or a chained step targeting a `tab_id`), the envelope adds the tab's auto-close deadline:
+```json
+{
+  "ok": false,
+  "error": "site blocked by policy",
+  "domain": "example.com",
+  "policySource": "agent_rule | global_user | global_site_blocklist",
+  "tabId": 1234567890,
+  "tabWillCloseAt": "2026-09-27T12:00:05.000Z",
+  "tabCloseInSeconds": 5
+}
+```
+
+**Cause:** The URL's domain is blocked at whichever policy tier matched first — see [Security: Site Policy](#security-site-policy) and [`docs/SITE_POLICY.md`](./SITE_POLICY.md#precedence) for precedence.
+
+**Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds` — no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/sites/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
 
 ### Tab Not Found
 
