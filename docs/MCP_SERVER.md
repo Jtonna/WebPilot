@@ -55,6 +55,7 @@ The `apiKey` field in `server.json` (and the legacy `API_KEY` env var) is no lon
 | Config file / Environment | `PORT` | `3456` | HTTP/WebSocket port |
 | Environment / CLI flag | `NETWORK` / `--network` | `0` / off | Enable network mode if set to `1` |
 | SQLite row | `config.network_enabled` | (absent) | Persisted network mode preference (`'true'` / `'false'`). Written by `POST /api/ui/settings/network-mode` from the web UI; the endpoint spawn-and-exits a replacement daemon so the new binding takes effect. If present, overrides both the `--network` flag and the `NETWORK` env var. |
+| SQLite row | `config.global_tier_enabled` | (absent, treated as enabled) | Whole-global-tier toggle (`'true'` / `'false'`); a missing row also counts as enabled. Written by `POST /api/ui/sites/global-tier/toggle`. See [SITE_POLICY.md#global-tier-toggle](SITE_POLICY.md#global-tier-toggle). |
 
 In network mode, the server listens on `0.0.0.0` and advertises the machine's LAN IP address. In default mode, it listens on `127.0.0.1` only.
 
@@ -67,8 +68,9 @@ Sets up the Express HTTP server and two WebSocket servers (one for extensions, o
 - Creates an Express app with CORS and JSON body parsing
 - Creates an HTTP server and two `WebSocketServer`s in `noServer` mode (manual upgrade routing): the extension WS at the root path, and the web-ui events WS at `/api/ui/events`. Extension upgrades require `?installId=<uuid>` on the URL — the server records the mapping in `extension_installs` and uses it purely for routing (claiming an installId grants no MCP tool power, which agent-layer auth gates; it does authorize the popup site-toggle endpoint, see #110). UI upgrades are accepted only from loopback addresses with no API key.
 - Mounts the web UI at `/ui/`. In production (and inside the pkg snapshot), serves the Next.js static export via a manual `fs.readFileSync` handler (express.static is bypassed so the pkg-snapshot patched `fs` works correctly). In dev (`WEBPILOT_DEV=1`, set by `npm run dev` at the repo root), instead proxies `/ui/*` to `http://localhost:3100` via `http-proxy-middleware` with `ws: true` so Next.js HMR works. The pkg/Electron path never sets `WEBPILOT_DEV` so installed users always go through the static branch.
-- Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings) — see [Web UI API](#web-ui-api).
+- Mounts the `/api/ui/*` REST endpoints (status, pairings, agents, profiles, chrome, server, settings, sites, agents' site-rules, site-events) — see [Web UI API](#web-ui-api). Also mounts the `/api/popup/*` endpoints (`popup-routes.js`), which are not part of this localhost-only surface — see [Authentication & authorization](#authentication--authorization).
 - On startup, calls `formatterManager.init()`, then `formatterUpdater.init(formatterManager)`. An immediate update check runs against GitHub (downloads formatters on first run if none exist locally), followed by hourly recurring checks. Also loads `notificationsSettings`, runs an initial `pairedKeys.cleanupExpiredPairings()` pass, and runs `pairedKeys.cleanupUnusedKeys()` to auto-revoke 48h-stale never-used keys. Both cleanup passes also run hourly thereafter. It also runs a startup `sitePolicyEvents.cleanup()` pass for the site policy event log and repeats it hourly. Each pass deletes rows whose `last_seen_at` is older than 30 days (`DEFAULT_MAX_AGE_DAYS`), then trims the table to the newest 5,000 rows by `last_seen_at` (`DEFAULT_MAX_ROWS`). A pass that removes any rows emits `site_policy_events_changed` with `reason: 'retention'` on `/api/ui/events`.
+- On startup, also calls `globalSiteBlocklistUpdater.init({})` (`server.js:1918-1937`). A boot check runs 5 seconds after listen (deferred so a slow/unreachable GitHub doesn't drag out cold-start), followed by a recurring check every 24 hours — much slower than the formatter updater's hourly cadence, since the signed blocklist changes far less often. See [SITE_POLICY.md#signed-global-blocklist-updater](SITE_POLICY.md#signed-global-blocklist-updater).
 - Maintains an N-connection extension bridge keyed by Chrome profile directory name. Every extension WS connection runs a `hello` handshake (`profileId`, optional `gaiaEmail` (the field name on the wire), persistent `installId`) before any other messages are processed. The server uses `installId` to remember which profile an extension install belongs to (persisted in the `extension_installs` SQLite table), and replies with `hello_ack` once the binding resolves. A 5-second server-side `helloDeadline` watchdog pushes `identify_required` pre-emptively if the extension never sends `hello` in time (see `server.js`).
 - Handles WebSocket messages from the extension: `{ type: 'ping' }` → `{ type: 'pong' }` (keep-alive); `{ type: 'hello' }` → `{ type: 'hello_ack' }` or `{ type: 'identify_required' }`; `{ type: 'revoke_key' }`, `{ type: 'rename_agent' }`, `{ type: 'list_paired_agents' }` for paired-agent management; `{ type: 'check_formatter_updates' }` → `{ type: 'formatter_update_result' }`. `{ type: 'set_network_mode' }` and `{ type: 'set_pairing_required' }` are **deprecated** — the server logs and ignores them; network mode is now owned by `POST /api/ui/settings/network-mode`, and the pairing-required toggle has been retired (pairing is always on).
 - Auto-opens the web UI in the default browser on `--foreground` start (via `service/open-browser.js`).
@@ -181,6 +183,34 @@ GitHub-based auto-updater for accessibility tree formatters:
 - `init(manager)` -- Wires the updater to the given formatter manager instance. Runs an immediate update check on startup, then schedules recurring checks every hour.
 - `checkForUpdates()` -- Fetches the remote manifest from `raw.githubusercontent.com/Jtonna/WebPilot/main/accessibility-tree-formatters/manifest.json`, compares versions against the locally installed manifest, downloads all files listed in the `files` array for any updated formatters, then calls `manager.reload()`. Each fetch uses a 10-second timeout.
 
+### `src/site-policy.js`
+
+Resolves `(agent_id, url)` to an allow/block verdict across the per-agent, global-user, and signed-global-blocklist tiers, and owns the `config.global_tier_enabled` read/write. See [SITE_POLICY.md#precedence](SITE_POLICY.md#precedence) and [SITE_POLICY.md#domain-matching](SITE_POLICY.md#domain-matching).
+
+### `src/global-site-blocklist-updater.js`
+
+GitHub-based signed auto-updater for the `global_site_blocklist_rules` table (boot + 5s, then every 24h). Verifies the signed manifest via `manifest-verifier.js` before writing. See [SITE_POLICY.md#signed-global-blocklist-updater](SITE_POLICY.md#signed-global-blocklist-updater).
+
+### `src/global-user-rules.js`
+
+Single shared write path (`upsertGlobalUserRule`, `clearGlobalUserRule`) for the `global_user_site_rules` table, used by both the Sites admin page and the popup toggle. See [SITE_POLICY.md#updating-the-blocklist](SITE_POLICY.md#updating-the-blocklist).
+
+### `src/site-policy-events.js`
+
+Deduplicated (agent, domain) event log backing the site-policy admin UI's live event view. See [SITE_POLICY.md#event-log](SITE_POLICY.md#event-log).
+
+### `src/site-policy-events-routes.js`
+
+Mounts `GET /api/ui/sites/events` and the per-agent site-events allow/revoke endpoints. See [SITE_POLICY.md#admin-surfaces-and-live-events](SITE_POLICY.md#admin-surfaces-and-live-events).
+
+### `src/popup-routes.js`
+
+Mounts the install-id-scoped `/api/popup/*` endpoints (state + site-toggle) used by the extension popup. See [SITE_POLICY.md#where-the-gate-runs](SITE_POLICY.md#where-the-gate-runs).
+
+### `src/lib/manifest-verifier.js`
+
+Ed25519 signature + SHA-256 verification for signed formatter and global-site-blocklist releases against the bundled `PUBKEY.pem`. See [SITE_POLICY.md#signed-global-blocklist-updater](SITE_POLICY.md#signed-global-blocklist-updater).
+
 ## MCP Tools
 
 Tools are exposed to AI agents. All tools except `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, and `webpilot_dev_get_formatter_logs` require a valid paired API key and a connected extension for the agent's bound Chrome profile. Every tool except those four auth-exempt tools includes an optional `api_key` parameter in its schema, allowing per-call authentication as an alternative to the session-level `X-API-Key` header. `agent_name` is required only on `request_pairing`; other tools route via `resolveTargetProfile(apiKey)` and do not look at the agent name. See the **Authentication & authorization** section below for the full policy.
@@ -233,35 +263,9 @@ The Web UI admin surface is **localhost-only**. The general `makeUiAuth` middlew
 
 ### Site-policy gate
 
-Independently of API-key authentication, every `browser_*` tool call (`browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`) and `webpilot_run_workflow` runs through a server-side site-policy check before any extension command is dispatched. See `src/site-policy.js`.
+Independently of API-key authentication, the gate lives in `mcp-handler.js`: checkpoint A gates `browser_create_tab` on `args.url` before dispatch, and checkpoint B gates every tool in `TAB_ID_TOOLS` (currently `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow`) by resolving the tab's current URL first. Both checkpoints resolve their verdict via `sitePolicy.isAllowed()` in `src/site-policy.js`, and it runs regardless of API-key auth outcome. Verdicts come from four tiers, evaluated in order — per-agent rule, global-user rule, signed global blocklist, default-allow — with a higher tier winning even over a more specific rule in a lower tier; see [SITE_POLICY.md#precedence](SITE_POLICY.md#precedence) for the full decision flow and [SITE_POLICY.md#domain-matching](SITE_POLICY.md#domain-matching) for subdomain rules. `browser_get_tabs` and `browser_close_tab` are always allowed; see [SITE_POLICY.md#checked-and-exempt-tools](SITE_POLICY.md#checked-and-exempt-tools). A denied call's response shape is documented at [SITE_POLICY.md#blocked-response](SITE_POLICY.md#blocked-response), and the cases where the gate fails open (no extension, unresolvable tab URL, etc.) at [SITE_POLICY.md#fail-open-cases](SITE_POLICY.md#fail-open-cases). Every checked call is recorded to the `site_policy_events` table — see [SITE_POLICY.md#event-log](SITE_POLICY.md#event-log).
 
-The decision flow for `(agent_id, url)`:
-
-1. Normalize the URL's hostname (lowercase, strip scheme/port, drop leading `www.`).
-2. If the caller has an `agent_id`, look up `agent_site_rules`: first the agent's named rows (most-specific suffix first), then the agent's `*` row (its default for every site). A named rule beats `*` regardless of decision. If a row matches, its `decision` wins (`policySource: 'agent_rule'`).
-3. Else, if the global tier is enabled (`config.global_tier_enabled`, default on), look up `global_user_site_rules` for `domain`. If present, the row's `decision` wins (`policySource: 'global_user'`). These are rules set from the popup toggle or webapp `/ui/sites/`.
-4. Else, if the global tier is enabled, look up `global_site_blocklist_rules` for `domain`. If present, the verdict is `block` (`policySource: 'global_site_blocklist'`). This is the signed, auto-updated list maintained by `src/global-site-blocklist-updater.js`, and it is block-only.
-5. Else, default to `allow` (`policySource: 'default'`).
-
-Tiers beat specificity: a match in a higher tier wins even if a lower tier has a more specific rule. Turning the global tier off skips steps 3 and 4 together; per-agent rules are never affected by the toggle.
-
-Subdomain matching is public-suffix-aware: a rule on `chase.com` covers `secure.chase.com` and `www.chase.com`. A rule on `secure.chase.com` covers only that subdomain.
-
-When the gate denies a call:
-
-- `browser_create_tab` returns `{ ok: false, error: "site blocked by policy", domain, policySource }` and the tab is never opened.
-- Tools that operate on an existing `tab_id` return the same error plus `{ tabId, tabWillCloseAt, tabCloseInSeconds: 5 }`. The server schedules `chrome.tabs.remove(tab_id)` via the extension after the countdown, so the agent sees the error and the tab is cleaned up.
-
-**Event recording.** Each site-policy check made for an authenticated agent is recorded in the `site_policy_events` table (`src/site-policy-events.js`). This covers checkpoint A (`browser_create_tab`, keyed on `url`) and checkpoint B (tools that take a `tab_id`, keyed on the tab's current URL). It also covers each step inside `browser_request_chain`, because every step runs the gate again. The log keeps one row per (agent, domain), and it stores the checked domain only, never the full URL. A repeat check increments `hit_count`, bumps `last_seen_at` and overwrites `decision` / `source` / `matched_domain` in place. When the decision flips (allow ↔ block), the row is updated in place and `decision_changed_at` is set. No history rows are kept. Allowed calls are recorded as well as blocked ones. Some checks are not recorded:
-- checks with no resolved agent, such as the popup's `isAllowed(null, …)` lookups or a call without a valid key;
-- URLs with no network host, such as `chrome://` or `file://`;
-- calls where the gate skipped the check (checkpoint B with no connected extension or an unresolvable tab URL).
-
-IP literals and single-label hosts such as `localhost` are recorded under their raw lowercased host. They cannot be targeted by a named per-agent rule, and only the agent's `*` rule covers them. The events API marks them `actionable: false`. Recording failures are logged and never block or change the tool call.
-
-`browser_get_tabs` and `browser_close_tab` are always allowed — agents can see what's open and can close blocked tabs themselves.
-
-The webapp's `/ui/sites/` admin page is the canonical surface for managing `global_user_site_rules` and `agent_site_rules` (the `global_site_blocklist_rules` table is written only by the blocklist updater). The minimal popup exposes a single Block/Allow toggle that upserts a row in `global_user_site_rules` for the current tab's domain. `GET /api/popup/state` and `POST /api/popup/site-toggle` both include `globalTierEnabled` in their response so the popup can show when the global tier is off; While the tier is off, the popup disables its toggle; a rule written to `POST /api/popup/site-toggle` anyway is stored but has no effect until the tier is re-enabled. The toggle goes through the same shared write path as `POST /api/ui/sites` (`src/global-user-rules.js`), so validation and 400 `{ error, reason }` bodies are identical; the body field is `action` (`decision` is accepted as an alias). The popup routes live in `src/popup-routes.js` (mounted from `server.js` via `mountPopupRoutes`).
+The minimal extension popup exposes its own Block/Allow surface; see [CHROME_EXTENSION.md#popup-ui](CHROME_EXTENSION.md#popup-ui) and [SITE_POLICY.md#admin-surfaces-and-live-events](SITE_POLICY.md#admin-surfaces-and-live-events).
 
 ### Formatter guide gate
 
@@ -328,8 +332,8 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/ui/...` | Static web UI (Next.js export) served via `fs.readFileSync` for pkg-snapshot compatibility |
-| WS | `/api/ui/events` (upgrade) | Web UI event stream (pairing changes, agent changes, extension connect/disconnect, site-policy event log changes via `site_policy_events_changed`) |
-| GET | `/api/ui/status` | Snapshot: Chrome status, profiles with per-profile `webPilotStatus` (`active`/`ready`/`needs_setup`), `connectedProfiles`, `pendingPairings`, `pairedAgents`, `networkMode`, `paths`, `notifications`, `port` |
+| WS | `/api/ui/events` (upgrade) | Web UI event stream (pairing changes, agent changes, extension connect/disconnect, site-policy event log changes via `site_policy_events_changed`, and site-rule/tier changes via `sites_changed` — see [SITE_POLICY.md#admin-surfaces-and-live-events](SITE_POLICY.md#admin-surfaces-and-live-events) for the `reason` values) |
+| GET | `/api/ui/status` | Snapshot: Chrome status, profiles with per-profile `webPilotStatus` (`active`/`ready`/`needs_setup`), `connectedProfiles`, `pendingPairings`, `pairedAgents`, `networkMode`, `paths`, `notifications`, `port`, and `globalSiteBlocklist` (`server.js:583-589`) |
 | POST | `/api/ui/pairings/:id/approve` | Body `{ profileId, newProfileName? }`. Approves a pending pairing and binds it to the given profile (or to a freshly-created sandbox profile when `profileId === '__new__'`). Returns 409 on terminal state. |
 | POST | `/api/ui/pairings/:id/deny` | Denies a pending pairing. Returns 409 on terminal state. |
 | GET | `/api/ui/pairings/history` | Cursor-paginated terminal-state pairings (approved/denied/expired) sorted by `decidedAt` DESC. |
@@ -349,7 +353,7 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 
 ### Site-policy admin endpoints
 
-Mounted under the same localhost-only `/api/ui/*` surface and gated by the same `makeUiAuth` middleware; mutating routes layer the narrower `mutatingUiAuth` check on top. All mutating routes emit a `sites_changed` event over the `/api/ui/events` WebSocket on success; the Sites admin page refetches on any reason. `reason` is one of `global_rule_upsert`, `global_rule_delete`, `global_tier_toggle`, `agent_rule_upsert`, `agent_rule_delete`, `site_event_allow`, `site_event_revoke`, or `popup_toggle` (the last one comes from `POST /api/popup/site-toggle`).
+See [SITE_POLICY.md](SITE_POLICY.md) for the tier model and precedence these endpoints manage; this table is the canonical REST reference. Mounted under the same localhost-only `/api/ui/*` surface and gated by the same `makeUiAuth` middleware; mutating routes layer the narrower `mutatingUiAuth` check on top. All mutating routes emit a `sites_changed` event over the `/api/ui/events` WebSocket on success; the Sites admin page refetches on any reason. `reason` is one of `global_rule_upsert`, `global_rule_delete`, `global_tier_toggle`, `agent_rule_upsert`, `agent_rule_delete`, `site_event_allow`, `site_event_revoke`, or `popup_toggle` (the last one comes from `POST /api/popup/site-toggle`).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -467,6 +471,7 @@ Contents:
 - `config/notifications.json` (per-user notification preferences — still file-backed for now).
 - `formatters/` (auto-updated formatters from GitHub).
 - `custom-formatters/` (user-managed formatters that override auto-updated ones for the same domain; never touched by the auto-updater).
+- `global-site-blocklists/` (local cache of the signed global site blocklist manifest + lists, written by `global-site-blocklist-updater.js` so an offline boot can still trust what it read last).
 
 ## Build
 
@@ -480,7 +485,7 @@ npm run build:linux  # node18-linux-x64
 
 Output directory: `dist/`.
 
-The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The top-level `"bin": "cli.js"` field in `package.json` points pkg at the binary's main entry; it is not a pkg-specific config knob. Formatters are not bundled in the binary -- they are downloaded from GitHub on first run.
+The compiled binary includes Node.js, all dependencies, and the server source. It can run on machines without Node.js installed. The top-level `"bin": "cli.js"` field in `package.json` points pkg at the binary's main entry; it is not a pkg-specific config knob. Formatters and the global site blocklist are not bundled; only `PUBKEY.pem` ships with the app.
 
 ## Dependencies
 
