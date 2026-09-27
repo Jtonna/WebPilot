@@ -477,3 +477,140 @@ describe('file-load validation: malformed migration files', () => {
     db.close();
   });
 });
+
+// ── Fresh / pre-schema DB ───────────────────────────────────────────────────
+// Migration 001 must tolerate running before any app tables exist (a truly
+// empty DB with only the schema_migrations ledger) and against a DB that was
+// stuck mid-boot on v2.2.0 (ledger table created, but the transaction that
+// would have inserted its row never committed, so app tables never landed).
+
+const SCHEMA_SQL_PATH = path.join(__dirname, '..', 'src', 'db', 'schema.sql');
+const SCHEMA_SQL = fs.readFileSync(SCHEMA_SQL_PATH, 'utf8');
+
+// Matches the ledger DDL in src/db/schema-migrations/index.js exactly.
+const LEDGER_DDL = `
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+  )
+`;
+
+const EXPECTED_TABLES = [
+  'agents',
+  'pairings',
+  'global_site_rules',
+  'agent_site_overrides',
+  'global_site_blocklist_meta',
+  'formatter_incidents',
+  'config',
+  'extension_installs',
+  'schema_migrations',
+];
+
+function tableNames(db) {
+  return db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    .all()
+    .map(r => r.name);
+}
+
+describe('fresh / pre-schema DB', () => {
+  test('truly empty DB: runAll then schema.sql is a no-op and ledger matches listMigrations', () => {
+    const db = new Database(':memory:');
+    const dataDir = makeTmpDir();
+
+    runAll(db, { dataDir });
+    assert.doesNotThrow(() => db.exec(SCHEMA_SQL));
+
+    const expectedIds = listMigrations().map(m => m.id).sort();
+    const ledgerIds = db.prepare('SELECT id FROM schema_migrations').all().map(r => r.id).sort();
+    assert.deepEqual(ledgerIds, expectedIds);
+
+    assert.deepEqual(tableNames(db).sort(), [...EXPECTED_TABLES].sort());
+
+    assert.equal(
+      fs.existsSync(path.join(dataDir, 'global-site-blocklists')),
+      false,
+      'no cache dir should be created on a fresh, empty DB'
+    );
+
+    const ledgerCountBefore = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c;
+    assert.doesNotThrow(() => {
+      runAll(db, { dataDir });
+      db.exec(SCHEMA_SQL);
+    });
+    const ledgerCountAfter = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c;
+    assert.equal(ledgerCountAfter, ledgerCountBefore, 'second run should not add ledger rows');
+
+    db.close();
+  });
+
+  test('stuck v2.2.0 DB: only the ledger table exists — same assertions as a fresh DB', () => {
+    const db = new Database(':memory:');
+    const dataDir = makeTmpDir();
+    db.exec(LEDGER_DDL);
+
+    runAll(db, { dataDir });
+    assert.doesNotThrow(() => db.exec(SCHEMA_SQL));
+
+    const expectedIds = listMigrations().map(m => m.id).sort();
+    const ledgerIds = db.prepare('SELECT id FROM schema_migrations').all().map(r => r.id).sort();
+    assert.deepEqual(ledgerIds, expectedIds);
+
+    assert.deepEqual(tableNames(db).sort(), [...EXPECTED_TABLES].sort());
+
+    assert.equal(
+      fs.existsSync(path.join(dataDir, 'global-site-blocklists')),
+      false,
+      'no cache dir should be created for a stuck v2.2.0 DB'
+    );
+
+    const ledgerCountBefore = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c;
+    assert.doesNotThrow(() => {
+      runAll(db, { dataDir });
+      db.exec(SCHEMA_SQL);
+    });
+    const ledgerCountAfter = db.prepare('SELECT COUNT(*) AS c FROM schema_migrations').get().c;
+    assert.equal(ledgerCountAfter, ledgerCountBefore, 'second run should not add ledger rows');
+
+    db.close();
+  });
+
+  test('vintage upgrade end to end: renames apply, then schema.sql applies cleanly', () => {
+    const db = new Database(':memory:');
+    seedVintage(db);
+    const dataDir = makeTmpDir();
+
+    runAll(db, { dataDir });
+    assert.doesNotThrow(() => db.exec(SCHEMA_SQL));
+
+    // All four renames from the migration's docstring happened.
+    assert.equal(
+      db.prepare("SELECT value FROM config WHERE key = 'global_site_blocklist_enabled'").get().value,
+      'true'
+    );
+    assert.equal(
+      db.prepare("SELECT 1 FROM config WHERE key = 'baseline_blocklist_enabled'").get(),
+      undefined
+    );
+    assert.ok(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='global_site_blocklist_meta'").get(),
+      'meta table should be renamed'
+    );
+    assert.equal(
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='baseline_blocklist_meta'").get(),
+      undefined
+    );
+    const rulesSql = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='global_site_rules'"
+    ).get().sql;
+    assert.ok(rulesSql.includes("'global_site_blocklist'"));
+    assert.ok(!rulesSql.includes("'baseline'"));
+    assert.equal(
+      db.prepare("SELECT source FROM global_site_rules WHERE domain = 'evil.example'").get().source,
+      'global_site_blocklist'
+    );
+
+    db.close();
+  });
+});

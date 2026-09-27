@@ -18,7 +18,9 @@ Each migration file is a plain CommonJS module alongside the runner.
 
 `runAll(db, { dataDir })` is invoked from `src/db/connection.js:init()` **before** `_db.exec(schemaSql)`.
 
-Migrations run first so they can manipulate tables created by an older `schema.sql` shape. For example, a migration may rename a table whose new name appears in the current `schema.sql`. Running the migration first means `schema.sql`'s `CREATE TABLE IF NOT EXISTS` finds the post-migration shape and is a no-op for objects that already exist. On a brand-new install, every migration self-detects "no work to do" and `schema.sql` creates the modern shape directly.
+Migrations run first so they can manipulate tables created by an older `schema.sql` shape. For example, a migration may rename a table whose new name appears in the current `schema.sql`. Running the migration first means `schema.sql`'s `CREATE TABLE IF NOT EXISTS` finds the post-migration shape and is a no-op for objects that already exist.
+
+The actual rule for a brand-new install is stricter than "self-detects no work to do": migrations run against a database that contains, at most, the `schema_migrations` ledger table — none of the application tables exist yet. Every migration step MUST explicitly check that its target table/column exists before touching it; do not assume any prior migration or `schema.sql` has already run. #96 is the cautionary example: a migration step read a table that only `schema.sql` creates, so it crashed on every fresh install until it was guarded.
 
 ## The Runner
 
@@ -89,14 +91,37 @@ module.exports = {
 
 ## Failure Semantics
 
-If `up()` throws, the `db.transaction(...)` wrapper rolls back: no schema change is persisted and no ledger row is inserted. The daemon does not continue booting with an unmigrated database — the error propagates out of `connection.js:init()` and the process exits loudly. To recover, fix the migration or restore the database and restart.
+If `up()` throws, the `db.transaction(...)` wrapper rolls back: no schema change is persisted and no ledger row is inserted. The error then propagates through the full boot chain:
+
+1. `connection.js:init()` closes the SQLite handle, leaves its singleton unset (so a later `init()` call can retry cleanly), and rethrows.
+2. `index.js`'s pre-boot network-mode lookup calls `init()` first; if it fails there, that lookup catches the error, logs `[boot] network-mode DB lookup failed, using CLI/env default:`, and falls back to the CLI/env default — it does **not** stop the boot.
+3. `src/server.js`'s `createServer()` calls `init()` again (this is the call that actually matters). It logs `[server] SQLite init failed:` and rethrows.
+4. That rethrow escapes `createServer()`, which `index.js` calls synchronously at the top level, so it becomes an uncaught exception. `index.js`'s `uncaughtException` handler logs a `FATAL uncaughtException:` line and calls `process.exit(1)`.
+
+Net effect: on a broken database the daemon does not run degraded — it exits 1, and the error is logged twice (once from the network-mode lookup, once from `createServer()`). That double log is intended, not a bug.
+
+This matters for how the daemon gets restarted, since none of these supervisors distinguish "crashed on a broken DB" from any other crash:
+
+- **launchd** (macOS): `KeepAlive` + `ThrottleInterval 10` restarts the daemon every ~10s.
+- **systemd** (Linux): `Restart=on-failure` + `RestartSec=10` restarts every ~10s.
+- **Electron**: polls `/health` for up to 30s after spawning the daemon; if it never comes up, Electron shows its "server didn't start" page.
+- **Windows Run key** (autostart): does not retry — if the daemon exits, it stays down until the user logs in again or launches it manually.
+
+Also note: the daemon's log file is truncated at the start of every run (`SizeManagedWriter` in `src/service/logger.js` calls `fs.writeFileSync(logPath, '', 'utf8')` on construction). Combined with a restart loop, only the latest crash's log survives — earlier crash details are gone by the time you go look. To recover, fix the migration or restore the database, then restart.
 
 ## Adding a Migration
 
 1. Read the latest file in `schema-migrations/` and pick the next 3-digit prefix.
 2. Create `NNN-your-description.js` exporting `{ id, description, up(db, opts) }`.
-3. Write `up()` to be idempotent in spirit (see [Dual-Layer Idempotency](#dual-layer-idempotency)): guard each step against the already-applied state.
-4. Test via `packages/server-for-chrome-extension/test/db-migration.test.js`: create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape.
+3. Write `up()` to be idempotent in spirit (see [Dual-Layer Idempotency](#dual-layer-idempotency)): guard each step against the already-applied state. Just as important: guard each step against the table/column it touches **not existing yet**, since on a fresh install the migration runs against a DB containing only the `schema_migrations` ledger — none of the application tables exist until `schema.sql` runs afterward. Do not assume `schema.sql` or any earlier migration has already created what you need.
+4. Test via `packages/server-for-chrome-extension/test/db-migration.test.js`: create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape. Also keep the fresh-DB tests in `test/db-migration.test.js` and `test/db-connection.test.js` green — `db-connection.test.js` runs every real migration against a brand-new database via `init()`, so it is what catches future regressions like #96 (a migration step that only works when a table already exists).
+
+### Testing a new migration
+
+Before landing a migration, run both of these and confirm they pass:
+
+- `packages/server-for-chrome-extension/test/db-migration.test.js` — targeted unit coverage for the migration's own pre/post shape.
+- `packages/server-for-chrome-extension/test/db-connection.test.js` — exercises `connection.js:init()` end-to-end, including running every real migration (yours included) against a genuinely fresh database. This is the test that would have caught #96.
 
 ## Inspection Tips
 

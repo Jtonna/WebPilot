@@ -66,8 +66,12 @@ try {
     NETWORK = row.value === 'true' || row.value === '1';
   }
 } catch (e) {
-  // DB init failure — keep the CLI/env default so the daemon still boots in a
-  // useful mode. This branch should not fire in normal use.
+  // DB init failure — this fallback only protects the network-mode read: it
+  // falls back to the CLI/env default so this lookup doesn't crash before
+  // createServer() gets a chance to run. If init() failed here, createServer()
+  // below will call init() again and rethrow, and the daemon exits 1 via the
+  // uncaughtException handler above. The error is therefore logged twice on a
+  // broken DB — that is intended.
   console.error('[boot] network-mode DB lookup failed, using CLI/env default:', e && e.message);
 }
 
