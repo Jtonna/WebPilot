@@ -9,7 +9,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'ConfirmModal variant that requires typing a confirmation phrase before Confirm enables. Backdrop / Esc cancels; Enter does not auto-confirm.',
+          'ConfirmModal variant that requires typing a random 4-character confirmation code before Confirm enables. The code is re-rolled every time the modal opens, so it will look different on each "Re-open" click below. Backdrop / Esc cancels; Enter only confirms once the typed value matches.',
       },
     },
   },
@@ -17,7 +17,7 @@ const meta = {
 
 export default meta;
 
-function TypedConfirmDemo({ confirmDanger = true, title, body, phrase, confirmLabel }) {
+function TypedConfirmDemo({ confirmDanger = true, title, body, confirmLabel }) {
   const [open, setOpen] = useState(true);
   return (
     <div>
@@ -26,13 +26,12 @@ function TypedConfirmDemo({ confirmDanger = true, title, body, phrase, confirmLa
         className="wp-btn wp-btn-primary"
         onClick={() => setOpen(true)}
       >
-        Re-open
+        Re-open (rolls a new code)
       </button>
       <TypedConfirmModal
         open={open}
         title={title}
         body={body}
-        phrase={phrase}
         confirmLabel={confirmLabel}
         confirmDanger={confirmDanger}
         onConfirm={() => setOpen(false)}
