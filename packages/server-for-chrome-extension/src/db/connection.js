@@ -106,50 +106,59 @@ function init() {
   // better-sqlite3 falls back to its normal node_modules resolution.
   const nativeBinding = getBundledBindingPath();
   const dbOptions = nativeBinding ? { nativeBinding } : undefined;
-  _db = dbOptions ? new Database(dbPath, dbOptions) : new Database(dbPath);
+  const db = dbOptions ? new Database(dbPath, dbOptions) : new Database(dbPath);
 
-  // Recommended PRAGMAs for our workload: a single writer process, many
-  // small synchronous reads, durability-over-perf is not required (the
-  // server itself is the only writer, crashes are rare, WAL gives us
-  // crash-safety in the common case).
+  // Everything below opens/prepares the SAME handle. On any failure we close
+  // that handle and rethrow WITHOUT ever assigning it to the module-level
+  // singleton — a half-initialized handle must never be handed out by
+  // getDb(), and callers must be able to retry init() cleanly afterward.
   try {
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
-    _db.pragma('synchronous = NORMAL');
-  } catch (e) {
-    console.error('[db] pragma setup failed:', e && e.message);
-    throw e;
-  }
+    // Recommended PRAGMAs for our workload: a single writer process, many
+    // small synchronous reads, durability-over-perf is not required (the
+    // server itself is the only writer, crashes are rare, WAL gives us
+    // crash-safety in the common case).
+    try {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+      db.pragma('synchronous = NORMAL');
+    } catch (e) {
+      console.error('[db] pragma setup failed:', e && e.message);
+      throw e;
+    }
 
-  // Apply schema. Every CREATE uses IF NOT EXISTS so this is a no-op on
-  // subsequent boots. If we ever need a non-idempotent migration, add it
-  // to ./schema-migrations — NOT here.
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  let schemaSql;
-  try {
-    schemaSql = fs.readFileSync(schemaPath, 'utf8');
-  } catch (e) {
-    console.error(`[db] failed to read schema.sql at ${schemaPath}:`, e && e.message);
-    throw e;
-  }
+    // Apply schema. Every CREATE uses IF NOT EXISTS so this is a no-op on
+    // subsequent boots. If we ever need a non-idempotent migration, add it
+    // to ./schema-migrations — NOT here.
+    const schemaPath = path.join(__dirname, 'schema.sql');
+    let schemaSql;
+    try {
+      schemaSql = fs.readFileSync(schemaPath, 'utf8');
+    } catch (e) {
+      console.error(`[db] failed to read schema.sql at ${schemaPath}:`, e && e.message);
+      throw e;
+    }
 
-  // Run idempotent rename migrations BEFORE applying schema.sql. The
-  // baseline → global_site_blocklist rename predates schema.sql being
-  // updated to the new shape; running the migration first means existing
-  // installs are rewritten and the subsequent IF-NOT-EXISTS schema apply
-  // is a no-op for the renamed objects. See ./schema-migrations.
-  try {
-    const migrations = require('./schema-migrations');
-    migrations.runAll(_db, { dataDir });
-  } catch (e) {
-    console.error('[db] schema migration failed:', e && e.message);
-    throw e;
-  }
+    // Run idempotent rename migrations BEFORE applying schema.sql. The
+    // baseline → global_site_blocklist rename predates schema.sql being
+    // updated to the new shape; running the migration first means existing
+    // installs are rewritten and the subsequent IF-NOT-EXISTS schema apply
+    // is a no-op for the renamed objects. See ./schema-migrations.
+    try {
+      const migrations = require('./schema-migrations');
+      migrations.runAll(db, { dataDir });
+    } catch (e) {
+      console.error('[db] schema migration failed:', e && e.message);
+      throw e;
+    }
 
-  try {
-    _db.exec(schemaSql);
+    try {
+      db.exec(schemaSql);
+    } catch (e) {
+      console.error('[db] schema exec failed:', e && e.message);
+      throw e;
+    }
   } catch (e) {
-    console.error('[db] schema exec failed:', e && e.message);
+    try { db.close(); } catch (_closeErr) { /* non-fatal */ }
     throw e;
   }
 
@@ -165,6 +174,9 @@ function init() {
     } catch (_e) { /* non-fatal */ }
   }
 
+  // Only now — after every step above has succeeded — publish the handle as
+  // the module singleton.
+  _db = db;
   _initialized = true;
   console.log(`[db] init complete — ${existed ? 'reused existing' : 'created new'} DB at ${dbPath}`);
   return _db;
