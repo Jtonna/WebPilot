@@ -2209,6 +2209,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         profileId,
         agent: null,
         serverUrl,
+        globalTierEnabled: sitePolicyPopup.isGlobalTierEnabled(),
       };
       if (currentTab) body.currentTab = currentTab;
       return res.json(body);
@@ -2239,7 +2240,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         return res.status(400).json({ error: 'invalid domain' });
       }
       try {
-        sitePolicyPopup.setGlobalRule(normalized, action, 'user');
+        sitePolicyPopup.setGlobalRule(normalized, action);
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
@@ -2257,7 +2258,13 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
       try {
         broadcastUiEvent({ type: 'sites_changed', reason: 'popup_toggle' });
       } catch (_e) { /* non-fatal */ }
-      return res.json({ ok: true, domain: normalized, decision: action, newState });
+      return res.json({
+        ok: true,
+        domain: normalized,
+        decision: action,
+        newState,
+        globalTierEnabled: sitePolicyPopup.isGlobalTierEnabled(),
+      });
     });
   }
   // --- end Extension popup state route ---
