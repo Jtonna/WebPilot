@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 96,
-    "body": "Plan approved (human gate 2026-09-27). Sub-tasks:\n1. Guard step 1 of migration 001 with a config-table existence check; fix docstring; add fresh-DB, stuck-v2.2.0-DB and vintage-upgrade end-to-end tests in db-migration.test.js (light)\n2. connection.init(): assign singleton only on success, close handle on failure; new db-connection.test.js exercising real init() against a tmp WEBPILOT_DATA_DIR incl. recovery from stuck v2.2.0 file and handle-release check (standard)\n3. server.js: rethrow on SQLite init failure (resolve TODO) so the daemon exits 1 via the uncaughtException handler; index.js keeps its network-mode fallback with an updated comment (light) — human decision: exit 1 chosen over 503\n4. Fix stale docstrings/docs: connection.js header, schema-migrations/index.js header, migration 001 header, docs/SCHEMA_MIGRATIONS.md boot ordering + failure semantics + adding-a-migration steps (light)"
-  }
-]
+[]
