@@ -1230,12 +1230,12 @@ function mountWebUiRoutes(app, deps) {
     } catch (_e) { /* ignore */ }
   }
 
-  // GET /api/ui/sites
+  // GET /api/ui/site-policy/global-rules
   // Returns the global-tier rule list — merged from the per-tier
   // `global_user_site_rules` and `global_site_blocklist_rules` tables via
   // sitePolicy.listGlobalRules() — plus a small summary of the signed
   // global site blocklist.
-  app.get('/api/ui/sites', auth, (req, res) => {
+  app.get('/api/ui/site-policy/global-rules', auth, (req, res) => {
     try {
       const globalRules = sitePolicy.listGlobalRules();
       let globalSiteBlocklist;
@@ -1246,15 +1246,15 @@ function mountWebUiRoutes(app, deps) {
       }
       res.json({ globalRules, globalSiteBlocklist });
     } catch (e) {
-      console.error('[ui-api] GET /sites failed:', e.message);
+      console.error('[ui-api] GET /site-policy/global-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // POST /api/ui/sites
+  // POST /api/ui/site-policy/global-rules
   // Body: { domain, decision: 'allow'|'block' }. Adds (or upserts) a
   // source='user' global rule via the shared global-user-rules write path.
-  app.post('/api/ui/sites', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/site-policy/global-rules', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const body = req.body || {};
       const r = upsertGlobalUserRule({ domain: body.domain, decision: body.decision });
@@ -1263,15 +1263,15 @@ function mountWebUiRoutes(app, deps) {
       _broadcastSitesChanged('global_rule_upsert');
       res.status(201).json(r.rule);
     } catch (e) {
-      console.error('[ui-api] POST /sites failed:', e.message);
+      console.error('[ui-api] POST /site-policy/global-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // DELETE /api/ui/sites/:domain
+  // DELETE /api/ui/site-policy/global-rules/:domain
   // Only removes rows in the global user tier (`global_user_site_rules`);
   // signed-blocklist entries are refused with a 400 (see global-user-rules.js).
-  app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
+  app.delete('/api/ui/site-policy/global-rules/:domain', auth, mutatingAuth, (req, res) => {
     try {
       const r = clearGlobalUserRule(req.params.domain);
       if (!r.ok) return res.status(r.status).json(r.body);
@@ -1279,7 +1279,7 @@ function mountWebUiRoutes(app, deps) {
       _broadcastSitesChanged('global_rule_delete');
       return res.json({ ok: true, domain: r.domain });
     } catch (e) {
-      console.error('[ui-api] DELETE /sites/:domain failed:', e.message);
+      console.error('[ui-api] DELETE /site-policy/global-rules/:domain failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1393,14 +1393,14 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/sites/global-tier/toggle — writes config.global_tier_enabled
+  // POST /api/ui/site-policy/global-tier/toggle — writes config.global_tier_enabled
   // via sitePolicy.setGlobalTierEnabled. Disables the WHOLE global tier when
   // false: both the global user rules AND the signed global site blocklist
   // stop applying; per-agent rules are unaffected. The auto-updater
   // keeps writing the signed tier regardless of the toggle — it only gates
   // whether isAllowed consults those rows, not whether they're fetched.
   // Broadcasts a sites_changed WS event so connected Sites pages re-render.
-  app.post('/api/ui/sites/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/site-policy/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = sitePolicy.setGlobalTierEnabled(Boolean(req.body && req.body.enabled));
       console.log(`[ui-api:sites] global tier toggle enabled=${enabled}`);
@@ -1413,12 +1413,12 @@ function mountWebUiRoutes(app, deps) {
       }
       res.json({ enabled, globalSiteBlocklist: status });
     } catch (e) {
-      console.error('[ui-api] POST /sites/global-tier/toggle failed:', e.message);
+      console.error('[ui-api] POST /site-policy/global-tier/toggle failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Site policy event log: GET /api/ui/sites/events plus the per-event
+  // Site policy event log: GET /api/ui/site-policy/events plus the per-event
   // allow / revoke actions. See site-policy-events-routes.js.
   mountSiteEventRoutes(app, {
     auth,

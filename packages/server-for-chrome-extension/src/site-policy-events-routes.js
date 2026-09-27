@@ -3,7 +3,7 @@
 /**
  * Web UI routes for the site policy event log.
  *
- *   GET  /api/ui/sites/events                          (auth)
+ *   GET  /api/ui/site-policy/events                          (auth)
  *        Query: agentId (api_key_hash), decision ('allow'|'block'),
  *        limit, cursor. Returns site-policy-events.list() as-is.
  *   POST /api/ui/agents/:agentId/site-events/allow     (auth, mutatingAuth)
@@ -36,8 +36,8 @@ function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agent
     } catch (_e) { /* ignore */ }
   }
 
-  // GET /api/ui/sites/events
-  app.get('/api/ui/sites/events', auth, (req, res) => {
+  // GET /api/ui/site-policy/events
+  app.get('/api/ui/site-policy/events', auth, (req, res) => {
     try {
       const q = req.query || {};
       let agentId = null;
@@ -71,7 +71,7 @@ function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agent
       }
       res.json(result);
     } catch (e) {
-      console.error('[ui-api] GET /sites/events failed:', e.message);
+      console.error('[ui-api] GET /site-policy/events failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
