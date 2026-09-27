@@ -579,12 +579,12 @@ function mountWebUiRoutes(app, deps) {
         // notifications.
         notifications: notificationsSettings.getSettings(),
         // Global site blocklist summary read by the webapp Sites page.
-        // Shape: { enabled, version, lastFetchedAt, domainCount }.
+        // Shape: { enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }.
         globalSiteBlocklist: (() => {
           try { return globalSiteBlocklistUpdater.getStatus(); }
           catch (e) {
             console.log(`[ui-api:status] globalSiteBlocklist getStatus failed: ${e.message}`);
-            return { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
+            return { enabled: true, version: null, lastFetchedAt: null, domainCount: 0, lastCheckedAt: null, lastCheckError: null };
           }
         })(),
       });
@@ -1242,7 +1242,7 @@ function mountWebUiRoutes(app, deps) {
       try {
         globalSiteBlocklist = globalSiteBlocklistUpdater.getStatus();
       } catch (e) {
-        globalSiteBlocklist = { enabled: true, version: null, lastFetchedAt: null, domainCount: 0 };
+        globalSiteBlocklist = { enabled: true, version: null, lastFetchedAt: null, domainCount: 0, lastCheckedAt: null, lastCheckError: null };
       }
       res.json({ globalRules, globalSiteBlocklist });
     } catch (e) {
@@ -1409,7 +1409,7 @@ function mountWebUiRoutes(app, deps) {
       try {
         status = globalSiteBlocklistUpdater.getStatus();
       } catch (_e) {
-        status = { enabled, version: null, lastFetchedAt: null, domainCount: 0 };
+        status = { enabled, version: null, lastFetchedAt: null, domainCount: 0, lastCheckedAt: null, lastCheckError: null };
       }
       res.json({ enabled, globalSiteBlocklist: status });
     } catch (e) {

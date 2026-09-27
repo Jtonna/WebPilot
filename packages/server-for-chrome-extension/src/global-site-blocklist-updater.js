@@ -22,7 +22,8 @@
  *     offline boot can still trust what it reads from disk.
  *   - If the remote 404s on the signed bundle entirely (release predates
  *     the signing infrastructure), we fail-skip: no DB writes, no
- *     blocklist changes, try again next tick.
+ *     blocklist changes, try again next tick. This applies whether or not
+ *     existing rows are already present (#101).
  *
  * Resilience tier:
  *   - Try remote fetch first.
@@ -33,10 +34,11 @@
  *   - On remote failure (network down, GitHub 404, etc.), READ FROM THE
  *     LOCAL CACHE — and re-verify the cached signature before using it.
  *     A cache that doesn't verify is treated as if it weren't there.
- *   - If neither remote nor local cache is available, write an empty
- *     placeholder manifest so subsequent boots see a predictable state
- *     (instead of repeatedly thrashing the network on every restart). The
- *     global_site_blocklist_meta row is updated to reflect the empty state.
+ *   - If neither a verified remote nor a verified cache is available,
+ *     nothing is written (no DB, no cache). Existing rows and the meta
+ *     version are kept, and the next tick retries. A fresh install that
+ *     has never fetched successfully has no rows and `getStatus().version === null` until the
+ *     first success.
  *
  * Hosts.txt parse rules:
  *   - Lines beginning with `#` (after trim) are comments — skip.
@@ -208,27 +210,6 @@ function _readLocalCache() {
 }
 
 /**
- * Write a deliberate empty placeholder when both remote and local cache are
- * unavailable. Keeps boot behavior predictable across restarts (we know the
- * cache exists; subsequent boots don't retry-thrash if the network's down).
- */
-function _writeEmptyPlaceholder() {
-  try {
-    const dir = _ensureCacheDir();
-    const empty = {
-      version: '0',
-      lists: [],
-      _note:
-        'Empty placeholder written because both remote fetch and local cache were unavailable. ' +
-        'Will be overwritten on the next successful remote fetch.',
-    };
-    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(empty, null, 2), 'utf8');
-  } catch (err) {
-    console.warn(`[global-site-blocklist-updater] empty-placeholder write failed: ${err.message}`);
-  }
-}
-
-/**
  * Parse a hosts.txt-style file into an array of normalized domains.
  * Duplicates are de-duped; invalid lines are skipped silently.
  */
@@ -318,12 +299,17 @@ function _applySignedTier(domains, version, sourceLabel) {
  *      updater keeps it fresh.
  *
  * Returns one of:
- *   { updated: true,  fromVersion, toVersion, domainCount }
- *   { updated: false, currentVersion }            (already up-to-date)
- *   { updated: false, skipped: 'no-signed-manifest' }  (pre-signing release)
- *   { updated: false, error: <message> }          (network / parse / sig failure)
+ *   { updated: true,  fromVersion, toVersion, domainCount, source, fromCache, remoteError? }
+ *   { updated: false, currentVersion, source, remoteError? }   (already up-to-date)
+ *   { updated: false, skipped: 'no-signed-manifest', reason }  (pre-signing release, or no
+ *                                                                verified remote/cache and no signed manifest)
+ *   { updated: false, skipped: 'unavailable', reason }         (no verified remote or cache)
+ *   { updated: false, error: <message> }          (hash mismatch / parse error / missing
+ *                                                    version / DB write failure; DB unchanged)
  */
-async function checkForUpdates() {
+let _lastCheck = null;
+
+async function _runCheck() {
   const baseUrl = _options.baseUrl;
   console.log(`[global-site-blocklist-updater] checking ${baseUrl}/manifest.json`);
 
@@ -332,7 +318,6 @@ async function checkForUpdates() {
   let listBodiesByFile = {};
   let sourceLabel = baseUrl;
   let fromCache = false;
-  let fromEmpty = false;
 
   // --- Step 1: try remote fetch (signed) ---
   let signedBundle = null;
@@ -379,6 +364,7 @@ async function checkForUpdates() {
           if (text === null) throw new Error('list file missing on remote');
           body = text;
         } catch (err) {
+          remoteFetchError = `list "${list.file}": ${err.message}`;
           console.warn(
             `[global-site-blocklist-updater] remote fetch failed for list "${list.file}" (${err.message}) — falling back to local cache`
           );
@@ -431,26 +417,16 @@ async function checkForUpdates() {
     }
   }
 
-  // --- Step 3: empty placeholder ---
+  // --- Step 3: nothing verified to apply -> keep what we have (#101) ---
   if (!manifest) {
-    // If the only reason we got here is "remote has no signed manifest"
-    // AND we already have a global_site_blocklist_meta row, the user
-    // already has a verified-at-some-point set of global-blocklist rules in
-    // their DB. Fail-skip without rewriting an empty placeholder so we
-    // don't clobber the existing DB rows on the next tick.
-    if (signedBundle === null && remoteFetchError === null && _readMetaVersion()) {
-      console.warn('[global-site-blocklist-updater] no signed manifest available and existing DB rows present — fail-skipping');
-      return { updated: false, skipped: 'no-signed-manifest' };
-    }
-    console.warn(
-      '[global-site-blocklist-updater] neither remote nor local cache available — writing empty placeholder'
-    );
-    _writeEmptyPlaceholder();
-    fromEmpty = true;
-    sourceLabel = 'empty';
-    manifest = { version: '0', lists: [] };
-    manifestText = null;
-    listBodiesByFile = {};
+    const noSigned = signedBundle === null && remoteFetchError === null;
+    const skipped = noSigned ? 'no-signed-manifest' : 'unavailable';
+    const reason = noSigned ? 'remote has no signed-manifest.json' : (remoteFetchError || 'remote fetch failed');
+    const existing = _readMetaVersion();
+    console.warn(existing
+      ? `[global-site-blocklist-updater] no verified remote or cache available (${reason}) — keeping existing rows (version=${existing})`
+      : `[global-site-blocklist-updater] no verified remote or cache available (${reason}) — global blocklist has no rows until the first successful fetch`);
+    return { updated: false, skipped, reason };
   }
 
   const remoteVersion = manifest && manifest.version ? String(manifest.version) : null;
@@ -465,13 +441,18 @@ async function checkForUpdates() {
     console.log(
       `[global-site-blocklist-updater] already up to date (version=${localVersion}, source=${sourceLabel})`
     );
-    return { updated: false, currentVersion: localVersion, source: sourceLabel };
+    return {
+      updated: false,
+      currentVersion: localVersion,
+      source: sourceLabel,
+      ...(fromCache ? { remoteError: remoteFetchError || null } : {}),
+    };
   }
 
   // Parse all list files (from whichever source they came from) into the
   // unified domain set.
   const lists = Array.isArray(manifest.lists) ? manifest.lists : [];
-  if (lists.length === 0 && !fromEmpty) {
+  if (lists.length === 0) {
     console.warn('[global-site-blocklist-updater] manifest has no "lists" entries');
   }
   const allDomains = new Set();
@@ -518,8 +499,30 @@ async function checkForUpdates() {
     domainCount: domainList.length,
     source: sourceLabel,
     fromCache,
-    fromEmpty,
+    ...(fromCache ? { remoteError: remoteFetchError || null } : {}),
   };
+}
+
+/**
+ * Public entry point wrapping `_runCheck`. Records the outcome of every tick
+ * (whether updated, skipped, up to date, or errored) in the module-level
+ * `_lastCheck`, which `getStatus` surfaces as `lastCheckedAt`/`lastCheckError`
+ * so a masked remote failure behind a successful cache-fallback update is
+ * still visible to the dashboard (#101).
+ */
+async function checkForUpdates() {
+  try {
+    const r = await _runCheck();
+    _lastCheck = {
+      at: new Date().toISOString(),
+      outcome: r.updated ? 'updated' : r.skipped ? 'skipped' : r.error ? 'error' : 'up-to-date',
+      reason: r.skipped ? r.reason : (r.error || r.remoteError || null),
+    };
+    return r;
+  } catch (err) {
+    _lastCheck = { at: new Date().toISOString(), outcome: 'error', reason: err.message };
+    throw err;
+  }
 }
 
 /**
@@ -528,6 +531,9 @@ async function checkForUpdates() {
  * `enabled` reflects the `global_tier_enabled` toggle (owned by
  * site-policy.js) — it describes whether the tier is currently consulted at
  * lookup time, not whether this updater is keeping it fresh (it always is).
+ * `lastCheckedAt`/`lastCheckError` reflect the most recent `checkForUpdates`
+ * tick (see `_lastCheck`), independent of whether the DB rows themselves
+ * changed on that tick.
  */
 function getStatus() {
   let enabled = true;
@@ -551,7 +557,14 @@ function getStatus() {
   } catch (e) {
     console.log(`[global-site-blocklist-updater] getStatus failed: ${e.message}`);
   }
-  return { enabled, version, lastFetchedAt, domainCount };
+  return {
+    enabled,
+    version,
+    lastFetchedAt,
+    domainCount,
+    lastCheckedAt: _lastCheck ? _lastCheck.at : null,
+    lastCheckError: _lastCheck && _lastCheck.reason ? _lastCheck.reason : null,
+  };
 }
 
 module.exports = {
