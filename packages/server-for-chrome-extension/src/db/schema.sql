@@ -75,6 +75,27 @@ CREATE TABLE IF NOT EXISTS global_site_blocklist_meta (
   domain_count INTEGER NOT NULL
 );
 
+-- ─── Site policy event log ─────────────────────────────────────────────────
+-- One row per (agent, domain) the agent's browser_* calls were checked
+-- against. Deduplicated: repeat checks bump hit_count/last_seen_at and flip
+-- decision/source/matched_domain in place. No history rows. Default allows
+-- are logged too. Pruned by site-policy-events.cleanup() (age + row cap).
+CREATE TABLE IF NOT EXISTS site_policy_events (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,                       -- verdict.domain: normalized host, or raw IP/single-label host
+  decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
+  source TEXT NOT NULL CHECK(source IN ('agent_override','global_user','global_site_blocklist','default')),
+  matched_domain TEXT,                        -- stored domain of matching rule; '*' for agent wildcard; NULL for default
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  decision_changed_at TEXT NOT NULL,          -- = first_seen_at until the decision first flips
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(agent_id, domain)
+);
+CREATE INDEX IF NOT EXISTS idx_site_policy_events_last_seen ON site_policy_events(last_seen_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_site_policy_events_agent_last_seen ON site_policy_events(agent_id, last_seen_at DESC);
+
 -- ─── Formatter incidents (audit trail for action items) ───────────────────
 
 CREATE TABLE IF NOT EXISTS formatter_incidents (
