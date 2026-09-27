@@ -361,4 +361,43 @@ describe('additional coverage (#102)', () => {
     assert.equal(result.allowed, false);
     assert.equal(result.source, 'agent_override');
   });
+
+  test("wildcard host input does not match the agent's '*' row", () => {
+    seedAgent(testDb, { id: 1 });
+    seedAgentRule(testDb, { agentId: 1, domain: '*', decision: 'block' });
+    const { isAllowed } = loadSitePolicy();
+    for (const input of ['*.foo.com', 'https://*.foo.com/x']) {
+      const r = isAllowed(1, input);
+      assert.equal(r.allowed, true, input);
+      assert.equal(r.source, 'default', input);
+      assert.equal(r.domain, null, input);
+      assert.equal(r.matchedDomain, null, input);
+    }
+  });
+
+  test('normalizeRuleDomain normalizes non-wildcard input in both modes', () => {
+    const { normalizeRuleDomain } = loadSitePolicy();
+    for (const opts of [undefined, { allowWildcard: true }]) {
+      assert.equal(normalizeRuleDomain('https://WWW.Foo.com/x', opts), 'foo.com');
+      assert.equal(normalizeRuleDomain('*.foo.com', opts), null);
+      assert.equal(normalizeRuleDomain('localhost', opts), null);
+    }
+    assert.equal(normalizeRuleDomain('  *  ', { allowWildcard: true }), '*');
+  });
+
+  test('getGlobalUserRule / isSignedBlocklisted are exact-match per tier', () => {
+    seedSigned(testDb, 'chase.com');
+    seedGlobalUser(testDb, { domain: 'chase.com', decision: 'allow' });
+    const { getGlobalUserRule, isSignedBlocklisted, removeGlobalRule } = loadSitePolicy();
+
+    assert.equal(getGlobalUserRule('chase.com').decision, 'allow');
+    assert.equal(getGlobalUserRule('secure.chase.com'), null);
+    assert.equal(isSignedBlocklisted('https://www.chase.com'), true);
+    assert.equal(isSignedBlocklisted('secure.chase.com'), false);
+
+    assert.equal(removeGlobalRule('chase.com'), true);
+    assert.equal(removeGlobalRule('chase.com'), false);
+    assert.equal(getGlobalUserRule('chase.com'), null);
+    assert.equal(isSignedBlocklisted('chase.com'), true);
+  });
 });
