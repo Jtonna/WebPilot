@@ -1365,7 +1365,7 @@ function mountWebUiRoutes(app, deps) {
         return res.status(404).json({ error: 'agent not found' });
       }
       const body = req.body || {};
-      const normalized = sitePolicy.normalizeDomain(body.domain);
+      const normalized = sitePolicy.normalizeRuleDomain(body.domain, { allowWildcard: true });
       if (!normalized) {
         return res.status(400).json({
           error: 'invalid domain',
@@ -1407,7 +1407,15 @@ function mountWebUiRoutes(app, deps) {
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
-      const normalized = sitePolicy.normalizeDomain(req.params.domain);
+      // The domain path param may arrive URL-encoded (e.g. '*' as '%2A');
+      // decode before normalizing so the wildcard override can be removed.
+      let rawDomainParam = req.params.domain;
+      try {
+        rawDomainParam = decodeURIComponent(rawDomainParam);
+      } catch (_e) {
+        // leave as-is; normalizeRuleDomain will reject anything unusable
+      }
+      const normalized = sitePolicy.normalizeRuleDomain(rawDomainParam, { allowWildcard: true });
       if (!normalized) {
         return res.status(400).json({
           error: 'invalid domain',
