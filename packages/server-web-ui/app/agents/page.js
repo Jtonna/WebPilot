@@ -244,7 +244,7 @@ function AgentsPageInner() {
             >
               Showing agents on profile <strong style={{ color: 'var(--wp-fg)' }}>{filterDisplayName}</strong>
               {' · '}
-              <a href={agentFilter ? `/ui/agents/?agent=${agentFilter}` : '/ui/agents/'} className="wp-link">Clear</a>
+              <a href={agentFilter ? `/ui/agents/?agent=${encodeURIComponent(agentFilter)}` : '/ui/agents/'} className="wp-link">Clear</a>
             </div>
           ) : null}
           {agentFilter ? (
@@ -258,7 +258,7 @@ function AgentsPageInner() {
             >
               Showing agent <strong style={{ color: 'var(--wp-fg)' }}>{agentFilterName || 'not found'}</strong>
               {' · '}
-              <a href={profileFilter ? `/ui/agents/?profile=${profileFilter}` : '/ui/agents/'} className="wp-link">Clear</a>
+              <a href={profileFilter ? `/ui/agents/?profile=${encodeURIComponent(profileFilter)}` : '/ui/agents/'} className="wp-link">Clear</a>
             </div>
           ) : null}
           {filteredAgents.length === 0 ? (
