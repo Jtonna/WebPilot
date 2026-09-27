@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- Site rules are now stored per tier (per-agent, global user, signed global blocklist). User rules no longer overwrite or mask signed blocklist entries; removing a user rule immediately restores signed-list behavior. (#102)
+- The global toggle now disables the whole global tier (signed blocklist AND global user rules). Users who had the toggle off will find their global user rules inactive until they turn it back on. Per-agent rules are unaffected. (#102)
+- Config key renamed `global_site_blocklist_enabled` → `global_tier_enabled`; web UI route renamed `POST /api/ui/sites/global-site-blocklist/toggle` → `POST /api/ui/sites/global-tier/toggle`; WebSocket reason `global_site_blocklist_toggle` → `global_tier_toggle`. (#102)
+- Per-agent `*` wildcard rule: named domains beat `*`. A `*` rule also applies to IP addresses and single-label hosts such as localhost, which cannot currently be exempted with a named per-agent rule. (#102)
+- The signed blocklist is re-fetched once after upgrading (migration 002 marks the stored version as `pre-002:<version>` until the next successful fetch; that string is visible in the status API until then). (#102)
+- The extension popup's site toggle still writes global user rules; while the global tier is off, a popup block has no effect. The popup API now reports `globalTierEnabled`. Popup rework is tracked in #105. (#102)
+
 ### Fixed
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
 - fix(server): guard schema migration 001 against the missing `config` table on a brand-new database. In v2.2.0, fresh installs failed SQLite init and could not pair agents; upgraded installs were not affected. No user action is needed once updated. The daemon now exits with code 1 when SQLite init fails instead of running without a database while `/health` still responded. (#96)
