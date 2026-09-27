@@ -15,9 +15,9 @@ import {
   getSites,
   createSiteRule,
   deleteSiteRule,
-  getAgentSiteOverrides,
-  setAgentSiteOverride,
-  deleteAgentSiteOverride,
+  getAgentSiteRules,
+  setAgentSiteRule,
+  deleteAgentSiteRule,
   toggleGlobalTier,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
@@ -394,7 +394,7 @@ export default function SitesPage() {
     setOverridesLoading(true);
     try {
       const { data, isStale } = await overridesFetcher.current.fetch(
-        () => getAgentSiteOverrides(agentKey)
+        () => getAgentSiteRules(agentKey)
       );
       if (isStale) return;
       setOverrides(Array.isArray(data) ? data : []);
@@ -483,7 +483,7 @@ export default function SitesPage() {
     if (!selectedAgentKey) return;
     setBusy(true);
     try {
-      await setAgentSiteOverride(selectedAgentKey, { domain, decision });
+      await setAgentSiteRule(selectedAgentKey, { domain, decision });
       toast.success(`Added ${decision} override for ${domain}.`);
       setAddOverrideOpen(false);
       await refreshOverrides(selectedAgentKey);
@@ -499,7 +499,7 @@ export default function SitesPage() {
     if (!selectedAgentKey) return;
     setBusy(true);
     try {
-      await deleteAgentSiteOverride(selectedAgentKey, override.domain);
+      await deleteAgentSiteRule(selectedAgentKey, override.domain);
       toast.info(`Removed override for ${override.domain}.`);
       await refreshOverrides(selectedAgentKey);
     } catch (e) {
