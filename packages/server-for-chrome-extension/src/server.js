@@ -1437,22 +1437,18 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/sites/global-site-blocklist/toggle — writes config.global_site_blocklist_enabled.
-  // When false, site-policy.isAllowed ignores rows with source='global_site_blocklist'; per-agent overrides and user rules still apply.
-  // The auto-updater also skips DB writes while the flag is off, leaving existing global-site-blocklist rows in place for inspection.
+  // POST /api/ui/sites/global-tier/toggle — writes config.global_tier_enabled
+  // via sitePolicy.setGlobalTierEnabled. Disables the WHOLE global tier when
+  // false: both the global user rules AND the signed global site blocklist
+  // stop applying; per-agent overrides are unaffected. The auto-updater
+  // keeps writing the signed tier regardless of the toggle — it only gates
+  // whether isAllowed consults those rows, not whether they're fetched.
   // Broadcasts a sites_changed WS event so connected Sites pages re-render.
-  app.post('/api/ui/sites/global-site-blocklist/toggle', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/sites/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const enabled = !!(req.body && req.body.enabled);
-      const db = require('./db/connection').getDb();
-      const nowIso = new Date().toISOString();
-      db.prepare(
-        `INSERT INTO config (key, value, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`
-      ).run('global_site_blocklist_enabled', enabled ? 'true' : 'false', nowIso);
-      console.log(`[ui-api:sites] global site blocklist toggle enabled=${enabled}`);
-      _broadcastSitesChanged('global_site_blocklist_toggle');
+      const enabled = sitePolicy.setGlobalTierEnabled(Boolean(req.body && req.body.enabled));
+      console.log(`[ui-api:sites] global tier toggle enabled=${enabled}`);
+      _broadcastSitesChanged('global_tier_toggle');
       let status;
       try {
         status = globalSiteBlocklistUpdater.getStatus();
@@ -1461,7 +1457,7 @@ function mountWebUiRoutes(app, deps) {
       }
       res.json({ enabled, globalSiteBlocklist: status });
     } catch (e) {
-      console.error('[ui-api] POST /sites/global-site-blocklist/toggle failed:', e.message);
+      console.error('[ui-api] POST /sites/global-tier/toggle failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1940,11 +1936,14 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   );
 
   // Global site blocklist auto-updater. Fetches the curated
-  // financial-institutions list from the WebPilot repo, replaces every
-  // `source='global_site_blocklist'` row in `global_site_rules` if the
-  // manifest version bumped. User-set rules are never touched. Boot fetch is
-  // delayed a few seconds so a slow/unreachable GitHub doesn't drag out
-  // cold-start; daily interval runs the same check.
+  // financial-institutions list from the WebPilot repo and replaces the
+  // contents of the signed `global_site_blocklist_rules` table if the
+  // manifest version bumped. That table is fully separate from
+  // `global_user_site_rules`, so user-set rules are never touched. There's
+  // no toggle-gated write path any more — the updater always writes the
+  // signed tier; the global tier toggle only controls whether isAllowed
+  // consults it. Boot fetch is delayed a few seconds so a slow/unreachable
+  // GitHub doesn't drag out cold-start; daily interval runs the same check.
   globalSiteBlocklistUpdater.init({});
   setTimeout(
     () => globalSiteBlocklistUpdater.checkForUpdates()
