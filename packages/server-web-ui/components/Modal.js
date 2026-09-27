@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // Standard focusable-elements selector. Used by the hand-rolled focus
 // trap: on Tab at the last focusable, wrap to the first; on Shift+Tab at
@@ -26,6 +27,11 @@ const FOCUSABLE_SELECTORS = [
  *   - Esc → onClose; backdrop click → onClose (with the e.target/currentTarget
  *     guard so clicks inside the card don't dismiss).
  *   - aria-labelledby wired via the `titleId` prop.
+ *   - Rendered via a portal into document.body so the backdrop's
+ *     `position: fixed` is always relative to the viewport — never to a
+ *     transformed ancestor (e.g. a page section mid entrance-animation,
+ *     which would otherwise become the containing block and center the
+ *     modal on that section instead of the screen).
  *
  * What it deliberately does NOT do:
  *   - Title / body / actions markup: callers compose these as children so each
@@ -56,8 +62,15 @@ export default function Modal({
   children,
 }) {
   const [closing, setClosing] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const wasOpenRef = useRef(open);
   const modalRef = useRef(null);
+
+  // Portal target isn't available during SSR/static export — defer until
+  // after mount, matching the pattern used elsewhere for browser-only APIs.
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Mirror open → closing animation. Stay mounted until exit anim finishes.
   useEffect(() => {
@@ -126,7 +139,7 @@ export default function Modal({
     try { initialFocusRef.current.focus(); } catch (_) { /* ignore */ }
   }, [open, initialFocusRef]);
 
-  if (!open && !closing) return null;
+  if (!mounted || (!open && !closing)) return null;
 
   const handleBackdrop = (e) => {
     if (e.target === e.currentTarget && typeof onClose === 'function') {
@@ -136,7 +149,7 @@ export default function Modal({
 
   const modalClass = size === 'lg' ? 'wp-modal wp-modal-lg' : 'wp-modal';
 
-  return (
+  return createPortal(
     <div
       className={`wp-modal-backdrop${closing && !open ? ' is-closing' : ''}`}
       role="dialog"
@@ -145,6 +158,7 @@ export default function Modal({
       onClick={handleBackdrop}
     >
       <div ref={modalRef} className={modalClass}>{children}</div>
-    </div>
+    </div>,
+    document.body
   );
 }

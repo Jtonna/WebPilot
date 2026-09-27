@@ -31,7 +31,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 - Stored in `config.global_tier_enabled`. A missing key means on, and a read error also means on. Only the values `'false'` and `'0'` turn it off (`isGlobalTierEnabled`, `site-policy.js:212-224`). Written by `setGlobalTierEnabled` (`site-policy.js:226-236`).
 - Turning it off disables tiers 2 and 3 together (`site-policy.js:273`). Agent rules are unaffected. No rows are deleted.
 - The updater keeps fetching and writing the signed tier while the toggle is off (`global-site-blocklist-updater.js:51-56`, `:479-485`), so the data is current as soon as the tier is re-enabled.
-- Route: `POST /api/ui/sites/global-tier/toggle` (`server.js:1403-1419`) broadcasts `sites_changed` with reason `global_tier_toggle`.
+- Route: `POST /api/ui/site-policy/global-tier/toggle` (`server.js:1403-1419`) broadcasts `site_policy_changed` with reason `global_tier_toggle`.
 - The popup disables its Block/Allow toggle while the tier is off (`packages/chrome-extension-unpacked/popup/popup.js:220`). A rule written to the popup route anyway is stored but has no effect until the tier is back on.
 
 ## Worked examples
@@ -119,7 +119,7 @@ All tables are in the shared SQLite DB, defined in `db/schema.sql`.
 
 | Table / key | Defined at | Contents | Written by |
 |---|---|---|---|
-| `global_user_site_rules` | `schema.sql:48` | `domain` (no `*`), `decision`, timestamps | `global-user-rules.js`, which is the single path shared by the Sites page and the popup |
+| `global_user_site_rules` | `schema.sql:48` | `domain` (no `*`), `decision`, timestamps | `global-user-rules.js`, which is the single path shared by the Site Policy page and the popup |
 | `global_site_blocklist_rules` | `schema.sql:55` | `domain`, `created_at` (block only) | Only the blocklist updater at runtime (migration 002 seeds rows and prefixes the version on upgrade) |
 | `agent_site_rules` | `schema.sql:60` | `agent_id`, `domain` or `*`, `decision`; unique per (agent, domain) | `sitePolicy.setAgentRule` (`site-policy.js:393-407`) |
 | `global_site_blocklist_meta` | `schema.sql:69` | Single row: `version`, `last_fetched_at`, `source_url`, `domain_count` | Only the blocklist updater at runtime (migration 002 seeds rows and prefixes the version on upgrade) |
@@ -153,7 +153,7 @@ Each site-policy check made for a known agent is recorded in `site_policy_events
 
 ## Admin surfaces and live events
 
-- **Sites page** (`/ui/sites/`): the main place to manage global user rules, per-agent rules, the global tier toggle and the event log.
+- **Site Policy page** (`/ui/site-policy/`): the main place to manage global user rules, per-agent rules, the global tier toggle and the event log.
 - **Popup**: a single Block/Allow toggle that writes a global user rule for the current tab's domain. See [CHROME_EXTENSION.md](CHROME_EXTENSION.md#popup-ui).
 - **REST routes**: see [MCP_SERVER.md](MCP_SERVER.md#site-policy-admin-endpoints).
 - `/api/ui/status` includes `globalSiteBlocklist` (`server.js:583-589`), which is the updater's `getStatus()` result.
@@ -162,9 +162,9 @@ Live UI WebSocket events:
 
 | Type | Reasons | Source |
 |---|---|---|
-| `sites_changed` | `global_rule_upsert`, `global_rule_delete`, `global_tier_toggle`, `agent_rule_upsert`, `agent_rule_delete` | `server.js:1227-1231` and callers |
-| `sites_changed` | `site_event_allow`, `site_event_revoke` | `site-policy-events-routes.js:102` |
-| `sites_changed` | `popup_toggle` | `popup-routes.js:163` |
+| `site_policy_changed` | `global_rule_upsert`, `global_rule_delete`, `global_tier_toggle`, `agent_rule_upsert`, `agent_rule_delete` | `server.js:1227-1231` and callers |
+| `site_policy_changed` | `site_event_allow`, `site_event_revoke` | `site-policy-events-routes.js:102` |
+| `site_policy_changed` | `popup_toggle` | `popup-routes.js:163` |
 | `site_policy_events_changed` | `created`, `decision_changed`, `verdict_changed`, `retention` | Bridge at `server.js:1885-1898`. A plain hit bump emits nothing (`site-policy-events.js:128-134`) |
 
 ## Signed global blocklist updater

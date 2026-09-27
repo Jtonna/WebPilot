@@ -69,9 +69,9 @@ const NAV_WORKSPACE = [
     IconSolid: CpuChipSolid,
   },
   {
-    href: '/ui/sites/',
-    label: 'Sites',
-    match: (p) => p.startsWith('/ui/sites'),
+    href: '/ui/site-policy/',
+    label: 'Site Policy',
+    match: (p) => p.startsWith('/ui/site-policy'),
     IconOutline: GlobeAltOutline,
     IconSolid: GlobeAltSolid,
   },

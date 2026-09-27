@@ -2,8 +2,8 @@
 
 /**
  * Single write path for global user site rules (the `global_user_site_rules`
- * table via site-policy.js). Both the Sites page routes
- * (POST/DELETE /api/ui/sites) and the extension popup route call through
+ * table via site-policy.js). Both the Site Policy page routes
+ * (POST/DELETE /api/ui/site-policy/global-rules) and the extension popup route call through
  * here so validation, error strings, and response shapes stay identical no
  * matter which surface triggers the write.
  */
@@ -23,7 +23,7 @@ function upsertGlobalUserRule({ domain: rawDomain, decision } = {}) {
       status: 400,
       body: {
         error: 'invalid domain',
-        reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page",
+        reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Site Policy page",
       },
     };
   }
@@ -102,7 +102,7 @@ function clearGlobalUserRule(rawDomain) {
       body: {
         error: 'cannot delete signed blocklist rule',
         reason:
-          "signed block list entries can't be deleted; turn off the global block list on the Sites page",
+          "signed block list entries can't be deleted; turn off the global block list on the Site Policy page",
         domain: normalized,
         source: 'global_site_blocklist',
       },

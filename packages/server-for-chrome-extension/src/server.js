@@ -578,7 +578,7 @@ function mountWebUiRoutes(app, deps) {
         // Settings page; the daemon also consults this when firing pairing
         // notifications.
         notifications: notificationsSettings.getSettings(),
-        // Global site blocklist summary read by the webapp Sites page.
+        // Global site blocklist summary read by the webapp Site Policy page.
         // Shape: { enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }.
         globalSiteBlocklist: (() => {
           try { return globalSiteBlocklistUpdater.getStatus(); }
@@ -1198,12 +1198,12 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // --- Sites admin routes ---
+  // --- Site Policy admin routes ---
   //
-  // Webapp Sites page CRUD over the site-policy tables. Reads + writes are
+  // Webapp Site Policy page CRUD over the site-policy tables. Reads + writes are
   // localhost-only (auth) and writes go through mutatingAuth for the same
   // defense-in-depth gate the other admin endpoints use. Every successful
-  // write broadcasts a `sites_changed` UI event so any open Sites tab
+  // write broadcasts a `site_policy_changed` UI event so any open Site Policy tab
   // refetches.
   const sitePolicy = require('./site-policy');
 
@@ -1219,23 +1219,23 @@ function mountWebUiRoutes(app, deps) {
         .get(key);
       return row ? row.id : null;
     } catch (e) {
-      console.log(`[ui-api:sites] _agentIdFromKey failed: ${e.message}`);
+      console.log(`[ui-api:site-policy] _agentIdFromKey failed: ${e.message}`);
       return null;
     }
   }
 
   function _broadcastSitesChanged(reason) {
     try {
-      broadcastUiEvent && broadcastUiEvent({ type: 'sites_changed', reason: reason || null });
+      broadcastUiEvent && broadcastUiEvent({ type: 'site_policy_changed', reason: reason || null });
     } catch (_e) { /* ignore */ }
   }
 
-  // GET /api/ui/sites
+  // GET /api/ui/site-policy/global-rules
   // Returns the global-tier rule list — merged from the per-tier
   // `global_user_site_rules` and `global_site_blocklist_rules` tables via
   // sitePolicy.listGlobalRules() — plus a small summary of the signed
   // global site blocklist.
-  app.get('/api/ui/sites', auth, (req, res) => {
+  app.get('/api/ui/site-policy/global-rules', auth, (req, res) => {
     try {
       const globalRules = sitePolicy.listGlobalRules();
       let globalSiteBlocklist;
@@ -1246,40 +1246,40 @@ function mountWebUiRoutes(app, deps) {
       }
       res.json({ globalRules, globalSiteBlocklist });
     } catch (e) {
-      console.error('[ui-api] GET /sites failed:', e.message);
+      console.error('[ui-api] GET /site-policy/global-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // POST /api/ui/sites
+  // POST /api/ui/site-policy/global-rules
   // Body: { domain, decision: 'allow'|'block' }. Adds (or upserts) a
   // source='user' global rule via the shared global-user-rules write path.
-  app.post('/api/ui/sites', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/site-policy/global-rules', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const body = req.body || {};
       const r = upsertGlobalUserRule({ domain: body.domain, decision: body.decision });
       if (!r.ok) return res.status(r.status).json(r.body);
-      console.log(`[ui-api:sites] upsert global rule domain=${r.rule.domain} decision=${r.rule.decision}`);
+      console.log(`[ui-api:site-policy] upsert global rule domain=${r.rule.domain} decision=${r.rule.decision}`);
       _broadcastSitesChanged('global_rule_upsert');
       res.status(201).json(r.rule);
     } catch (e) {
-      console.error('[ui-api] POST /sites failed:', e.message);
+      console.error('[ui-api] POST /site-policy/global-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // DELETE /api/ui/sites/:domain
+  // DELETE /api/ui/site-policy/global-rules/:domain
   // Only removes rows in the global user tier (`global_user_site_rules`);
   // signed-blocklist entries are refused with a 400 (see global-user-rules.js).
-  app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
+  app.delete('/api/ui/site-policy/global-rules/:domain', auth, mutatingAuth, (req, res) => {
     try {
       const r = clearGlobalUserRule(req.params.domain);
       if (!r.ok) return res.status(r.status).json(r.body);
-      console.log(`[ui-api:sites] delete global rule domain=${r.domain}`);
+      console.log(`[ui-api:site-policy] delete global rule domain=${r.domain}`);
       _broadcastSitesChanged('global_rule_delete');
       return res.json({ ok: true, domain: r.domain });
     } catch (e) {
-      console.error('[ui-api] DELETE /sites/:domain failed:', e.message);
+      console.error('[ui-api] DELETE /site-policy/global-rules/:domain failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1342,7 +1342,7 @@ function mountWebUiRoutes(app, deps) {
         )
         .get(agentId, normalized);
       console.log(
-        `[ui-api:sites] upsert agent rule agentId=${agentId} domain=${normalized} decision=${body.decision}`
+        `[ui-api:site-policy] upsert agent rule agentId=${agentId} domain=${normalized} decision=${body.decision}`
       );
       _broadcastSitesChanged('agent_rule_upsert');
       res.status(201).json({
@@ -1383,7 +1383,7 @@ function mountWebUiRoutes(app, deps) {
         return res.status(404).json({ error: 'agent rule not found', domain: normalized });
       }
       console.log(
-        `[ui-api:sites] delete agent rule agentId=${agentId} domain=${normalized}`
+        `[ui-api:site-policy] delete agent rule agentId=${agentId} domain=${normalized}`
       );
       _broadcastSitesChanged('agent_rule_delete');
       res.json({ ok: true, domain: normalized });
@@ -1393,17 +1393,17 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // POST /api/ui/sites/global-tier/toggle — writes config.global_tier_enabled
+  // POST /api/ui/site-policy/global-tier/toggle — writes config.global_tier_enabled
   // via sitePolicy.setGlobalTierEnabled. Disables the WHOLE global tier when
   // false: both the global user rules AND the signed global site blocklist
   // stop applying; per-agent rules are unaffected. The auto-updater
   // keeps writing the signed tier regardless of the toggle — it only gates
   // whether isAllowed consults those rows, not whether they're fetched.
-  // Broadcasts a sites_changed WS event so connected Sites pages re-render.
-  app.post('/api/ui/sites/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
+  // Broadcasts a site_policy_changed WS event so connected Site Policy pages re-render.
+  app.post('/api/ui/site-policy/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = sitePolicy.setGlobalTierEnabled(Boolean(req.body && req.body.enabled));
-      console.log(`[ui-api:sites] global tier toggle enabled=${enabled}`);
+      console.log(`[ui-api:site-policy] global tier toggle enabled=${enabled}`);
       _broadcastSitesChanged('global_tier_toggle');
       let status;
       try {
@@ -1413,12 +1413,12 @@ function mountWebUiRoutes(app, deps) {
       }
       res.json({ enabled, globalSiteBlocklist: status });
     } catch (e) {
-      console.error('[ui-api] POST /sites/global-tier/toggle failed:', e.message);
+      console.error('[ui-api] POST /site-policy/global-tier/toggle failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Site policy event log: GET /api/ui/sites/events plus the per-event
+  // Site policy event log: GET /api/ui/site-policy/events plus the per-event
   // allow / revoke actions. See site-policy-events-routes.js.
   mountSiteEventRoutes(app, {
     auth,
@@ -1882,7 +1882,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     console.log(`[ui-ws] failed to attach formatter-logs listener: ${e.message}`);
   }
 
-  // Same bridge for the site policy event log so an open Sites page
+  // Same bridge for the site policy event log so an open Site Policy page
   // refetches when a new (agent, domain) row appears, a verdict flips, or
   // retention prunes rows.
   try {

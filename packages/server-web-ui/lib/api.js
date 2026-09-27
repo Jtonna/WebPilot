@@ -210,41 +210,42 @@ export function dismissAllForFormatter(name) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Sites
+// Site Policy
 //
 // CRUD over the per-tier site-policy tables (global_user_site_rules,
 // global_site_blocklist_rules, agent_site_rules) plus the global-tier on/off toggle.
 //
 // All helpers follow the existing convention: throw on non-2xx, return the
-// parsed JSON body otherwise. The Sites page subscribes to the
-// `sites_changed` WebSocket event to refetch after any write.
+// parsed JSON body otherwise. The Site Policy page subscribes to the
+// `site_policy_changed` WebSocket event to refetch after any write.
 
-// GET /api/ui/sites — returns { globalRules: [...], globalSiteBlocklist: {...} }.
-export function getSites() {
-  return apiFetch('/api/ui/sites');
+// GET /api/ui/site-policy/global-rules — returns { globalRules: [...], globalSiteBlocklist: {...} }.
+export function getGlobalRules() {
+  return apiFetch('/api/ui/site-policy/global-rules');
 }
 
-// POST /api/ui/sites — body { domain, decision: 'allow'|'block' }. Returns
-// the new (or upserted) row { domain, decision, source, createdAt, updatedAt }.
-export function createSiteRule({ domain, decision }) {
-  return apiFetch('/api/ui/sites', {
+// POST /api/ui/site-policy/global-rules — body { domain, decision: 'allow'|'block' }.
+// Returns the new (or upserted) row { domain, decision, source, createdAt, updatedAt }.
+export function createGlobalRule({ domain, decision }) {
+  return apiFetch('/api/ui/site-policy/global-rules', {
     method: 'POST',
     body: { domain, decision },
   });
 }
 
-// DELETE /api/ui/sites/:domain — removes a user-source rule. Server refuses
-// attempts to delete global_site_blocklist-source rows with a 400; the caller
-// should treat the error message as authoritative for the toast text.
-export function deleteSiteRule(domain) {
-  return apiFetch(`/api/ui/sites/${encodeURIComponent(domain)}`, {
+// DELETE /api/ui/site-policy/global-rules/:domain — removes a user-source
+// rule. Server refuses attempts to delete global_site_blocklist-source rows
+// with a 400; the caller should treat the error message as authoritative
+// for the toast text.
+export function deleteGlobalRule(domain) {
+  return apiFetch(`/api/ui/site-policy/global-rules/${encodeURIComponent(domain)}`, {
     method: 'DELETE',
   });
 }
 
 // GET /api/ui/agents/:agentId/site-rules — agentId is the api_key_hash
 // returned by getStatus().pairedAgents[i].key. Returns an array of
-// { domain, decision, createdAt } from agent_site_rules. WS `sites_changed`
+// { domain, decision, createdAt } from agent_site_rules. WS `site_policy_changed`
 // reasons for per-agent rule writes are `agent_rule_upsert` / `agent_rule_delete`.
 export function getAgentSiteRules(agentId) {
   return apiFetch(`/api/ui/agents/${encodeURIComponent(agentId)}/site-rules`);
@@ -266,26 +267,26 @@ export function deleteAgentSiteRule(agentId, domain) {
   );
 }
 
-// GET /api/ui/sites/events — returns { entries: [{ agentKey, agentName, domain,
+// GET /api/ui/site-policy/events — returns { entries: [{ agentKey, agentName, domain,
 // decision, source, matchedDomain, firstSeenAt, lastSeenAt, decisionChangedAt,
 // hitCount, actionable, agentRuleDecision }], hasMore, nextCursor }. One row per
-// agent+domain, newest last-seen first. Refetch on WS events `sites_changed` and
+// agent+domain, newest last-seen first. Refetch on WS events `site_policy_changed` and
 // `site_policy_events_changed`.
-export function getSiteEvents({ agentId, decision, limit, cursor } = {}) {
+export function getSitePolicyEvents({ agentId, decision, limit, cursor } = {}) {
   const params = new URLSearchParams();
   if (agentId) params.set('agentId', agentId);
   if (decision) params.set('decision', decision);
   if (limit) params.set('limit', String(limit));
   if (cursor) params.set('cursor', cursor);
   const qs = params.toString();
-  return apiFetch(`/api/ui/sites/events${qs ? `?${qs}` : ''}`);
+  return apiFetch(`/api/ui/site-policy/events${qs ? `?${qs}` : ''}`);
 }
 
 // POST /api/ui/agents/:agentId/site-events/allow — body { domain }. Creates a
 // per-agent allow rule. Returns 201 { agentKey, domain, decision, createdAt }; 400 for
 // non-actionable domains (IPs, localhost, `*`); 404 unknown/revoked agent.
 // Note: the event row itself is not changed immediately; it flips on the agent's next
-// request, and `agentRuleDecision` in `getSiteEvents` shows the new rule immediately.
+// request, and `agentRuleDecision` in `getSitePolicyEvents` shows the new rule immediately.
 export function allowSiteForAgent(agentId, domain) {
   return apiFetch(
     `/api/ui/agents/${encodeURIComponent(agentId)}/site-events/allow`,
@@ -303,12 +304,12 @@ export function revokeSiteForAgent(agentId, domain) {
   );
 }
 
-// POST /api/ui/sites/global-tier/toggle — body { enabled: bool }.
+// POST /api/ui/site-policy/global-tier/toggle — body { enabled: bool }.
 // Returns { enabled, globalSiteBlocklist: { enabled, version, lastFetchedAt, domainCount } }.
 // The toggle disables the whole global tier (signed blocklist AND global user rules),
 // per-agent rules unaffected.
 export function toggleGlobalTier(enabled) {
-  return apiFetch('/api/ui/sites/global-tier/toggle', {
+  return apiFetch('/api/ui/site-policy/global-tier/toggle', {
     method: 'POST',
     body: { enabled: !!enabled },
   });

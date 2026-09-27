@@ -130,14 +130,14 @@ Reduced motion: every transition/animation respects `@media (prefers-reduced-mot
 
 Two sidebar groups. Order matches `components/AppShell.js`.
 
-**Workspace** — Dashboard, Profiles, Agents, Sites, Formatters, Pairings.
+**Workspace** — Dashboard, Profiles, Agents, Site Policy, Formatters, Pairings.
 **System** — Settings.
 
 ```
 /ui                        Dashboard
 /ui/profiles               Profiles
 /ui/agents                 Agents
-/ui/sites                  Sites
+/ui/site-policy            Site Policy
 /ui/formatters             Formatters
 /ui/formatters/logs/?name= Per-formatter logs
 /ui/pairings               Pairings
@@ -160,7 +160,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with rename / revoke kebab. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
-**Sites** — Two columns, then a full-width log. **Enable Global Block List** card: header toggle for the whole global tier, facts line (`N signed domains · N custom rules · updated <rel>`), an off-state note, and `View / manage list`. The card subtitle reads verbatim: `Applies to all agents, but can be overridden by custom agent rules.` That button opens a searchable modal paginated at 25 rows, grouped as your allows → your blocks → signed list. It has `+ Add global rule` (inline form, `*` rejected) and Delete on your rows through an in-modal confirm; in that confirm view, Esc returns to the list rather than closing the modal. Signed rows are read-only and marked `Overridden by your allow` only when a global allow exists for that same domain. **Per-agent rules** card: agent picker, plus that agent's rules with an inline add form that accepts `*` (shown as `All sites *`). Delete uses `ConfirmModal`. **Site access log**: table (Domain / Status / Last seen / Action) with Agent and Decision filters and `Load more`, paginated at 50 rows per page. `Allow for this agent` requires typing `i understand` (`TypedConfirmModal`), because it can punch through a global block. `Revoke for this agent` is a plain `ConfirmModal`. IP / single-label hosts show `IP or local host · use a * rule`. Refetches on `sites_changed`, `site_policy_events_changed`, `agents_changed`, and the client-side `reconnected`.
+**Site Policy** — A compact strip of two small cards, then the Site access log below as the dominant element. **Global block list** card: header toggle for the whole global tier, one facts line (`N signed domains · N custom rules · updated <rel>`), an off-state note, and `Manage`. The card subtitle reads verbatim: `Applies to all agents, but can be overridden by custom agent rules.` **Per-agent rules** card: agent picker, a one-line summary, and `Manage`. Both `Manage` buttons open the same `RulesModal` (scope `global` or `agent`) — a single reusable modal whose list, add-rule and delete-confirm views replace each other in a fixed-height shell so only the list itself scrolls. The global-scope list groups your allows → your blocks → signed list, has `+ Add global rule` (inline form, `*` rejected), and Delete on your rows through the in-modal confirm view (Esc there returns to the list rather than closing the modal); signed rows are read-only and marked `Overridden by your allow` only when a global allow exists for that same domain. The agent-scope list has an inline add form that accepts `*` (shown as `All sites *`) and the same in-modal delete confirm. **Site access log**: table (Domain — with a source · matched-domain · hit-count sub-line, where source `default` shows as `No rule (allowed by default)` — / Agent, linking to `/ui/agents/?agent=<key>` / Status, colored: approved green, blocked red / Last seen / Action) with Agent and Decision filters and `Load more`, paginated at 50 rows per page. `Allow for this agent` requires typing a random 4-character confirmation code (`TypedConfirmModal`, case-insensitive, a fresh code generated on every open), because it can punch through a global block. `Revoke for this agent` is a plain `ConfirmModal`. IP / single-label hosts show `IP or local host · use a * rule`. Refetches on `site_policy_changed`, `site_policy_events_changed`, `agents_changed`, and the client-side `reconnected`. All modals (`RulesModal`, `TypedConfirmModal`, `ConfirmModal`) render in a portal over the whole page.
 
 **Formatters** — `Loaded from remote` + `Custom` sections; row = name + `HealthPill` + last error time; row links to `/ui/formatters/logs/?name=…`. REST poll every 30s.
 
@@ -180,7 +180,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Confirmation modals** (`ConfirmModal`): title is a short declarative question (`Revoke API key?` / `Restart server?`). Body: one sentence effect, one sentence recovery. Default focus on Cancel; Esc closes; Enter does not auto-confirm. Use `wp-btn-danger` for destructive, primary for non-destructive (restart). Every destructive action gets a modal — even in fast-moving lists.
 
-`TypedConfirmModal` (typed-phrase confirms): focus starts in the input, the confirm button stays disabled until the phrase matches (case-insensitive), and Enter in the input then confirms.
+`TypedConfirmModal` (random 4-character code confirms): focus starts in the input, the confirm button stays disabled until the code matches (case-insensitive), a fresh code is generated on every open, and Enter in the input then confirms.
 
 **Toasts:** lower-right region (lower-center mobile), max 3 stacked. 4s auto-dismiss, manual close. `success` / `info` / `error` flavors; errors persist until dismissed. No action buttons in toasts.
 

@@ -1967,38 +1967,38 @@ hr {
 }
 
 /* ---------------------------------------------------------------------------
- * Sites page — two-column rules layout, site access log table, global list
- * modal. Tokens only; no new motion.
+ * Site Policy page — compact global/per-agent cards, site access log table,
+ * shared rules modal. Tokens only; no new motion.
  * ------------------------------------------------------------------------- */
 
-.wp-sites-cols {
+.wp-site-policy-cols {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--s-5);
   align-items: start;
 }
 
 @media (max-width: 1099px) {
-  .wp-sites-cols {
+  .wp-site-policy-cols {
     grid-template-columns: 1fr;
   }
 }
 
-.wp-sites-card {
+.wp-site-policy-card {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
   min-width: 0;
 }
 
-.wp-sites-card-head {
+.wp-site-policy-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--s-4);
 }
 
-.wp-sites-card-title {
+.wp-site-policy-card-title {
   margin: 0;
   font-family: var(--wp-font-sans);
   font-size: var(--fs-subsection);
@@ -2007,14 +2007,14 @@ hr {
   letter-spacing: -0.005em;
 }
 
-.wp-sites-card-sub {
+.wp-site-policy-card-sub {
   margin: var(--s-1) 0 0;
   font-size: var(--fs-small);
   color: var(--wp-fg-secondary);
   line-height: 1.5;
 }
 
-.wp-sites-facts {
+.wp-site-policy-facts {
   font-family: var(--wp-font-mono);
   font-size: var(--fs-mono-small);
   color: var(--wp-fg-secondary);
@@ -2022,49 +2022,47 @@ hr {
   overflow-wrap: anywhere;
 }
 
-.wp-sites-note {
+.wp-site-policy-note {
   font-size: var(--fs-small);
   color: var(--wp-fg-secondary);
   line-height: 1.5;
 }
 
-.wp-sites-actions {
+.wp-site-policy-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s-2);
 }
 
-.wp-sites-field {
+.wp-site-policy-field {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
 }
 
-.wp-sites-field-label {
+.wp-site-policy-field-label {
   font-size: var(--fs-small);
   color: var(--wp-fg-secondary);
 }
 
-.wp-sites-field-hint {
+.wp-site-policy-field-hint {
   font-size: var(--fs-small);
   color: var(--wp-fg-secondary);
 }
 
-.wp-sites-field-error {
+.wp-site-policy-field-error {
   font-size: var(--fs-small);
   color: var(--wp-danger);
 }
 
-.wp-sites-form {
+.wp-site-policy-form {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--wp-separator);
 }
 
-.wp-sites-radios {
+.wp-site-policy-radios {
   display: flex;
   align-items: center;
   gap: var(--s-4);
@@ -2073,7 +2071,7 @@ hr {
   padding: 0;
 }
 
-.wp-sites-radio {
+.wp-site-policy-radio {
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -2082,21 +2080,7 @@ hr {
   color: var(--wp-fg);
 }
 
-.wp-sites-rule-list {
-  border-top: 1px solid var(--wp-separator);
-  margin: 0 calc(var(--s-5) * -1);
-}
-
-.wp-sites-rule-list .wp-row {
-  padding-left: var(--s-5);
-  padding-right: var(--s-5);
-}
-
-.wp-sites-rule-list .wp-row:last-child {
-  border-bottom: none;
-}
-
-.wp-sites-rule-domain {
+.wp-site-policy-rule-domain {
   font-family: var(--wp-font-mono);
   font-size: var(--fs-mono);
   color: var(--wp-fg);
@@ -2142,10 +2126,11 @@ hr {
 }
 
 /* Site access log columns. */
-.wp-site-events .wp-site-events-col-domain { width: 38%; }
-.wp-site-events .wp-site-events-col-status { width: 28%; }
+.wp-site-events .wp-site-events-col-domain { width: 32%; }
+.wp-site-events .wp-site-events-col-agent  { width: 16%; }
+.wp-site-events .wp-site-events-col-status { width: 22%; }
 .wp-site-events .wp-site-events-col-seen   { width: 12%; }
-.wp-site-events .wp-site-events-col-action { width: 22%; text-align: right; }
+.wp-site-events .wp-site-events-col-action { width: 18%; text-align: right; }
 
 .wp-site-events td.wp-site-events-action {
   text-align: right;
@@ -2156,6 +2141,12 @@ hr {
   font-size: var(--fs-mono-small);
   color: var(--wp-fg);
   overflow-wrap: anywhere;
+}
+
+.wp-site-events-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
 }
 
 .wp-site-events-sub,
@@ -2225,30 +2216,56 @@ hr {
     color: var(--wp-fg-muted);
   }
 
-  .wp-sites-cols .wp-btn,
+  .wp-site-policy-cols .wp-btn,
   .wp-site-events .wp-btn,
-  .wp-site-events-footer .wp-btn,
-  .wp-global-list .wp-btn,
-  .wp-global-list .wp-link {
+  .wp-site-events-footer .wp-btn {
+    min-height: 44px;
+  }
+
+  .wp-modal .wp-btn,
+  .wp-modal .wp-link {
     min-height: 44px;
   }
 }
 
-/* Global list modal. */
-.wp-global-list {
+/* Rules modal — shared global/agent modal shell. Fixed-height flex column:
+ * header and footer stay put, only the body scrolls, so switching to the
+ * add view never grows the modal or introduces an outer scrollbar. */
+.wp-rules-modal {
+  display: flex;
+  flex-direction: column;
+  height: min(600px, calc(100vh - var(--s-7)));
+  min-height: 0;
+}
+
+.wp-rules-modal-header {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+  padding-bottom: var(--s-3);
 }
 
-.wp-global-list-rows {
-  max-height: 50vh;
+.wp-rules-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border-top: 1px solid var(--wp-separator);
   border-bottom: 1px solid var(--wp-separator);
+  padding: var(--s-3) 0;
 }
 
-.wp-global-list-group {
+.wp-rules-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding-top: var(--s-3);
+}
+
+.wp-rules-modal-group {
   padding: var(--s-3) var(--s-4) var(--s-1);
   font-family: var(--wp-font-mono);
   font-size: var(--fs-nano);
@@ -2259,15 +2276,14 @@ hr {
   background-color: var(--wp-bg-elevated);
 }
 
-.wp-global-list-pager {
+.wp-rules-modal-pager {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--s-3);
   flex-wrap: wrap;
 }
 
-.wp-global-list-pager .wp-link:disabled {
+.wp-rules-modal-pager .wp-link:disabled {
   opacity: 0.4;
   cursor: default;
 }

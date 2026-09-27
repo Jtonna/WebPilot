@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 function get(qs = '') {
-  return fetch(`${base}/api/ui/sites/events${qs}`);
+  return fetch(`${base}/api/ui/site-policy/events${qs}`);
 }
 
 function post(agentKey, action, body) {
@@ -140,9 +140,9 @@ function post(agentKey, action, body) {
   });
 }
 
-// ── GET /api/ui/sites/events ────────────────────────────────────────────────
+// ── GET /api/ui/site-policy/events ────────────────────────────────────────────────
 
-describe('GET /api/ui/sites/events', () => {
+describe('GET /api/ui/site-policy/events', () => {
   test('returns list() shape, newest first', async () => {
     recordEvent(1, 'a.com', 'allow', '2026-09-01T00:00:00.000Z');
     recordEvent(2, 'b.com', 'block', '2026-09-02T00:00:00.000Z', 'global_site_blocklist');
@@ -249,7 +249,7 @@ describe('POST /api/ui/agents/:agentId/site-events/allow', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'allow');
     assert.equal(sitePolicy.isAllowed(1, 'https://evil.com').allowed, true);
-    assert.deepEqual(broadcasts, [{ type: 'sites_changed', reason: 'site_event_allow' }]);
+    assert.deepEqual(broadcasts, [{ type: 'site_policy_changed', reason: 'site_event_allow' }]);
   });
 
   test('normalizes the domain', async () => {
@@ -274,7 +274,7 @@ describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
     const rows = agentRules(1, 'x.com');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'block');
-    assert.deepEqual(broadcasts, [{ type: 'sites_changed', reason: 'site_event_revoke' }]);
+    assert.deepEqual(broadcasts, [{ type: 'site_policy_changed', reason: 'site_event_revoke' }]);
   });
 
   test('overwrites a same-domain allow in place (row count stays 1)', async () => {

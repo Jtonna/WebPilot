@@ -279,7 +279,7 @@ describe('POST /api/popup/site-toggle', () => {
       source: 'global_user',
       policyDecision: 'block',
     });
-    assert.deepEqual(broadcasts, [{ type: 'sites_changed', reason: 'popup_toggle' }]);
+    assert.deepEqual(broadcasts, [{ type: 'site_policy_changed', reason: 'popup_toggle' }]);
   });
 
   test('decision alias works when action is absent', async () => {
@@ -289,7 +289,7 @@ describe('POST /api/popup/site-toggle', () => {
     assert.equal(body.decision, 'allow');
     assert.equal(body.newState, 'allowed');
     assert.equal(userRows('example.com')[0].decision, 'allow');
-    assert.deepEqual(broadcasts, [{ type: 'sites_changed', reason: 'popup_toggle' }]);
+    assert.deepEqual(broadcasts, [{ type: 'site_policy_changed', reason: 'popup_toggle' }]);
   });
 
   test('action wins when both action and decision are present', async () => {
@@ -335,8 +335,8 @@ describe('POST /api/popup/site-toggle', () => {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'allow');
     assert.deepEqual(broadcasts, [
-      { type: 'sites_changed', reason: 'popup_toggle' },
-      { type: 'sites_changed', reason: 'popup_toggle' },
+      { type: 'site_policy_changed', reason: 'popup_toggle' },
+      { type: 'site_policy_changed', reason: 'popup_toggle' },
     ]);
   });
 
