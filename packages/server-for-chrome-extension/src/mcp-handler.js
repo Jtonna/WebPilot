@@ -5,6 +5,7 @@ const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 const { findInTree } = require('./lib/tree-query');
 const formatterLogs = require('./formatter-logs');
 const sitePolicy = require('./site-policy');
+const sitePolicyEvents = require('./site-policy-events');
 const formatterUnlockState = require('./formatter-unlock-state');
 const { getReleaseInfo } = require('./release-info');
 
@@ -1392,6 +1393,12 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     return null;
   }
 
+  function _recordPolicyEvent(agentId, verdict) {
+    if (!agentId || !verdict || !verdict.domain) return;
+    try { sitePolicyEvents.record(agentId, verdict); }
+    catch (e) { console.warn(`[site-policy-events] record failed: ${e.message}`); }
+  }
+
   /**
    * Apply the site-policy gate for an inbound tool call. Returns null when
    * the call is allowed; otherwise returns the MCP envelope to return to
@@ -1419,6 +1426,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       const url = args && args.url;
       if (typeof url !== 'string' || url.length === 0) return null;
       const verdict = sitePolicy.isAllowed(agentId, url);
+      _recordPolicyEvent(agentId, verdict);
       if (!verdict.allowed) {
         console.log(
           `[policy] checkpoint-A BLOCK tool=browser_create_tab url=${url} ` +
@@ -1442,6 +1450,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       const currentUrl = await _resolveTabUrl(profileId, tabId);
       if (!currentUrl) return null; // tab not found / not navigated yet — let it through
       const verdict = sitePolicy.isAllowed(agentId, currentUrl);
+      _recordPolicyEvent(agentId, verdict);
       if (verdict.allowed) return null;
       const willCloseAt = new Date(Date.now() + AUTO_CLOSE_DELAY_MS).toISOString();
       console.log(
