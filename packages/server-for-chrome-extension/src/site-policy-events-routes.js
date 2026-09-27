@@ -8,7 +8,7 @@
  *        limit, cursor. Returns site-policy-events.list() as-is.
  *   POST /api/ui/agents/:agentId/site-events/allow     (auth, mutatingAuth)
  *   POST /api/ui/agents/:agentId/site-events/revoke    (auth, mutatingAuth)
- *        Body {domain}. Upserts a per-agent override ('allow' / 'block')
+ *        Body {domain}. Upserts a per-agent rule ('allow' / 'block')
  *        for the exact domain. Revoke always writes 'block' (overwriting a
  *        same-domain allow in place); it never deletes. The actions never
  *        touch site_policy_events rows, and no event row is required.
@@ -91,10 +91,10 @@ function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agent
             reason: _invalidDomainReason(rawDomain),
           });
         }
-        sitePolicy.setAgentOverride(agentId, normalized, decision);
+        sitePolicy.setAgentRule(agentId, normalized, decision);
         const row = dbModule
           .getDb()
-          .prepare('SELECT created_at FROM agent_site_overrides WHERE agent_id = ? AND domain = ?')
+          .prepare('SELECT created_at FROM agent_site_rules WHERE agent_id = ? AND domain = ?')
           .get(agentId, normalized);
         console.log(
           `[ui-api:sites] site-event ${action} agentId=${agentId} domain=${normalized}`

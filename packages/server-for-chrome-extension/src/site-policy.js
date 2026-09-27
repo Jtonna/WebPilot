@@ -8,7 +8,7 @@
  * (see src/db/schema.sql); each tier owns its own table, so a row in one
  * tier can never mask or overwrite a row in another:
  *
- *   - `agent_site_overrides`         per-agent tier. `domain` is a normalized
+ *   - `agent_site_rules`             per-agent rules tier. `domain` is a normalized
  *                                    domain or the literal '*' (the agent's
  *                                    default decision for every site).
  *   - `global_user_site_rules`       global tier, rules the user set by hand
@@ -46,7 +46,7 @@
  *
  * Return contract of `isAllowed` (frozen):
  *   { allowed, decision: 'allow'|'block',
- *     source: 'agent_override'|'global_user'|'global_site_blocklist'|'default',
+ *     source: 'agent_rule'|'global_user'|'global_site_blocklist'|'default',
  *     domain: string|null, matchedDomain: string|null }
  * `matchedDomain` is the stored domain of the matching rule ('*' for a
  * wildcard match), null for default.
@@ -194,7 +194,7 @@ function _firstMatch(stmt, prefixArgs, domain) {
 
 function _agentWildcardRow(db, agentId) {
   return db
-    .prepare('SELECT * FROM agent_site_overrides WHERE agent_id = ? AND domain = ?')
+    .prepare('SELECT * FROM agent_site_rules WHERE agent_id = ? AND domain = ?')
     .get(agentId, WILDCARD);
 }
 
@@ -254,7 +254,7 @@ function isAllowed(agentId, urlOrDomain) {
     const host = _networkHost(urlOrDomain);
     if (host && agentId) {
       const wc = _agentWildcardRow(db, agentId);
-      if (wc) return _verdict(wc.decision, 'agent_override', host, WILDCARD);
+      if (wc) return _verdict(wc.decision, 'agent_rule', host, WILDCARD);
     }
     return _default(host || null);
   }
@@ -262,12 +262,12 @@ function isAllowed(agentId, urlOrDomain) {
   // Agent tier: named (most -> least specific), then '*'.
   if (agentId) {
     const named = _firstMatch(
-      db.prepare('SELECT * FROM agent_site_overrides WHERE agent_id = ? AND domain = ?'),
+      db.prepare('SELECT * FROM agent_site_rules WHERE agent_id = ? AND domain = ?'),
       [agentId],
       domain
     );
     const row = named || _agentWildcardRow(db, agentId);
-    if (row) return _verdict(row.decision, 'agent_override', domain, row.domain);
+    if (row) return _verdict(row.decision, 'agent_rule', domain, row.domain);
   }
 
   if (!isGlobalTierEnabled()) return _default(domain);
@@ -390,7 +390,7 @@ function removeGlobalRule(domain) {
 }
 
 /** Upsert a per-agent rule. `domain` may be '*'. */
-function setAgentOverride(agentId, domain, decision) {
+function setAgentRule(agentId, domain, decision) {
   if (!agentId) throw new Error('agentId required');
   const normalized = normalizeRuleDomain(domain, { allowWildcard: true });
   if (!normalized) throw new Error(`Invalid domain: ${domain}`);
@@ -398,7 +398,7 @@ function setAgentOverride(agentId, domain, decision) {
   dbModule
     .getDb()
     .prepare(
-      `INSERT INTO agent_site_overrides (agent_id, domain, decision, created_at)
+      `INSERT INTO agent_site_rules (agent_id, domain, decision, created_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(agent_id, domain) DO UPDATE SET decision=excluded.decision`
     )
@@ -407,13 +407,13 @@ function setAgentOverride(agentId, domain, decision) {
 }
 
 /** Delete a per-agent rule. `domain` may be '*'. */
-function removeAgentOverride(agentId, domain) {
+function removeAgentRule(agentId, domain) {
   if (!agentId) return false;
   const normalized = normalizeRuleDomain(domain, { allowWildcard: true });
   if (!normalized) return false;
   const res = dbModule
     .getDb()
-    .prepare('DELETE FROM agent_site_overrides WHERE agent_id = ? AND domain = ?')
+    .prepare('DELETE FROM agent_site_rules WHERE agent_id = ? AND domain = ?')
     .run(agentId, normalized);
   return res.changes > 0;
 }
@@ -461,8 +461,8 @@ module.exports = {
   // CRUD
   setGlobalRule,
   removeGlobalRule,
-  setAgentOverride,
-  removeAgentOverride,
+  setAgentRule,
+  removeAgentRule,
   // helpers
   resolveAgentIdFromApiKey,
   // internal, exported for tests

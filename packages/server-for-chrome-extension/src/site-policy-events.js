@@ -34,7 +34,7 @@ const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 
 const DECISIONS = new Set(['allow', 'block']);
-const SOURCES = new Set(['agent_override', 'global_user', 'global_site_blocklist', 'default']);
+const SOURCES = new Set(['agent_rule', 'global_user', 'global_site_blocklist', 'default']);
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(50);
@@ -237,10 +237,10 @@ function list({ agentId = null, decision = null, limit = DEFAULT_LIST_LIMIT, cur
     SELECT e.id, e.domain, e.decision, e.source, e.matched_domain,
            e.first_seen_at, e.last_seen_at, e.decision_changed_at, e.hit_count,
            a.api_key_hash AS agent_key, a.name AS agent_name,
-           o.decision AS agent_rule_decision
+           r.decision AS agent_rule_decision
       FROM site_policy_events e
       JOIN agents a ON a.id = e.agent_id AND a.state = 'active'
-      LEFT JOIN agent_site_overrides o ON o.agent_id = e.agent_id AND o.domain = e.domain
+      LEFT JOIN agent_site_rules r ON r.agent_id = e.agent_id AND r.domain = e.domain
      ${whereSql}
      ORDER BY e.last_seen_at DESC, e.id DESC
      LIMIT ?`;
