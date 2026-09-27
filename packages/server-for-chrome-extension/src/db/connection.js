@@ -4,10 +4,14 @@
  * SQLite connection singleton for WebPilot's server.
  *
  * Opens `<dataDir>/webpilot.db` via better-sqlite3, sets the recommended
- * PRAGMAs (WAL journal, foreign-keys ON, synchronous=NORMAL), and applies the
- * schema in `./schema.sql` on every boot. Every CREATE in that file uses
- * `IF NOT EXISTS`, so the apply step is idempotent — it doubles as the
- * "create on first boot" path.
+ * PRAGMAs (WAL journal, foreign-keys ON, synchronous=NORMAL), then runs the
+ * schema-migration ledger (see `./schema-migrations/index.js`) and applies
+ * the schema in `./schema.sql`, in that order, on every boot. First boot is
+ * NOT just the schema.sql apply: migrations run first, against a DB that at
+ * most contains the `schema_migrations` ledger table, and must no-op cleanly
+ * there; only then does schema.sql (every CREATE uses `IF NOT EXISTS`)
+ * create everything. On failure the handle is closed and the singleton is
+ * left unset, so a subsequent call to `init()` can retry cleanly.
  *
  * Other modules acquire the handle by calling `getDb()` after `init()` has
  * been called once at server boot. The handle is a synchronous, fast,

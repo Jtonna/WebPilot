@@ -7,9 +7,12 @@
  * prefix (e.g. 001-, 002-) is the convention — lexical sort is correct up to
  * 999; past that the sort would break (e.g. "1000-" < "002-" lexically).
  *
- * Safe to call before `_db.exec(schemaSql)` in connection.js because the
- * runner only touches its own `schema_migrations` ledger table and the
- * individual migrations are guarded against pre-schema state.
+ * Called before `_db.exec(schemaSql)` in connection.js. The runner itself
+ * guarantees nothing about pre-schema state beyond the `schema_migrations`
+ * ledger table it creates — on a fresh install none of the application
+ * tables exist yet. Each migration's `up()` is responsible for checking
+ * that its own target tables/columns exist before touching them; see #96
+ * for a migration that assumed a table existed and broke fresh installs.
  *
  * Each `up()` runs inside its own transaction managed by this runner. Do not
  * open an outer transaction in `up()` unless you have a specific reason — a
