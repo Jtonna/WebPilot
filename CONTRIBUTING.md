@@ -88,7 +88,7 @@ The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the da
 
 Verification failure is logged and the update is skipped. For formatters, the previously-installed formatters keep running. For the global site blocklist, the updater falls back to its local on-disk cache (re-verified before use). A hash mismatch after a valid signature aborts the run and leaves the DB unchanged. If neither a verified remote nor a verified cache is available, nothing is written: existing rows and the stored version are kept, and the next check retries. See [Failure modes](docs/SITE_POLICY.md#failure-modes).
 
-CI's `check-signed-manifest.yml` guards against a stale-but-unsigned commit: on any PR or push to `main` touching either bundle, it recomputes the SHA-256 of every file listed in `signed-manifest.json` and compares it against the claimed hash. It does **not** verify the Ed25519 signature — only that the hashes are internally consistent with what's committed. Since `sign-formatters.js` re-signs both bundles on every run, only commit the files you actually meant to change.
+CI's `check-signed-manifest.yml` guards against a stale-but-unsigned commit: on any PR or push to `main` touching either bundle, it recomputes the SHA-256 of every file listed in `signed-manifest.json` and compares it against the claimed hash. It does **not** verify the Ed25519 signature — only that the hashes are internally consistent with what's committed. Since `sign-formatters.js` re-signs both bundles on every run, commit the blocklist files you changed; include formatter signed-manifest changes only if the formatter sources changed too.
 
 ### Generating a signing key for local testing
 
@@ -102,6 +102,8 @@ This produces:
 - `accessibility-tree-formatters/PUBKEY.pem` (SPKI PEM) — committed to the repo.
 
 The script refuses to overwrite an existing private key — delete it explicitly if you really mean to rotate.
+
+**Warning:** generating a test key overwrites the production `accessibility-tree-formatters/PUBKEY.pem`, and `sign-formatters.js` then re-signs both bundles with the test key. CI only compares hashes, so committing those files would pass CI and make every installed daemon reject every future update. Never commit them; restore with `git checkout -- accessibility-tree-formatters/PUBKEY.pem accessibility-tree-formatters/signed-manifest.json accessibility-tree-formatters/signed-manifest.json.sig global-site-blocklists/signed-manifest.json global-site-blocklists/signed-manifest.json.sig`.
 
 To produce signed manifests locally:
 
@@ -140,6 +142,8 @@ When the signing key needs to be rotated (founder turnover, suspected compromise
 4. Run `.github/workflows/release-stable.yml` from **Actions → Release (stable) → Run workflow**. The next daemon update tick fetches the new signed manifest, verifies it against the new bundled pubkey, and applies it normally.
 
 Old released installers continue to verify against the *old* pubkey they shipped with — the rotation does not invalidate previously installed daemons until they receive a new installer that ships the new pubkey. Plan rotation to coincide with a normal release.
+
+Exception: the global blocklist is fetched from `main`, so installs that still have the old public key stop receiving blocklist updates (they keep their last verified list) until they install a release that ships the new key.
 
 ### Reporting a compromised signing key
 

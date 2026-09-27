@@ -108,7 +108,7 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Formatter signing (idempotent — must run before build so the signed
-      # manifests bundled in the binary match the formatter sources at this tag)
+      # manifests committed at this tag match the formatter sources)
       # -----------------------------------------------------------------------
       - name: Sign formatter + blocklist manifests
         shell: bash
