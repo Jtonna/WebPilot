@@ -75,7 +75,7 @@ The runner sorts files lexically. Lexical order matches numerical order through 
 |---|------|---------------|
 | 001 | `001-rename-baseline-to-global-site-blocklist.js` | Renames the `baseline` family of persisted identifiers to `global_site_blocklist`: the config key, the meta table, the `global_site_rules` CHECK value (and existing `source='baseline'` rows), and the on-disk cache directory. |
 | 002 | `002-split-site-rules-per-tier.js` | Splits the shared `global_site_rules` table into `global_user_site_rules` and `global_site_blocklist_rules` (wildcard domains and signed-allow rows are skipped, since they can't be represented in the new shape), and renames `global_site_blocklist_enabled` → `global_tier_enabled`. When user rows were migrated, the stored blocklist version is prefixed with `pre-002:` to force a re-sync on the next updater tick, restoring any domains that a user rule had masked (see the header comment of `002-split-site-rules-per-tier.js` and its lines 156-162). |
-| 003 | `003-rename-agent-site-overrides-to-agent-site-rules.js` | Renames `agent_site_overrides` → `agent_site_rules`, and rebuilds `site_policy_events` so its `source` CHECK reads `agent_rule` instead of `agent_override`. |
+| 003 | `003-rename-agent-site-overrides-to-agent-site-rules.js` | Renames `agent_site_overrides` → `agent_site_rules`, drops the redundant `idx_agent_overrides` index (it duplicated the table's UNIQUE autoindex), and rebuilds `site_policy_events` so its `source` CHECK reads `agent_rule` instead of `agent_override`. Rows whose agent no longer exists are skipped as orphans (logged) in both steps. |
 
 Add a row here when you add a migration.
 
@@ -124,14 +124,15 @@ Also note: the daemon's log file is truncated at the start of every run (`SizeMa
 1. Read the latest file in `schema-migrations/` and pick the next 3-digit prefix.
 2. Create `NNN-your-description.js` exporting `{ id, description, up(db, opts) }`.
 3. Write `up()` to be idempotent in spirit (see [Dual-Layer Idempotency](#dual-layer-idempotency)): guard each step against the already-applied state. Just as important: guard each step against the table/column it touches **not existing yet**, since on a fresh install the migration runs against a DB containing only the `schema_migrations` ledger — none of the application tables exist until `schema.sql` runs afterward. Do not assume `schema.sql` or any earlier migration has already created what you need.
-4. Test via `packages/server-for-chrome-extension/test/db-migration.test.js`: create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape. Also keep the fresh-DB tests in `test/db-migration.test.js` and `test/db-connection.test.js` green — `db-connection.test.js` runs every real migration against a brand-new database via `init()`, so it is what catches future regressions like #96 (a migration step that only works when a table already exists).
+4. Give the migration its own `test/migration-NNN.test.js` (see `test/migration-002.test.js` and `test/migration-003.test.js`): create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape. Also keep `test/db-migration.test.js` and `test/db-connection.test.js` green — `db-connection.test.js` runs every real migration against a brand-new database via `init()`, so it is what catches future regressions like #96 (a migration step that only works when a table already exists).
 5. Add a row to [Migration History](#migration-history) describing the migration.
 
 ### Testing a new migration
 
-Before landing a migration, run both of these and confirm they pass:
+Before landing a migration, run all of these and confirm they pass:
 
-- `packages/server-for-chrome-extension/test/db-migration.test.js` — targeted unit coverage for the migration's own pre/post shape.
+- `packages/server-for-chrome-extension/test/migration-NNN.test.js` — the migration's own test file (see `migration-002.test.js` / `migration-003.test.js`), targeted unit coverage for its pre/post shape.
+- `packages/server-for-chrome-extension/test/db-migration.test.js` — must stay green.
 - `packages/server-for-chrome-extension/test/db-connection.test.js` — exercises `connection.js:init()` end-to-end, including running every real migration (yours included) against a genuinely fresh database. This is the test that would have caught #96.
 
 ## Inspection Tips
