@@ -69,11 +69,19 @@ export default function TypedConfirmModal({
     if (open) setValue('');
   }, [open]);
 
-  // Unlike ConfirmModal (which switches between live props and the latch
-  // depending on `open`), the latch here is always kept in sync with props
-  // while open (see effect above), so reading it directly covers both the
-  // open and closing states.
-  const view = lastPropsRef.current;
+  // Like ConfirmModal: live props while open, latched props only during the
+  // exit animation (after the parent has cleared title/body on close).
+  const view = open
+    ? {
+        title,
+        body,
+        phrase,
+        inputLabel: resolvedInputLabel,
+        confirmLabel,
+        cancelLabel,
+        confirmDanger,
+      }
+    : lastPropsRef.current;
 
   const matched = value.trim().toLowerCase() === view.phrase.toLowerCase();
 
