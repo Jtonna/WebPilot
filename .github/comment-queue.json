@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 106,
-    "body": "Implementation status (auto-approved gate, epic #99 autonomous run)\n\n[sub-task 1] DONE: docs/SITE_POLICY.md — consolidated reference, 51 code citations verified (f623c0d)\n[sub-task 2] DONE: MCP_SERVER.md gate section condensed + links, source files, config key, cadence, WS events, data dir; SCHEMA_MIGRATIONS.md migration history 001-003 (bac2598)\n[sub-task 3] DONE: MCP_INTEGRATION.md corrected tool list, \"bundled\" fixed, Blocked-by-Site-Policy error section, per-tool error bullets (fe41340)\n[sub-task 4] DONE: CONTRIBUTING.md \"Signing and updating the signed bundles\" + blocklist update summary; ADDING_NEW_FEATURES.md TAB_ID_TOOLS note; INDEX.md entry; CHROME_EXTENSION.md + README links; RELEASE.md heading ref (3f7c94a)\n[sub-task 5] DONE: cross-doc review — 108 links checked, 1 broken anchor and 12 wording items found\n[sub-task 6] DONE: fix-ups applied (1928861)\nFollow-ups: #110 (popup loopback gate), #112 (stale comments, blocklist file header, release-stable.yml heading ref). Flagged for the epic human gate: signing-key location policy (SECURITY.md vs CI hash check); Sites card subtitle wording vs per-agent precedence."
-  }
-]
+[]
