@@ -33,6 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
 - fix(server): guard schema migration 001 against the missing `config` table on a brand-new database. In v2.2.0, fresh installs failed SQLite init and could not pair agents; upgraded installs were not affected. No user action is needed once updated. The daemon now exits with code 1 when SQLite init fails instead of running without a database while `/health` still responded. (#96)
+- The site-policy gate now fails closed. When the check cannot be completed (an exception during evaluation, a disconnected extension on a tab-scoped tool, or a tab URL that cannot be read) the tool call is denied with `{ "ok": false, "error": "site policy check failed", "reason": "...", "message": "..." }` and `isError: true`. Reason codes: `policy_error`, `extension_disconnected`, `tab_url_unavailable`, `invalid_tab_id`, `invalid_url`. Nothing is recorded in the site policy event log for these outcomes. (#100)
+- Tab-scoped tools called while the extension is disconnected now receive that envelope with reason `extension_disconnected` instead of a JSON-RPC `-32000` error; the message text is unchanged. (#100)
+- `tab_id` must now be an integer on every tab-scoped tool; a missing, numeric-string (`"7"`) or non-integer value is rejected with `invalid_tab_id`. The tool schemas always declared `tab_id` as a number. (#100)
+- `browser_create_tab` rejects a non-string `url` with `invalid_url`; a missing or empty `url` still fails in the extension as before. (#100)
+- Inside `browser_request_chain`, a step whose policy check fails now returns that envelope as the step's result; later steps still run. (#100)
 
 ## [1.1.8]
 
