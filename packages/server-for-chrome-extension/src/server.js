@@ -14,6 +14,8 @@ const globalSiteBlocklistUpdater = require('./global-site-blocklist-updater');
 const formatterLogs = require('./formatter-logs');
 const sitePolicyEvents = require('./site-policy-events');
 const { mountSiteEventRoutes } = require('./site-policy-events-routes');
+const { mountPopupRoutes } = require('./popup-routes');
+const { upsertGlobalUserRule, clearGlobalUserRule } = require('./global-user-rules');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
@@ -1251,43 +1253,15 @@ function mountWebUiRoutes(app, deps) {
 
   // POST /api/ui/sites
   // Body: { domain, decision: 'allow'|'block' }. Adds (or upserts) a
-  // source='user' global rule.
+  // source='user' global rule via the shared global-user-rules write path.
   app.post('/api/ui/sites', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const body = req.body || {};
-      const rawDomain = body.domain;
-      const decision = body.decision;
-      if (typeof rawDomain === 'string' && rawDomain.trim() === sitePolicy.WILDCARD) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page",
-        });
-      }
-      const normalized = sitePolicy.normalizeDomain(rawDomain);
-      if (!normalized) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
-        });
-      }
-      if (decision !== 'allow' && decision !== 'block') {
-        return res.status(400).json({
-          error: 'invalid decision',
-          reason: "decision must be 'allow' or 'block'",
-        });
-      }
-      const result = sitePolicy.setGlobalRule(normalized, decision);
-      // Read back the persisted row so we include created_at / updated_at.
-      const row = sitePolicy.getGlobalUserRule(result.domain);
-      console.log(`[ui-api:sites] upsert global rule domain=${result.domain} decision=${result.decision}`);
+      const r = upsertGlobalUserRule({ domain: body.domain, decision: body.decision });
+      if (!r.ok) return res.status(r.status).json(r.body);
+      console.log(`[ui-api:sites] upsert global rule domain=${r.rule.domain} decision=${r.rule.decision}`);
       _broadcastSitesChanged('global_rule_upsert');
-      res.status(201).json({
-        domain: row ? row.domain : result.domain,
-        decision: row ? row.decision : result.decision,
-        source: 'user',
-        createdAt: row ? row.createdAt : null,
-        updatedAt: row ? row.updatedAt : null,
-      });
+      res.status(201).json(r.rule);
     } catch (e) {
       console.error('[ui-api] POST /sites failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -1295,35 +1269,15 @@ function mountWebUiRoutes(app, deps) {
   });
 
   // DELETE /api/ui/sites/:domain
-  // Only removes rows in the global user tier (`global_user_site_rules`).
-  // Refuses signed-blocklist entries with a 400 and a message that nudges
-  // the user toward the global tier toggle in Settings.
+  // Only removes rows in the global user tier (`global_user_site_rules`);
+  // signed-blocklist entries are refused with a 400 (see global-user-rules.js).
   app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
     try {
-      const rawDomain = req.params.domain;
-      const normalized = sitePolicy.normalizeDomain(rawDomain);
-      if (!normalized) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
-        });
-      }
-      if (sitePolicy.getGlobalUserRule(normalized)) {
-        sitePolicy.removeGlobalRule(normalized);
-        console.log(`[ui-api:sites] delete global rule domain=${normalized}`);
-        _broadcastSitesChanged('global_rule_delete');
-        return res.json({ ok: true, domain: normalized });
-      }
-      if (sitePolicy.isSignedBlocklisted(normalized)) {
-        return res.status(400).json({
-          error: 'cannot delete signed blocklist rule',
-          reason:
-            "signed block list entries can't be deleted; turn off the global block list on the Sites page",
-          domain: normalized,
-          source: 'global_site_blocklist',
-        });
-      }
-      return res.status(404).json({ error: 'rule not found', domain: normalized });
+      const r = clearGlobalUserRule(req.params.domain);
+      if (!r.ok) return res.status(r.status).json(r.body);
+      console.log(`[ui-api:sites] delete global rule domain=${r.domain}`);
+      _broadcastSitesChanged('global_rule_delete');
+      return res.json({ ok: true, domain: r.domain });
     } catch (e) {
       console.error('[ui-api] DELETE /sites/:domain failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -2139,179 +2093,8 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   app.get('/sse', mcpHandler.handleSSE);
   app.post('/message', mcpHandler.handleMessage);
 
-  // --- Extension popup state route ---
-  //
-  // The minimal popup hits these two endpoints to render its four-component
-  // layout (connection dot, current-tab state, Block/Allow toggle, dashboard
-  // link). Auth is installId-based (X-Install-Id header).
-  //
-  // Auth: the popup identifies itself with `X-Install-Id` — the same
-  // installId the extension sent on its WS upgrade. The server resolves
-  // installId -> profileId via the `extension_installs` table. No paired
-  // agent is required for popup operations; the popup is profile-scoped
-  // (global site policy + connection status), not agent-scoped.
-  {
-    const sitePolicyPopup = require('./site-policy');
-
-    // Extract installId from the request and resolve it to a profileId.
-    // Returns { installId, profileId } on success, or null on failure.
-    // Supports X-Install-Id header (preferred) or `installId` query param.
-    //
-    // Origin gate: the popup endpoints are designed
-    // to be called from the extension popup (origin chrome-extension://…).
-    // If a request carries a webpage Origin (http(s)://…), refuse it — that
-    // would be a malicious site running in any Chrome profile trying to
-    // reach the loopback API. Server-side callers (no Origin header) and
-    // chrome-extension:// origins are allowed through.
-    function _authPopup(req) {
-      const origin = (req.headers && req.headers.origin) || '';
-      if (origin && /^https?:\/\//i.test(origin)) {
-        console.log(`[popup-auth] rejecting — disallowed web Origin "${origin}"`);
-        return null;
-      }
-      const installId =
-        req.headers['x-install-id'] ||
-        req.headers['X-Install-Id'] ||
-        (req.query && req.query.installId) ||
-        null;
-      if (typeof installId !== 'string' || installId.length === 0) return null;
-      // Cap installId length defensively.
-      if (installId.length > 256) {
-        console.log(`[popup-auth] rejecting — installId exceeds max length (${installId.length})`);
-        return null;
-      }
-      let profileId = null;
-      try {
-        profileId = extensionInstalls.getProfileForInstall(installId);
-      } catch (e) {
-        console.log(`[popup-auth] getProfileForInstall threw: ${e && e.message}`);
-        return null;
-      }
-      if (!profileId) {
-        console.log(
-          `[popup-auth] rejecting — unknown installId="${installId.slice(0, 8)}..."`
-        );
-        return null;
-      }
-      return { installId, profileId };
-    }
-
-    // Map (decision, source) into a single state-pill key consumed by the
-    // popup UI: 'allowed' | 'blocked_global_site_blocklist' | 'blocked_user'
-    // | 'allowed_override' | 'blocked_override'.
-    function _statePillFromPolicy(policy) {
-      if (policy.source === 'agent_rule') {
-        return policy.decision === 'allow' ? 'allowed_override' : 'blocked_override';
-      }
-      if (policy.decision === 'allow') return 'allowed';
-      if (policy.source === 'global_site_blocklist') return 'blocked_global_site_blocklist';
-      return 'blocked_user';
-    }
-
-    // GET /api/popup/state?tabUrl=<url>
-    // Returns connection + current-tab policy state + dashboard URL.
-    // The popup operates in profile-context (no agent identity) — global
-    // site rules apply; per-agent rules do not. `agent` is always null.
-    app.get('/api/popup/state', (req, res) => {
-      const auth = _authPopup(req);
-      if (!auth) return res.status(401).json({ error: 'unauthorized' });
-      const { profileId } = auth;
-      const connection = extensionBridge.isConnected(profileId)
-        ? 'connected'
-        : 'disconnected';
-
-      const tabUrlRaw = (req.query && req.query.tabUrl) || null;
-      let currentTab = null;
-      // 8 KB is well above any real URL; reject anything longer rather than
-      // pushing oversized inputs through URL/normalizeDomain.
-      if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 8192) {
-        console.log(`[popup:state] rejecting oversized tabUrl (${tabUrlRaw.length} bytes)`);
-        return res.status(400).json({ error: 'tabUrl too long' });
-      }
-      if (typeof tabUrlRaw === 'string' && tabUrlRaw.length > 0) {
-        const domain = sitePolicyPopup.normalizeDomain(tabUrlRaw);
-        if (domain) {
-          // No agent context — pass null so the policy resolves global-only
-          // (no agent_site_rules applied).
-          const policy = sitePolicyPopup.isAllowed(null, tabUrlRaw);
-          currentTab = {
-            url: tabUrlRaw,
-            domain,
-            state: _statePillFromPolicy(policy),
-            source: policy.source,
-            decision: policy.decision,
-          };
-        }
-      }
-
-      const proto = (req.headers && req.headers['x-forwarded-proto']) || 'http';
-      const hostHdr = (req.headers && req.headers.host) || `localhost:${port}`;
-      const serverUrl = `${proto}://${hostHdr}`;
-
-      const body = {
-        connection,
-        profileId,
-        agent: null,
-        serverUrl,
-        globalTierEnabled: sitePolicyPopup.isGlobalTierEnabled(),
-      };
-      if (currentTab) body.currentTab = currentTab;
-      return res.json(body);
-    });
-
-    // POST /api/popup/site-toggle  { domain, action: 'block' | 'allow' }
-    // Sets a GLOBAL user rule for the domain (per the locked design decision —
-    // the popup's toggle is the "no AI touches this site" fast button; per-
-    // agent rules live on the webapp Sites page).
-    app.post('/api/popup/site-toggle', express.json(), (req, res) => {
-      const auth = _authPopup(req);
-      if (!auth) return res.status(401).json({ error: 'unauthorized' });
-      const { installId, profileId } = auth;
-      const body = req.body || {};
-      const action = body.action;
-      const domainRaw = body.domain;
-      if (action !== 'block' && action !== 'allow') {
-        return res.status(400).json({ error: "action must be 'block' or 'allow'" });
-      }
-      // Cap raw domain length before normalization — domain RFC max is 253;
-      // 512 leaves plenty of slack for URL-shaped inputs without exposing
-      // the URL parser to multi-megabyte strings.
-      if (typeof domainRaw === 'string' && domainRaw.length > 512) {
-        return res.status(400).json({ error: 'domain too long' });
-      }
-      const normalized = sitePolicyPopup.normalizeDomain(domainRaw);
-      if (!normalized) {
-        return res.status(400).json({ error: 'invalid domain' });
-      }
-      try {
-        sitePolicyPopup.setGlobalRule(normalized, action);
-      } catch (e) {
-        return res.status(400).json({ error: e.message });
-      }
-      // Audit attribution: log the originating installId + bound profileId
-      // (no agentId — popup is not in agent context).
-      console.log(
-        `[popup:site-toggle] domain="${normalized}" action="${action}" ` +
-          `installId="${installId.slice(0, 8)}..." profileId="${profileId}"`
-      );
-      // Compute new pill state (global-only, no agent rule).
-      const policy = sitePolicyPopup.isAllowed(null, normalized);
-      const newState = _statePillFromPolicy(policy);
-      // Tell the webapp Sites page (and any other UI consumer) the rule list
-      // changed. Same event name the Sites admin routes emit.
-      try {
-        broadcastUiEvent({ type: 'sites_changed', reason: 'popup_toggle' });
-      } catch (_e) { /* non-fatal */ }
-      return res.json({
-        ok: true,
-        domain: normalized,
-        decision: action,
-        newState,
-        globalTierEnabled: sitePolicyPopup.isGlobalTierEnabled(),
-      });
-    });
-  }
-  // --- end Extension popup state route ---
+  // --- Extension popup routes (see popup-routes.js) ---
+  mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUiEvent, port });
 
   // ---- Web UI static mount + REST ----
   mountWebUiStatic(app);

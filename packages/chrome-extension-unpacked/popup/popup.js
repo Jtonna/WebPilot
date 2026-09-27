@@ -26,14 +26,14 @@
 
 function $(id) { return document.getElementById(id); }
 
-// Server-side _statePillFromPolicy emits exactly these five keys. Anything
-// else triggers the fallback path (skip section, no pill).
+// Server-side _statePillFromPolicy emits exactly these three keys. Anything
+// else triggers the fallback path (skip section, no pill). Human-readable
+// labels are derived from state + source in labelForTab() below — this map
+// only defines the valid state set.
 const STATE_LABEL = {
   allowed: 'Allowed',
-  blocked_global_site_blocklist: 'Blocked (global blocklist)',
+  blocked_global_site_blocklist: 'Blocked (global block list)',
   blocked_user: 'Blocked (user)',
-  allowed_override: 'Override · Allowed',
-  blocked_override: 'Override · Blocked',
 };
 
 const CONN_LABEL = {
@@ -152,7 +152,22 @@ function hideSkip() {
   $('tab-skip-text').textContent = '';
 }
 
-function renderTab(currentTab, agent) {
+// Human-readable pill label for a given state + source. The dot color still
+// comes from data-state (success/danger) in CSS; this only picks the text.
+function labelForTab(state, source) {
+  if (state === 'allowed') {
+    return source === 'global_user' ? 'Allowed (your rule)' : 'Allowed';
+  }
+  if (state === 'blocked_user') return 'Blocked (your rule)';
+  if (state === 'blocked_global_site_blocklist') return 'Blocked (global block list)';
+  return STATE_LABEL[state] || state;
+}
+
+const TIER_OFF_NOTE =
+  "Global rules are off — this toggle won't apply until they're turned back on in the dashboard.";
+
+function renderTab(data) {
+  const currentTab = data.currentTab;
   hideSkip();
   $('tab-section').hidden = false;
 
@@ -162,15 +177,32 @@ function renderTab(currentTab, agent) {
   const pill = $('tab-state-pill');
   const pillLabel = $('tab-state-label');
   pill.setAttribute('data-state', currentTab.state);
-  pillLabel.textContent = STATE_LABEL[currentTab.state];
+  pillLabel.textContent = labelForTab(currentTab.state, currentTab.source);
 
-  const agentLine = $('tab-agent-line');
-  if (agent && agent.name) {
-    agentLine.textContent = 'Agent: ' + agent.name;
-    agentLine.hidden = false;
+  // "Rule on <matchedDomain>" — only when the server tells us the matching
+  // rule lives on a different (usually parent) domain than the tab itself.
+  const matchedEl = $('tab-matched-domain');
+  if (
+    typeof currentTab.matchedDomain === 'string' &&
+    currentTab.matchedDomain &&
+    currentTab.matchedDomain !== currentTab.domain
+  ) {
+    matchedEl.textContent = 'Rule on ' + currentTab.matchedDomain;
+    matchedEl.hidden = false;
   } else {
-    agentLine.hidden = true;
-    agentLine.textContent = '';
+    matchedEl.hidden = true;
+    matchedEl.textContent = '';
+  }
+
+  // Missing globalTierEnabled (older server) defaults to enabled.
+  const globalTierEnabled = data.globalTierEnabled !== false;
+  const tierNote = $('tab-tier-note');
+  if (!globalTierEnabled) {
+    tierNote.textContent = TIER_OFF_NOTE;
+    tierNote.hidden = false;
+  } else {
+    tierNote.hidden = true;
+    tierNote.textContent = '';
   }
 
   // Button label: inverse of the current decision. Per the design doc, the
@@ -185,7 +217,8 @@ function renderTab(currentTab, agent) {
   btn.dataset.nextAction = isAllowed ? 'block' : 'allow';
   btn.dataset.domain = currentTab.domain;
   btn.hidden = false;
-  btn.disabled = false;
+  btn.disabled = !globalTierEnabled;
+  btn.title = globalTierEnabled ? '' : TIER_OFF_NOTE;
   setTabError(null);
 }
 
@@ -232,7 +265,7 @@ async function postSiteToggle(domain, action) {
   });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new Error(body.error || 'Toggle failed (' + resp.status + ')');
+    throw new Error(body.reason || body.error || 'Toggle failed (' + resp.status + ')');
   }
   return resp.json();
 }
@@ -300,7 +333,7 @@ async function loadAndRender() {
     return;
   }
 
-  renderTab(data.currentTab, data.agent);
+  renderTab(data);
 }
 
 async function onToggleClick() {
