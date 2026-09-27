@@ -155,4 +155,4 @@ same behaviour as before. No user action is required on existing installs.
 | `WEBPILOT_SIGNING_KEY_BASE64` | Stable (hard-fail), Nightly (soft-skip) | Base64-encoded Ed25519 private key for signing formatter manifests. |
 | `GITHUB_TOKEN` | Both | Automatically provided by GitHub Actions. |
 
-See `CONTRIBUTING.md > Signing formatter releases` for key generation instructions.
+See `CONTRIBUTING.md > Signing and updating the signed bundles` for key generation instructions.

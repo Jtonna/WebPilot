@@ -64,21 +64,31 @@ Releases are cut by a maintainer from the GitHub Actions tab via **Release (stab
 
 The workflow reads the current version from root `package.json`, runs `scripts/bump-version.js` to sync the new version across the monorepo, signs the formatter + blocklist manifests, writes `release-info.json`, builds the Windows installer, commits the version bump to `main` as `github-actions[bot]`, creates and pushes an annotated `v<new-version>` tag, generates categorised release notes, and publishes the GitHub Release.
 
-## Signing formatter releases
+## Signing and updating the signed bundles
 
-WebPilot daemons fetch formatter and global-site-blocklist updates from this repo at runtime. To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, every release ships a cryptographically signed manifest.
+WebPilot ships two independently-fetched signed bundles: `accessibility-tree-formatters/` and `global-site-blocklists/`. Both are signed with the same Ed25519 key, and a single script — `scripts/sign-formatters.js` — (re-)signs **both** bundles every time it runs, whether or not you touched one of them. Do not assume that running the script only affects the bundle you edited; review the diff before committing.
+
+|  | Formatters | Global site blocklist |
+|---|---|---|
+| Fetched from | Channel-aware ref (`main` in dev, the release tag in a built binary) — see [`docs/RELEASE.md`](docs/RELEASE.md) | Always `main`, regardless of channel |
+| Refresh cadence | Boot + hourly | Boot + every 24h |
+| Needs a release to reach users | Yes — see [`docs/RELEASE.md`](docs/RELEASE.md) | No — merging the signed commit to `main` is enough |
+
+To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, both bundles are cryptographically signed and hash-verified before the daemon applies an update.
 
 ### Threat model
 
 The daemon refuses to apply a formatter / blocklist update unless:
 
-1. A `signed-manifest.json` is present alongside the regular `manifest.json` on the served branch.
+1. A `signed-manifest.json` is present alongside the regular `manifest.json` on the served branch/ref.
 2. Its detached signature (`signed-manifest.json.sig`) verifies against the bundled `PUBKEY.pem` using Ed25519.
 3. The SHA-256 of every downloaded file matches the hash recorded in the signed manifest.
 
-The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never has to fetch the pubkey from the network.
+The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never has to fetch the pubkey from the network. Only `PUBKEY.pem` is bundled into the binary this way — the signed manifests themselves are not; they're fetched at runtime.
 
-Verification failure is logged and the update is skipped; the previously-installed formatters keep running.
+Verification failure is logged and the update is skipped. For formatters, the previously-installed formatters keep running. For the global site blocklist, the updater falls back to its local on-disk cache (itself re-verified before use) and, failing that, keeps whatever rows are already in the `global_site_blocklist_rules` table — it never clobbers existing data on a failed tick.
+
+CI's `check-signed-manifest.yml` guards against a stale-but-unsigned commit: on any PR or push to `main` touching either bundle, it recomputes the SHA-256 of every file listed in `signed-manifest.json` and compares it against the claimed hash. It does **not** verify the Ed25519 signature — only that the hashes are internally consistent with what's committed. Since `sign-formatters.js` re-signs both bundles on every run, only commit the files you actually meant to change.
 
 ### Generating a signing key for local testing
 
@@ -103,7 +113,20 @@ That writes `signed-manifest.json` + `signed-manifest.json.sig` next to each top
 
 ### Production signing
 
-Production signing happens inside the release workflow. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). `release-stable.yml` decodes it to a temp file with mode `0o600`, runs `scripts/sign-formatters.js`, and commits the regenerated `signed-manifest.json` + `.sig` files alongside the version bump before tagging and pushing. The signing step runs before the build leg so the signed manifests bundled into the binary match the formatter sources at the tagged ref.
+Production signing happens inside the release workflow. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). `release-stable.yml` decodes it to a temp file with mode `0o600`, runs `scripts/sign-formatters.js`, and commits the regenerated `signed-manifest.json` + `.sig` files alongside the version bump before tagging and pushing. The signing step runs before the build leg so the signed manifest sources committed at the tagged ref match the formatter sources — only `PUBKEY.pem`, not the signed manifests themselves, is bundled into the binary.
+
+### Updating the global site blocklist
+
+Unlike formatters, updating the global site blocklist does not require cutting a release — the updater always fetches from `main`, so merging a properly-signed commit is enough for it to reach users on their next update tick. In short:
+
+1. Edit `global-site-blocklists/financial-institutions.txt`.
+2. Bump `version` in `global-site-blocklists/manifest.json` — **mandatory**; the updater only applies a fetched bundle when its version differs from what's already stored.
+3. Run `node scripts/sign-formatters.js` with `WEBPILOT_SIGNING_KEY` set to your local private key path.
+4. Commit all four files (`financial-institutions.txt`, `manifest.json`, `signed-manifest.json`, `signed-manifest.json.sig`) together.
+
+See [docs/SITE_POLICY.md#updating-the-blocklist](docs/SITE_POLICY.md#updating-the-blocklist) for the full procedure, including the two supported signing workflows.
+
+There is an open question about where the signing key may live; see [Maintainer decision pending](docs/SITE_POLICY.md#maintainer-decision-pending).
 
 ### Key rotation
 

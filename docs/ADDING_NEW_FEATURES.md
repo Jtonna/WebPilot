@@ -71,7 +71,7 @@ case 'browser_your_tool_name': {
 }
 ```
 
-Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers — it owns the site-policy checks and the WebSocket round-trip to the extension via `extension-bridge.js`.
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. It owns the WebSocket round-trip to the extension via `extension-bridge.js`. Site policy is **not** enforced in the helper: the gate runs in `handleToolCall` before dispatch. If your tool takes a `tab_id`, add it to `TAB_ID_TOOLS` at the top of `mcp-handler.js`, otherwise the gate skips it without any warning. If it opens a URL, follow the `browser_create_tab` checkpoint-A pattern. See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
 
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
@@ -398,6 +398,7 @@ Use this when adding a new tool:
 ```
 [ ] 1. mcp-handler.js - Add tool to `tools` array
 [ ] 2. mcp-handler.js - Add case to `handleToolCall`
+[ ] 2a. mcp-handler.js - If the tool takes a `tab_id`, add it to `TAB_ID_TOOLS` so the site-policy gate covers it (see SITE_POLICY.md#checked-and-exempt-tools)
 [ ] 3. manifest.json - Add permissions (if needed)
 [ ] 4. handlers/<file>.js - Create or update handler module
 [ ] 5. background.js - Import handler and add case to `handleServerCommand`

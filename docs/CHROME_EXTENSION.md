@@ -199,7 +199,7 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`.
+The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`. For how verdicts are computed and what the global tier toggle does, see [SITE_POLICY.md](SITE_POLICY.md#precedence) and [Global tier toggle](SITE_POLICY.md#global-tier-toggle).
 
 ### What the popup shows
 
