@@ -20,6 +20,7 @@ const EXPECTED_TABLES = [
   'global_site_blocklist_rules',
   'agent_site_overrides',
   'global_site_blocklist_meta',
+  'site_policy_events',
   'formatter_incidents',
   'config',
   'extension_installs',

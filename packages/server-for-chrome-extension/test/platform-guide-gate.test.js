@@ -157,6 +157,7 @@ async function runGateTests() {
     resolveAgentIdFromApiKey: (key) => key === 'valid-key' ? 'agent-test' : null
   };
   stubs['./site-policy'] = fakeSitePolicy;
+  stubs['./site-policy-events'] = { record: () => null, events: new (require('events').EventEmitter)() };
 
   const fakePairedKeys = {
     validateKey: (key) => key === 'valid-key'
