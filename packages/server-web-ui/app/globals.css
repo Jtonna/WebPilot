@@ -2232,6 +2232,11 @@ hr {
   .wp-global-list .wp-link {
     min-height: 44px;
   }
+
+  .wp-modal .wp-btn,
+  .wp-modal .wp-link {
+    min-height: 44px;
+  }
 }
 
 /* Global list modal. */
