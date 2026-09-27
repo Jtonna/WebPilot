@@ -212,8 +212,8 @@ export function dismissAllForFormatter(name) {
 // ────────────────────────────────────────────────────────────────────────
 // Sites
 //
-// CRUD over the site-policy tables (global_site_rules and
-// agent_site_overrides) plus the global-site-blocklist on/off toggle.
+// CRUD over the per-tier site-policy tables (global_user_site_rules,
+// global_site_blocklist_rules, agent_site_overrides) plus the global-tier on/off toggle.
 //
 // All helpers follow the existing convention: throw on non-2xx, return the
 // parsed JSON body otherwise. The Sites page subscribes to the
@@ -265,12 +265,12 @@ export function deleteAgentSiteOverride(agentId, domain) {
   );
 }
 
-// POST /api/ui/sites/global-site-blocklist/toggle — body { enabled: bool }.
+// POST /api/ui/sites/global-tier/toggle — body { enabled: bool }.
 // Returns { enabled, globalSiteBlocklist: { enabled, version, lastFetchedAt, domainCount } }.
-// The toggle gates global-site-blocklist rule application in the runtime resolver;
-// per-agent overrides and user-set custom rules are unaffected.
-export function toggleGlobalSiteBlocklist(enabled) {
-  return apiFetch('/api/ui/sites/global-site-blocklist/toggle', {
+// The toggle disables the whole global tier (signed blocklist AND global user rules),
+// per-agent rules unaffected.
+export function toggleGlobalTier(enabled) {
+  return apiFetch('/api/ui/sites/global-tier/toggle', {
     method: 'POST',
     body: { enabled: !!enabled },
   });

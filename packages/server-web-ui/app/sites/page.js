@@ -18,7 +18,7 @@ import {
   getAgentSiteOverrides,
   setAgentSiteOverride,
   deleteAgentSiteOverride,
-  toggleGlobalSiteBlocklist,
+  toggleGlobalTier,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
 import { formatRelativeTime } from '../../lib/format';
@@ -440,7 +440,7 @@ export default function SitesPage() {
     const prev = sitesData.globalSiteBlocklist;
     setSitesData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
     try {
-      const result = await toggleGlobalSiteBlocklist(next);
+      const result = await toggleGlobalTier(next);
       setSitesData((d) => ({ ...d, globalSiteBlocklist: result.globalSiteBlocklist || d.globalSiteBlocklist }));
       toast.info(`Global blocklist ${next ? 'enabled' : 'disabled'}.`);
     } catch (e) {
