@@ -22,7 +22,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 - **Normalization** (`normalizeDomain`, `site-policy.js:112-123`): the host is lowercased, and the scheme, port and a leading `www.` are removed. `https://www.chase.com/login` becomes `chase.com`.
 - **Suffix walk** (`_suffixCandidates`, `site-policy.js:163-185`): the walk uses the public suffix list through `psl` and stops at the registrable domain. A rule on `chase.com` covers `secure.chase.com`. A rule on `secure.chase.com` covers only that host and its descendants.
 - **IP literals, `localhost` and other dotless hosts**: `normalizeDomain` rejects these hosts. When the URL uses http, https, ws or wss, or has no scheme, only the agent's `*` row can match it (`site-policy.js:253-260`, `_networkHost` `:147-153`). Named rules and global tiers never match these hosts.
-- **Non-network schemes** (`about:`, `chrome:`, `data:`, `file:`) are never managed by policy and are always allowed by default.
+- URLs with no host or a dotless host (`about:`, `chrome://`, `data:`, `file:///…`) resolve to a null domain and are allowed by default. `normalizeDomain` does not check the scheme, so a `file://` or `ftp://` URL with a dotted host is evaluated like any network URL.
 - A host that contains `*` never matches anything, including `*` rows (`site-policy.js:117`, `:151`).
 - **`*` is per-agent only.** The global write path rejects it (`global-user-rules.js:20-29`), and the schema forbids it in both global tables (`db/schema.sql:49`, `:56`).
 
@@ -30,7 +30,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 
 - Stored in `config.global_tier_enabled`. A missing key means on, and a read error also means on. Only the values `'false'` and `'0'` turn it off (`isGlobalTierEnabled`, `site-policy.js:212-224`). Written by `setGlobalTierEnabled` (`site-policy.js:226-236`).
 - Turning it off disables tiers 2 and 3 together (`site-policy.js:273`). Agent rules are unaffected. No rows are deleted.
-- The updater keeps fetching and writing the signed tier while the toggle is off (`global-site-blocklist-updater.js:49-54`, `:498-504`), so the data is current as soon as the tier is re-enabled.
+- The updater keeps fetching and writing the signed tier while the toggle is off (`global-site-blocklist-updater.js:51-56`, `:479-485`), so the data is current as soon as the tier is re-enabled.
 - Route: `POST /api/ui/sites/global-tier/toggle` (`server.js:1403-1419`) broadcasts `sites_changed` with reason `global_tier_toggle`.
 - The popup disables its Block/Allow toggle while the tier is off (`packages/chrome-extension-unpacked/popup/popup.js:220`). A rule written to the popup route anyway is stored but has no effect until the tier is back on.
 
@@ -120,9 +120,9 @@ All tables are in the shared SQLite DB, defined in `db/schema.sql`.
 | Table / key | Defined at | Contents | Written by |
 |---|---|---|---|
 | `global_user_site_rules` | `schema.sql:48` | `domain` (no `*`), `decision`, timestamps | `global-user-rules.js`, which is the single path shared by the Sites page and the popup |
-| `global_site_blocklist_rules` | `schema.sql:55` | `domain`, `created_at` (block only) | Only the blocklist updater (`_applySignedTier`) |
+| `global_site_blocklist_rules` | `schema.sql:55` | `domain`, `created_at` (block only) | Only the blocklist updater at runtime (migration 002 seeds rows and prefixes the version on upgrade) |
 | `agent_site_rules` | `schema.sql:60` | `agent_id`, `domain` or `*`, `decision`; unique per (agent, domain) | `sitePolicy.setAgentRule` (`site-policy.js:393-407`) |
-| `global_site_blocklist_meta` | `schema.sql:69` | Single row: `version`, `last_fetched_at`, `source_url`, `domain_count` | Only the blocklist updater |
+| `global_site_blocklist_meta` | `schema.sql:69` | Single row: `version`, `last_fetched_at`, `source_url`, `domain_count` | Only the blocklist updater at runtime (migration 002 seeds rows and prefixes the version on upgrade) |
 | `site_policy_events` | `schema.sql:82-96` | Event log (see [Event log](#event-log)) | `site-policy-events.js` |
 | `config.global_tier_enabled` | `site-policy.js:62` | `'true'` / `'false'` | `setGlobalTierEnabled` |
 
@@ -145,7 +145,7 @@ Each site-policy check made for a known agent is recorded in `site_policy_events
 - **Retention**: rows older than 30 days are removed first, then the table is cut to the newest 5000 rows (`DEFAULT_MAX_AGE_DAYS` / `DEFAULT_MAX_ROWS`, `site-policy-events.js:31-32`; `cleanup`, `:148-181`).
 - **Not recorded**:
   - checks with no agent or no domain (`_recordPolicyEvent`, `mcp-handler.js:1476-1480`), such as popup lookups or calls without a valid key;
-  - non-network URLs (`chrome://`, `file://`, …), which resolve to a null domain;
+  - URLs that resolve to a null domain;
   - checks the gate could not complete, which are refused with the fail-closed envelope (see [Fail-closed cases](#fail-closed-cases)).
 - **IP literals and single-label hosts** such as `localhost` are stored under their raw lowercased host. Only the agent's `*` rule covers them, and the events API marks them `actionable: false` (`site-policy-events.js:265`).
 - **Allow / Revoke actions** (`POST /api/ui/agents/:agentId/site-events/{allow,revoke}`) create per-agent rules for the exact domain. Revoke always writes `block` and never deletes (`site-policy-events-routes.js:79-117`).
@@ -185,7 +185,8 @@ Live UI WebSocket events:
 |---|---|
 | Hash mismatch on a remote `manifest.json` or list file after the signature verified | The run is aborted and the DB is unchanged (`:346-348`, `:374-376`) |
 | Signature failure, network error or missing list file | Falls back to the verified local cache (`:325-330`, `:402-418`) |
-| Signed manifest returns 404 and no usable cache | Skipped with `no-signed-manifest`; the DB and cache are unchanged, whether or not a meta row exists (`:420-430`) |
+| Signed manifest or its `.sig` returns 404 and no usable cache | Skipped with `no-signed-manifest`; the DB and cache are unchanged, whether or not a meta row exists (`:420-430`) |
+| Manifest parse error, missing `version`, or DB write failure | Aborted with `{ updated: false, error }`; the DB is unchanged; `lastCheckError` is set (`:350-355`, `:432-437`, `:484-489`) |
 | No verified remote and no verified cache (network error, signature failure, missing `manifest.json` or list file) | Skipped with `unavailable` and a `reason` (for example `list "<file>": list file missing on remote`). Nothing is written to the DB or the cache. Existing rows and the stored version are kept, and the next tick retries (`:420-430`). A fresh install that has never fetched successfully has no rows and `version: null` until its first success. An install emptied by the old version-`'0'` placeholder recovers on the next verified fetch |
 | `signed-manifest.json` edited by hand | CI passes because it checks hashes only. Daemons reject the bundle at signature verification and keep what they have |
 
@@ -214,7 +215,7 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 
 1. Make the common edits above and open the PR without re-signing.
 2. `check-signed-manifest` **fails** with a hash mismatch on the PR, and fails again on `main` after merge. Merging requires overriding the red check.
-3. Daemons reject the unsigned change with `manifest.json hash mismatch — refusing update` (`global-site-blocklist-updater.js:346-348`, `:375-376`) and keep the last good list.
+3. Daemons reject the unsigned change with `remote manifest.json hash mismatch — refusing update` (`global-site-blocklist-updater.js:346-348`, `:375-376`) and keep the last good list; the returned `{error}` value is `manifest.json hash mismatch`.
 4. `release-stable.yml` re-signs and commits the result to `main` (`.github/workflows/release-stable.yml:113-129`, `:158-166`). `release-nightly.yml` re-signs only inside the runner and never commits (`.github/workflows/release-nightly.yml:129-144`).
 5. The list goes live within 24 h of the next **stable** release.
 
@@ -228,6 +229,6 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 |---|---|
 | First boot offline: until the first successful fetch the signed tier has no rows, because no signed snapshot ships with the installer | #116 |
 | Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
-| Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings); `release-stable.yml:121` points to an old CONTRIBUTING heading | #112 |
+| Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings) | #112 |
 | Workflow primitives bypass the gate; pending-navigation gap | #114 |
 | The verifier ignores the signed manifest's `kind`; CI checks hashes but not signatures | untracked |
