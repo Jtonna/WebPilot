@@ -98,7 +98,10 @@ function tableExists(db, name) {
 
 function tableSql(db, name) {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?").get(name);
-  return row ? row.sql : undefined;
+  // Normalize line endings so this comparison is agnostic to whether the
+  // source file (schema.sql) was checked out with CRLF (e.g. core.autocrlf
+  // on Windows) vs the migration's inline LF string literal.
+  return row ? row.sql.replace(/\r\n/g, '\n') : undefined;
 }
 
 function dump(db) {
