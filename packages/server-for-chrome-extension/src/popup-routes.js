@@ -160,7 +160,7 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
       // Tell the webapp Sites page (and any other UI consumer) the rule list
       // changed. Same event name the Sites admin routes emit.
       try {
-        broadcastUiEvent && broadcastUiEvent({ type: 'sites_changed', reason: 'popup_toggle' });
+        broadcastUiEvent && broadcastUiEvent({ type: 'site_policy_changed', reason: 'popup_toggle' });
       } catch (_e) { /* non-fatal */ }
       return res.json({
         ok: true,

@@ -32,7 +32,7 @@ function _invalidDomainReason(domain) {
 function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agentIdFromKey }) {
   function _broadcast(reason) {
     try {
-      broadcastUiEvent && broadcastUiEvent({ type: 'sites_changed', reason });
+      broadcastUiEvent && broadcastUiEvent({ type: 'site_policy_changed', reason });
     } catch (_e) { /* ignore */ }
   }
 

@@ -1203,7 +1203,7 @@ function mountWebUiRoutes(app, deps) {
   // Webapp Sites page CRUD over the site-policy tables. Reads + writes are
   // localhost-only (auth) and writes go through mutatingAuth for the same
   // defense-in-depth gate the other admin endpoints use. Every successful
-  // write broadcasts a `sites_changed` UI event so any open Sites tab
+  // write broadcasts a `site_policy_changed` UI event so any open Sites tab
   // refetches.
   const sitePolicy = require('./site-policy');
 
@@ -1226,7 +1226,7 @@ function mountWebUiRoutes(app, deps) {
 
   function _broadcastSitesChanged(reason) {
     try {
-      broadcastUiEvent && broadcastUiEvent({ type: 'sites_changed', reason: reason || null });
+      broadcastUiEvent && broadcastUiEvent({ type: 'site_policy_changed', reason: reason || null });
     } catch (_e) { /* ignore */ }
   }
 
@@ -1399,7 +1399,7 @@ function mountWebUiRoutes(app, deps) {
   // stop applying; per-agent rules are unaffected. The auto-updater
   // keeps writing the signed tier regardless of the toggle — it only gates
   // whether isAllowed consults those rows, not whether they're fetched.
-  // Broadcasts a sites_changed WS event so connected Sites pages re-render.
+  // Broadcasts a site_policy_changed WS event so connected Sites pages re-render.
   app.post('/api/ui/site-policy/global-tier/toggle', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const enabled = sitePolicy.setGlobalTierEnabled(Boolean(req.body && req.body.enabled));
