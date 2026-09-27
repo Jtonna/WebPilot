@@ -34,8 +34,8 @@ CREATE INDEX IF NOT EXISTS idx_pairings_state ON pairings(state, requested_at DE
 
 -- Site policy is tiered; each tier owns its own table so a row in one tier
 -- can never mask or overwrite a row in another:
---   * agent_site_overrides        per-agent tier. `domain` may be the literal
---                                 '*' (agent-wide default decision).
+--   * agent_site_rules            per-agent rules tier. `domain` may be the
+--                                 literal '*' (agent-wide default decision).
 --   * global_user_site_rules      global tier, rules the user set by hand.
 --                                 Exact domains only (no '*').
 --   * global_site_blocklist_rules global tier, domains from the signed global
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS global_site_blocklist_rules (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS agent_site_overrides (
+CREATE TABLE IF NOT EXISTS agent_site_rules (
   id INTEGER PRIMARY KEY,
   agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   domain TEXT NOT NULL,                     -- normalized, or the literal '*' (agent-wide default)
@@ -65,7 +65,6 @@ CREATE TABLE IF NOT EXISTS agent_site_overrides (
   created_at TEXT NOT NULL,
   UNIQUE(agent_id, domain)
 );
-CREATE INDEX IF NOT EXISTS idx_agent_overrides ON agent_site_overrides(agent_id, domain);
 
 CREATE TABLE IF NOT EXISTS global_site_blocklist_meta (
   id INTEGER PRIMARY KEY CHECK(id=1),       -- single row table
@@ -85,7 +84,7 @@ CREATE TABLE IF NOT EXISTS site_policy_events (
   agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   domain TEXT NOT NULL,                       -- verdict.domain: normalized host, or raw IP/single-label host
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
-  source TEXT NOT NULL CHECK(source IN ('agent_override','global_user','global_site_blocklist','default')),
+  source TEXT NOT NULL CHECK(source IN ('agent_rule','global_user','global_site_blocklist','default')),
   matched_domain TEXT,                        -- stored domain of matching rule; '*' for agent wildcard; NULL for default
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
