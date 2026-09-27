@@ -38,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `tab_id` must now be an integer on every tab-scoped tool; a missing, numeric-string (`"7"`) or non-integer value is rejected with `invalid_tab_id`. The tool schemas always declared `tab_id` as a number. (#100)
 - `browser_create_tab` rejects a non-string `url` with `invalid_url`; a missing or empty `url` still fails in the extension as before. (#100)
 - Inside `browser_request_chain`, a step whose policy check fails now returns that envelope as the step's result; later steps still run. (#100)
+- A failed global blocklist update (network error, bad signature, or a missing file) with no valid local cache no longer empties the signed blocklist. Existing rows and the stored version are kept and the next daily check retries. On a fresh install that has never fetched successfully, the Sites page shows no version and "updated never" instead of version `0` "updated just now". Installs already emptied by this bug recover on the next successful fetch. (#101)
+- The status API's `globalSiteBlocklist` object adds `lastCheckedAt` and `lastCheckError` (in-memory since the last daemon start), so a failed or cache-served check is visible. (#101)
 
 ## [1.1.8]
 
