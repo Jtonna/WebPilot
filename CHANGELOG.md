@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
+- fix(server): guard schema migration 001 against the missing `config` table on a brand-new database. In v2.2.0, fresh installs failed SQLite init and could not pair agents; upgraded installs were not affected. No user action is needed once updated. The daemon now exits with code 1 when SQLite init fails instead of running without a database while `/health` still responded. (#96)
 
 ## [1.1.8]
 
