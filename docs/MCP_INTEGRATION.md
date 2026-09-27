@@ -73,7 +73,7 @@ Site-policy enforcement is **server-side** — see [`docs/SITE_POLICY.md`](./SIT
 - Non-network URLs (`about:`, `chrome:`, `data:`, `file:`) are never policy-managed and always default-allow.
 - The gate fails closed: if a verdict cannot be reached (internal error, extension disconnected, unreadable tab URL, malformed `tab_id`/`url`), the call is refused with a [`site policy check failed`](#site-policy-check-failed) envelope, which is distinct from [Blocked by Site Policy](#blocked-by-site-policy). See [fail-closed cases](./SITE_POLICY.md#fail-closed-cases).
 - The signed global blocklist is **fetched from the WebPilot repo, signature-verified, cached locally, and refreshed at boot and every 24 hours** — not bundled with the package. If a refresh fails and there is no valid cache, the existing list is kept; a fresh install that has never fetched successfully has no signed rows until its first successful fetch.
-- Toggling the global tier and managing rules is done at `http://localhost:3456/ui/sites/` — see [global tier toggle](./SITE_POLICY.md#global-tier-toggle).
+- Toggling the global tier and managing rules is done at `http://localhost:3456/ui/site-policy/` — see [global tier toggle](./SITE_POLICY.md#global-tier-toggle).
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 
@@ -1237,7 +1237,7 @@ If the block happens on an existing tab (checkpoint B — any `TAB_ID_TOOLS` cal
 
 **Cause:** The URL's domain is blocked at whichever policy tier matched first — see [Security: Site Policy](#security-site-policy) and [`docs/SITE_POLICY.md`](./SITE_POLICY.md#precedence) for precedence.
 
-**Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds` — no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/sites/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
+**Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds` — no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/site-policy/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
 
 ### Site policy check failed
 
