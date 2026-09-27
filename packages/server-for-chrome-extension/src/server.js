@@ -12,6 +12,8 @@ const formatterManager = require('./formatter-manager');
 const formatterUpdater = require('./formatter-updater');
 const globalSiteBlocklistUpdater = require('./global-site-blocklist-updater');
 const formatterLogs = require('./formatter-logs');
+const sitePolicyEvents = require('./site-policy-events');
+const { mountSiteEventRoutes } = require('./site-policy-events-routes');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
@@ -1461,6 +1463,15 @@ function mountWebUiRoutes(app, deps) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // Site policy event log: GET /api/ui/sites/events plus the per-event
+  // allow / revoke actions. See site-policy-events-routes.js.
+  mountSiteEventRoutes(app, {
+    auth,
+    mutatingAuth,
+    broadcastUiEvent,
+    agentIdFromKey: _agentIdFromKey,
+  });
 }
 
 function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
@@ -1917,6 +1928,21 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     console.log(`[ui-ws] failed to attach formatter-logs listener: ${e.message}`);
   }
 
+  // Same bridge for the site policy event log so an open Sites page
+  // refetches when a new (agent, domain) row appears, a verdict flips, or
+  // retention prunes rows.
+  try {
+    sitePolicyEvents.events.on('changed', (p) => {
+      try {
+        broadcastUiEvent({ type: 'site_policy_events_changed', reason: (p && p.reason) || null });
+      } catch (e) {
+        console.log(`[ui-ws] site_policy_events_changed broadcast failed: ${e.message}`);
+      }
+    });
+  } catch (e) {
+    console.log(`[ui-ws] failed to attach site-policy-events listener: ${e.message}`);
+  }
+
   // Eagerly load notification preferences so the in-memory cache is warm
   // before the first pairing request notification fires.
   try {
@@ -2056,6 +2082,24 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   }, 24 * 60 * 60 * 1000);
   // Don't keep the event loop alive just for this housekeeping timer.
   if (dailyFormatterIncidentsInterval.unref) dailyFormatterIncidentsInterval.unref();
+
+  // Site policy event log retention: drop rows unseen for
+  // DEFAULT_MAX_AGE_DAYS, then cap the table at DEFAULT_MAX_ROWS. One boot
+  // pass + hourly (the row cap can be hit quickly by a busy agent).
+  try {
+    const r = sitePolicyEvents.cleanup();
+    console.log(`[site-policy-events:cleanup] startup pass: removed=${r.removed} kept=${r.kept}`);
+  } catch (e) {
+    console.log(`[site-policy-events:cleanup] startup pass failed: ${e.message}`);
+  }
+  const hourlySiteEventsInterval = setInterval(() => {
+    try {
+      sitePolicyEvents.cleanup();
+    } catch (e) {
+      console.warn(`[site-policy-events:cleanup] hourly pass failed: ${e.message}`);
+    }
+  }, 60 * 60 * 1000);
+  if (hourlySiteEventsInterval.unref) hourlySiteEventsInterval.unref();
 
   // Bridge async-pairing events back to the extension's WS so existing
   // `paired_agents_list` listeners in background.js keep working even though
@@ -2363,6 +2407,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   function clearMaintenanceIntervals() {
     try { clearInterval(hourlyCleanupInterval); } catch (_e) { /* ignore */ }
     try { clearInterval(dailyOldPairingsInterval); } catch (_e) { /* ignore */ }
+    try { clearInterval(hourlySiteEventsInterval); } catch (_e) { /* ignore */ }
   }
 
   // Clean up PID/port files on shutdown
