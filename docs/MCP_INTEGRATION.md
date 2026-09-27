@@ -58,12 +58,14 @@ Site-policy enforcement is **server-side**, implemented by `isAllowed(agentId, u
 
 **Precedence (highest first):**
 
-1. **Per-agent overrides** — rows in the `agent_site_overrides` table, scoped to the calling agent.
-2. **Global user rules** — rows in `global_site_rules` with `source='user'`, applied to all agents on this host.
-3. **Global site blocklist** — rows in `global_site_rules` with `source='global_site_blocklist'`, populated by `global-site-blocklist-updater.js` from the bundled `global-site-blocklists/` and gated by `config.global_site_blocklist_enabled`.
+1. **Per-agent overrides** — rows in the `agent_site_overrides` table, scoped to the calling agent (skipped when no agent is known). Named-domain rules are checked most-specific first; then the agent's `*` row, if any, applies as that agent's default for every site (including IP/`localhost` network URLs). A named rule always beats `*`.
+2. **Global user rules** — rows in `global_user_site_rules` (allow or block, exact domains only), applied to all agents on this host.
+3. **Global site blocklist** — rows in `global_site_blocklist_rules` (block-only), populated by `global-site-blocklist-updater.js` from the bundled `global-site-blocklists/`.
 4. **Default: allow.**
 
-**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides, global user rules, and toggling the global site blocklist.
+Tiers 2 and 3 together form the **global tier**, gated by the config key `global_tier_enabled` (missing key or config read error = enabled). Turning it off disables the whole global tier — both global user rules and the global site blocklist stop applying, and every call without an agent-tier match defaults to allow. Per-agent overrides are never affected. The blocklist updater keeps refreshing `global_site_blocklist_rules` while the tier is off, so the data is current when it is re-enabled. Resolution is first-match-wins and tiers beat specificity: a broad rule in a higher tier (e.g. an agent `*`) beats a narrow rule in a lower tier.
+
+**Managing site policy:** the web UI at `http://localhost:3456/ui/sites/` is the canonical surface for adding per-agent overrides (including an agent-wide `*` rule), global user rules, and toggling the global tier (global user rules + global site blocklist together).
 
 **Note on `api_key` parameter:** All tools except the four auth-exempt tools (`request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_dev_get_formatter_logs`) include an optional `api_key` string parameter in their schema. This is an alternative way to authenticate per-request without configuring the `X-API-Key` header. The `api_key` parameter is omitted from the individual tool documentation below for brevity.
 

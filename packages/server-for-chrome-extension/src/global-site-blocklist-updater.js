@@ -6,9 +6,10 @@
  * Fetches a small JSON manifest from this repo's `global-site-blocklists/`
  * directory via GitHub raw, compares its `version` against the row in
  * `global_site_blocklist_meta`, and, if newer, fetches each referenced
- * hosts.txt-style list and replaces every `global_site_rules` row with
- * `source='global_site_blocklist'` in a single transaction. User-set rows
- * (`source='user'`) are never touched.
+ * hosts.txt-style list and replaces the entire contents of
+ * `global_site_blocklist_rules` in a single transaction. The user-owned
+ * `global_user_site_rules` table is never touched — the two tables are
+ * separate, so there is no collision to resolve.
  *
  * Supply-chain integrity:
  *   - Every fetch tick pulls `signed-manifest.json` + `signed-manifest.json.sig`
@@ -45,10 +46,12 @@
  *   - Lowercase + run through `normalizeDomain()` so we drop www. and reject
  *     ip-literals.
  *
- * The global_site_blocklist_enabled flag has two effects:
- *   1. The auto-updater skips DB writes while it is false (this module).
- *   2. site-policy.isAllowed filters out rows with source='global_site_blocklist' at lookup time when it is false (see site-policy.js).
- * The flag defaults to true when the config row is absent. isGlobalSiteBlocklistEnabled() is the public read for both effects.
+ * The `global_tier_enabled` config flag (owned by site-policy.js) gates
+ * whether the global tier — both `global_user_site_rules` and
+ * `global_site_blocklist_rules` — is consulted at lookup time
+ * (site-policy.isAllowed). It has NO effect on this module: the updater
+ * always fetches and writes the signed tier regardless of the toggle, so
+ * the data is warm and ready the moment the tier is re-enabled.
  */
 
 const fs = require('fs');
@@ -66,14 +69,10 @@ const GITHUB_RAW_BASE =
   'https://raw.githubusercontent.com/Jtonna/WebPilot/main/global-site-blocklists';
 
 let _options = {
-  globalSiteBlocklistEnabledKey: 'global_site_blocklist_enabled',
   baseUrl: GITHUB_RAW_BASE,
 };
 
 function init(options = {}) {
-  if (options.globalSiteBlocklistEnabledKey) {
-    _options.globalSiteBlocklistEnabledKey = options.globalSiteBlocklistEnabledKey;
-  }
   if (options.baseUrl) {
     _options.baseUrl = options.baseUrl;
   }
@@ -82,20 +81,6 @@ function init(options = {}) {
 function _getDb() {
   // Lazy-require so tests can mock the connection module.
   return require('./db/connection').getDb();
-}
-
-function _isGlobalSiteBlocklistEnabled() {
-  try {
-    const db = _getDb();
-    const row = db
-      .prepare('SELECT value FROM config WHERE key = ?')
-      .get(_options.globalSiteBlocklistEnabledKey);
-    if (!row || typeof row.value !== 'string') return true; // default ON
-    return row.value !== 'false' && row.value !== '0';
-  } catch (e) {
-    console.log(`[global-site-blocklist-updater] _isGlobalSiteBlocklistEnabled lookup failed: ${e.message}`);
-    return true;
-  }
 }
 
 function _readMetaVersion() {
@@ -268,6 +253,56 @@ function _parseHostsFile(text) {
 }
 
 /**
+ * Atomically replace the entire contents of `global_site_blocklist_rules`
+ * with `domains` and upsert the `global_site_blocklist_meta` row (id=1) to
+ * record `version`/`sourceLabel`/domain count. Wrapped in a single
+ * transaction so a mid-write failure rolls back cleanly.
+ *
+ * `global_user_site_rules` (the user-owned tier) lives in a separate table
+ * and is never touched here — there is no collision to resolve.
+ *
+ * The input array is de-duped before insert (a plain INSERT, not
+ * INSERT OR IGNORE, since the delete above already guarantees an empty
+ * table — a duplicate in the input would otherwise violate the PK).
+ *
+ * Exported for tests and for `checkForUpdates`, which is the only other
+ * caller.
+ *
+ * Returns `{ deleted, inserted }` — row counts from the delete and insert.
+ */
+function _applySignedTier(domains, version, sourceLabel) {
+  const db = _getDb();
+  const nowIso = new Date().toISOString();
+  const deleteStmt = db.prepare('DELETE FROM global_site_blocklist_rules');
+  const insertStmt = db.prepare(
+    `INSERT INTO global_site_blocklist_rules (domain, created_at) VALUES (?, ?)`
+  );
+  const upsertMetaStmt = db.prepare(
+    `INSERT INTO global_site_blocklist_meta (id, version, last_fetched_at, source_url, domain_count)
+     VALUES (1, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       version=excluded.version,
+       last_fetched_at=excluded.last_fetched_at,
+       source_url=excluded.source_url,
+       domain_count=excluded.domain_count`
+  );
+
+  const txn = db.transaction((domainList) => {
+    const deduped = Array.from(new Set(domainList));
+    const deleted = deleteStmt.run().changes;
+    let inserted = 0;
+    for (const d of deduped) {
+      insertStmt.run(d, nowIso);
+      inserted += 1;
+    }
+    upsertMetaStmt.run(version, nowIso, sourceLabel, deduped.length);
+    return { deleted, inserted };
+  });
+
+  return txn(domains);
+}
+
+/**
  * Run a single update cycle. Idempotent and safe to call repeatedly:
  *
  *   1. Fetch + verify signed-manifest.json from baseUrl. If it 404s
@@ -275,14 +310,16 @@ function _parseHostsFile(text) {
  *   2. Fetch manifest.json + each list file from baseUrl and verify
  *      each one's SHA-256 against the signed manifest.
  *   3. Compare manifest.version to global_site_blocklist_meta.version (if any).
- *   4. If different (or no meta row), within a single transaction:
- *      delete all `source='global_site_blocklist'` rows, insert the new ones,
- *      upsert the meta row.
+ *   4. If different (or no meta row), atomically swap the entire contents of
+ *      `global_site_blocklist_rules` for the new domain set and upsert the
+ *      meta row (see `_applySignedTier`). This always happens regardless of
+ *      the `global_tier_enabled` toggle — the toggle only affects whether
+ *      site-policy consults the tier at lookup time, not whether this
+ *      updater keeps it fresh.
  *
  * Returns one of:
  *   { updated: true,  fromVersion, toVersion, domainCount }
  *   { updated: false, currentVersion }            (already up-to-date)
- *   { updated: false, skipped: 'disabled' }       (global site blocklist disabled)
  *   { updated: false, skipped: 'no-signed-manifest' }  (pre-signing release)
  *   { updated: false, error: <message> }          (network / parse / sig failure)
  */
@@ -458,57 +495,13 @@ async function checkForUpdates() {
     `[global-site-blocklist-updater] total global-blocklist domains in remote v${remoteVersion}: ${domainList.length}`
   );
 
-  if (!_isGlobalSiteBlocklistEnabled()) {
-    console.log(
-      `[global-site-blocklist-updater] global site blocklist disabled via config — fetched ${domainList.length} domains but NOT writing to DB`
-    );
-    return { updated: false, skipped: 'disabled', remoteVersion, domainCount: domainList.length };
-  }
-
-  // Atomic swap: delete every source='global_site_blocklist' row, insert the new set,
-  // upsert the meta row. Wrap in a transaction so any failure rolls back.
+  // Atomic swap: replace every row in `global_site_blocklist_rules` with the
+  // new domain set and upsert the meta row. Always runs — the
+  // `global_tier_enabled` toggle has no bearing on whether this data stays
+  // fresh, only on whether site-policy consults it at lookup time.
   let writeResult;
   try {
-    const db = _getDb();
-    const nowIso = new Date().toISOString();
-    const deleteStmt = db.prepare(
-      "DELETE FROM global_site_rules WHERE source = 'global_site_blocklist'"
-    );
-    // INSERT OR IGNORE: if a user-set row already exists for the same
-    // domain, leave it alone. The preceding DELETE has already cleared
-    // every prior global-blocklist row, so collisions only happen against
-    // source='user' rules and the user always wins.
-    const insertStmt = db.prepare(
-      `INSERT OR IGNORE INTO global_site_rules
-         (domain, decision, source, created_at, updated_at)
-       VALUES (?, 'block', 'global_site_blocklist', ?, ?)`
-    );
-    const upsertMetaStmt = db.prepare(
-      `INSERT INTO global_site_blocklist_meta (id, version, last_fetched_at, source_url, domain_count)
-       VALUES (1, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         version=excluded.version,
-         last_fetched_at=excluded.last_fetched_at,
-         source_url=excluded.source_url,
-         domain_count=excluded.domain_count`
-    );
-
-    const txn = db.transaction((domains) => {
-      const deleted = deleteStmt.run().changes;
-      let inserted = 0;
-      for (const d of domains) {
-        // The ON CONFLICT … WHERE source='global_site_blocklist' clause means user rows
-        // for the same domain are preserved (run() reports 0 changes for
-        // those). We don't want to ever clobber a user rule with a
-        // global-blocklist rule.
-        const res = insertStmt.run(d, nowIso, nowIso);
-        if (res.changes > 0) inserted += 1;
-      }
-      upsertMetaStmt.run(remoteVersion, nowIso, sourceLabel, domains.length);
-      return { deleted, inserted };
-    });
-
-    writeResult = txn(domainList);
+    writeResult = _applySignedTier(domainList, remoteVersion, sourceLabel);
   } catch (err) {
     console.error(`[global-site-blocklist-updater] DB write failed: ${err.message}`);
     return { updated: false, error: err.message };
@@ -530,8 +523,11 @@ async function checkForUpdates() {
 }
 
 /**
- * Read the meta row plus the live count of source='global_site_blocklist' rows. Used by
- * /api/ui/status to render a small summary on the dashboard.
+ * Read the meta row plus the live count of `global_site_blocklist_rules`
+ * rows. Used by /api/ui/status to render a small summary on the dashboard.
+ * `enabled` reflects the `global_tier_enabled` toggle (owned by
+ * site-policy.js) — it describes whether the tier is currently consulted at
+ * lookup time, not whether this updater is keeping it fresh (it always is).
  */
 function getStatus() {
   let enabled = true;
@@ -540,7 +536,7 @@ function getStatus() {
   let domainCount = 0;
   try {
     const db = _getDb();
-    enabled = _isGlobalSiteBlocklistEnabled();
+    enabled = require('./site-policy').isGlobalTierEnabled();
     const meta = db
       .prepare('SELECT * FROM global_site_blocklist_meta WHERE id = 1')
       .get();
@@ -549,7 +545,7 @@ function getStatus() {
       lastFetchedAt = meta.last_fetched_at || null;
     }
     const cnt = db
-      .prepare("SELECT COUNT(*) AS c FROM global_site_rules WHERE source = 'global_site_blocklist'")
+      .prepare('SELECT COUNT(*) AS c FROM global_site_blocklist_rules')
       .get();
     domainCount = cnt ? cnt.c : 0;
   } catch (e) {
@@ -562,7 +558,7 @@ module.exports = {
   init,
   checkForUpdates,
   getStatus,
-  isGlobalSiteBlocklistEnabled: _isGlobalSiteBlocklistEnabled,
   // exposed for tests
   _parseHostsFile,
+  _applySignedTier,
 };

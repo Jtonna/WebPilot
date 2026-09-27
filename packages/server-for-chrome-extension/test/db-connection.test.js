@@ -16,7 +16,8 @@ const { listMigrations } = require('../src/db/schema-migrations');
 const EXPECTED_TABLES = [
   'agents',
   'pairings',
-  'global_site_rules',
+  'global_user_site_rules',
+  'global_site_blocklist_rules',
   'agent_site_overrides',
   'global_site_blocklist_meta',
   'formatter_incidents',

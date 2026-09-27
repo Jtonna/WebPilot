@@ -32,18 +32,35 @@ CREATE INDEX IF NOT EXISTS idx_pairings_state ON pairings(state, requested_at DE
 
 -- ─── Site policy ──────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS global_site_rules (
-  domain TEXT PRIMARY KEY,                  -- normalized (lowercased, no scheme, no port)
+-- Site policy is tiered; each tier owns its own table so a row in one tier
+-- can never mask or overwrite a row in another:
+--   * agent_site_overrides        per-agent tier. `domain` may be the literal
+--                                 '*' (agent-wide default decision).
+--   * global_user_site_rules      global tier, rules the user set by hand.
+--                                 Exact domains only (no '*').
+--   * global_site_blocklist_rules global tier, domains from the signed global
+--                                 site blocklist bundle. Block-only; rewritten
+--                                 wholesale by global-site-blocklist-updater.
+-- The config key `global_tier_enabled` switches the whole global tier (both
+-- global_* rule tables) on or off.
+-- All `domain` columns are normalized (lowercased, no scheme, no port).
+
+CREATE TABLE IF NOT EXISTS global_user_site_rules (
+  domain TEXT PRIMARY KEY CHECK(instr(domain, '*') = 0),
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
-  source TEXT NOT NULL CHECK(source IN ('user','global_site_blocklist')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS global_site_blocklist_rules (
+  domain TEXT PRIMARY KEY CHECK(instr(domain, '*') = 0),
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agent_site_overrides (
   id INTEGER PRIMARY KEY,
   agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  domain TEXT NOT NULL,                     -- normalized
+  domain TEXT NOT NULL,                     -- normalized, or the literal '*' (agent-wide default)
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
   created_at TEXT NOT NULL,
   UNIQUE(agent_id, domain)
