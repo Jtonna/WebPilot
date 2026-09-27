@@ -60,14 +60,14 @@ function seedAgent(db, { id, apiKey = 'hash_' + id }) {
 
 function seedAgentRule(db, { agentId, domain, decision }) {
   db.prepare(
-    `INSERT OR REPLACE INTO agent_site_overrides (agent_id, domain, decision, created_at)
+    `INSERT OR REPLACE INTO agent_site_rules (agent_id, domain, decision, created_at)
      VALUES (?, ?, ?, ?)`
   ).run(agentId, domain, decision, new Date().toISOString());
 }
 
 function clearTables(db) {
   db.exec(
-    'DELETE FROM agent_site_overrides; DELETE FROM global_user_site_rules; DELETE FROM global_site_blocklist_rules; DELETE FROM agents; DELETE FROM config;'
+    'DELETE FROM agent_site_rules; DELETE FROM global_user_site_rules; DELETE FROM global_site_blocklist_rules; DELETE FROM agents; DELETE FROM config;'
   );
 }
 
@@ -79,7 +79,7 @@ describe('worked examples (#102)', () => {
     injectDb(testDb);
   });
 
-  test('Coinbase: signed block + global user allow → global user wins for agents without overrides', () => {
+  test('Coinbase: signed block + global user allow → global user wins for agents without agent rules', () => {
     seedSigned(testDb, 'coinbase.com');
     seedGlobalUser(testDb, { domain: 'coinbase.com', decision: 'allow' });
     seedAgent(testDb, { id: 1 });
@@ -93,14 +93,14 @@ describe('worked examples (#102)', () => {
 
     const r2 = isAllowed(2, 'https://coinbase.com');
     assert.equal(r2.allowed, false);
-    assert.equal(r2.source, 'agent_override');
+    assert.equal(r2.source, 'agent_rule');
 
     const rNull = isAllowed(null, 'https://coinbase.com');
     assert.equal(rNull.allowed, true);
     assert.equal(rNull.source, 'global_user');
   });
 
-  test('Amex: signed block, per-agent allow overrides for one agent, blocked for others and null', () => {
+  test('Amex: signed block, per-agent allow rule for one agent, blocked for others and null', () => {
     seedSigned(testDb, 'americanexpress.com');
     seedAgent(testDb, { id: 1 });
     seedAgent(testDb, { id: 2 });
@@ -110,11 +110,11 @@ describe('worked examples (#102)', () => {
 
     const r1 = isAllowed(1, 'https://americanexpress.com');
     assert.equal(r1.allowed, true);
-    assert.equal(r1.source, 'agent_override');
+    assert.equal(r1.source, 'agent_rule');
 
     const r1sub = isAllowed(1, 'https://www.americanexpress.com/x');
     assert.equal(r1sub.allowed, true);
-    assert.equal(r1sub.source, 'agent_override');
+    assert.equal(r1sub.source, 'agent_rule');
 
     for (const agentId of [2, 3, null]) {
       const r = isAllowed(agentId, 'https://americanexpress.com');
@@ -123,7 +123,7 @@ describe('worked examples (#102)', () => {
     }
   });
 
-  test('LinkedIn + wildcard: toggle off, agent wildcard block with named allow override', () => {
+  test('LinkedIn + wildcard: toggle off, agent wildcard block with named allow rule', () => {
     setGlobalTier(testDb, false);
     seedSigned(testDb, 'linkedin.com');
     seedGlobalUser(testDb, { domain: 'example.com', decision: 'allow' });
@@ -272,15 +272,15 @@ describe('additional coverage (#102)', () => {
     assert.equal(normalizeRuleDomain('*'), null);
   });
 
-  test('setAgentOverride / removeAgentOverride round-trip on wildcard', () => {
+  test('setAgentRule / removeAgentRule round-trip on wildcard', () => {
     seedAgent(testDb, { id: 1 });
-    const { setAgentOverride, removeAgentOverride, isAllowed } = loadSitePolicy();
-    setAgentOverride(1, '*', 'block');
+    const { setAgentRule, removeAgentRule, isAllowed } = loadSitePolicy();
+    setAgentRule(1, '*', 'block');
     const blocked = isAllowed(1, 'https://anywhere.com');
     assert.equal(blocked.allowed, false);
     assert.equal(blocked.matchedDomain, '*');
 
-    removeAgentOverride(1, '*');
+    removeAgentRule(1, '*');
     const allowed = isAllowed(1, 'https://anywhere.com');
     assert.equal(allowed.allowed, true);
     assert.equal(allowed.source, 'default');
@@ -359,7 +359,7 @@ describe('additional coverage (#102)', () => {
     const { isAllowed } = loadSitePolicy();
     const result = isAllowed(1, 'https://example.com');
     assert.equal(result.allowed, false);
-    assert.equal(result.source, 'agent_override');
+    assert.equal(result.source, 'agent_rule');
   });
 
   test("wildcard host input does not match the agent's '*' row", () => {

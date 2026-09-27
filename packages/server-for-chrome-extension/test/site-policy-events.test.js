@@ -51,7 +51,7 @@ function seedAgent(db, { id, state = 'active' }) {
 
 function seedAgentRule(db, { agentId, domain, decision }) {
   db.prepare(
-    `INSERT INTO agent_site_overrides (agent_id, domain, decision, created_at) VALUES (?, ?, ?, ?)`
+    `INSERT INTO agent_site_rules (agent_id, domain, decision, created_at) VALUES (?, ?, ?, ?)`
   ).run(agentId, domain, decision, new Date().toISOString());
 }
 
@@ -142,7 +142,7 @@ describe('record', () => {
     const seen = captureEvents(mod);
     const res = mod.record(
       1,
-      verdict('example.com', 'block', 'agent_override', 'example.com'),
+      verdict('example.com', 'block', 'agent_rule', 'example.com'),
       at('2026-01-02T00:00:00.000Z')
     );
     assert.equal(res.decisionChanged, true);
@@ -153,7 +153,7 @@ describe('record', () => {
     assert.equal(after.decision_changed_at, '2026-01-02T00:00:00.000Z');
     assert.equal(after.last_seen_at, '2026-01-02T00:00:00.000Z');
     assert.equal(after.decision, 'block');
-    assert.equal(after.source, 'agent_override');
+    assert.equal(after.source, 'agent_rule');
     assert.equal(after.matched_domain, 'example.com');
     assert.equal(after.hit_count, 2);
   });
@@ -180,9 +180,9 @@ describe('record', () => {
   });
 
   test('matched_domain-only change emits verdict_changed', () => {
-    mod.record(1, verdict('a.example.com', 'block', 'agent_override', '*'));
+    mod.record(1, verdict('a.example.com', 'block', 'agent_rule', '*'));
     const seen = captureEvents(mod);
-    mod.record(1, verdict('a.example.com', 'block', 'agent_override', 'example.com'));
+    mod.record(1, verdict('a.example.com', 'block', 'agent_rule', 'example.com'));
     assert.equal(seen.length, 1);
     assert.equal(seen[0].reason, 'verdict_changed');
   });
@@ -443,12 +443,12 @@ describe('list', () => {
     assert.equal(entries[1].actionable, false);
   });
 
-  test('agentRuleDecision reflects an exact-domain agent_site_overrides row', () => {
+  test('agentRuleDecision reflects an exact-domain agent_site_rules row', () => {
     seedAgentRule(db, { agentId: 1, domain: 'ruled.com', decision: 'block' });
     seedAgentRule(db, { agentId: 1, domain: '*', decision: 'allow' });
     seedAgentRule(db, { agentId: 2, domain: 'plain.com', decision: 'allow' });
-    mod.record(1, verdict('ruled.com', 'block', 'agent_override', 'ruled.com'), at('2026-01-02T00:00:00.000Z'));
-    mod.record(1, verdict('plain.com', 'allow', 'agent_override', '*'), at('2026-01-01T00:00:00.000Z'));
+    mod.record(1, verdict('ruled.com', 'block', 'agent_rule', 'ruled.com'), at('2026-01-02T00:00:00.000Z'));
+    mod.record(1, verdict('plain.com', 'allow', 'agent_rule', '*'), at('2026-01-01T00:00:00.000Z'));
     const { entries } = mod.list();
     assert.equal(entries[0].domain, 'ruled.com');
     assert.equal(entries[0].agentRuleDecision, 'block');

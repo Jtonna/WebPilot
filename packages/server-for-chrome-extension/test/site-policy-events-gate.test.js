@@ -37,7 +37,7 @@ function freshDb() {
 }
 function seedAgentBlock(domain) {
   db.prepare(
-    `INSERT INTO agent_site_overrides (agent_id, domain, decision, created_at)
+    `INSERT INTO agent_site_rules (agent_id, domain, decision, created_at)
      VALUES (1, ?, 'block', ?)`
   ).run(domain, new Date().toISOString());
 }
@@ -140,7 +140,7 @@ test('agent block then browser_scroll -> same row flips to block; blocked envelo
   assert.equal(body.ok, false);
   assert.equal(body.error, 'site blocked by policy');
   assert.equal(body.domain, 'example.com');
-  assert.equal(body.policySource, 'agent_override');
+  assert.equal(body.policySource, 'agent_rule');
   assert.equal(body.tabId, 7);
   assert.ok(!sentCommands.some((c) => c.cmd === 'scroll'), 'scroll must not reach the extension');
 
@@ -148,7 +148,7 @@ test('agent block then browser_scroll -> same row flips to block; blocked envelo
   assert.equal(after.length, 1);
   assert.equal(after[0].id, before[0].id);
   assert.equal(after[0].decision, 'block');
-  assert.equal(after[0].source, 'agent_override');
+  assert.equal(after[0].source, 'agent_rule');
   assert.equal(after[0].matched_domain, 'example.com');
   assert.equal(after[0].hit_count, 2);
 
@@ -218,7 +218,7 @@ test('throwing recorder does not widen fail-open: allow still allows, block stil
     const blockedB = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
     const body = bodyOf(blockedB);
     assert.equal(body.error, 'site blocked by policy');
-    assert.equal(body.policySource, 'agent_override');
+    assert.equal(body.policySource, 'agent_rule');
     assert.ok(!sentCommands.some((c) => c.cmd === 'scroll'), 'blocked scroll must not reach extension');
 
     assert.equal(calls, 3);
