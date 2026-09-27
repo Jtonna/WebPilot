@@ -444,7 +444,7 @@ export default function SitesPage() {
           <div className="wp-sites-card-head">
             <div>
               <h2 id="wp-sites-global-title" className="wp-sites-card-title">Enable Global Block List</h2>
-              <p className="wp-sites-card-sub">Applies to all agents regardless of their custom rules.</p>
+              <p className="wp-sites-card-sub">Applies to all agents, but can be overridden by custom agent rules.</p>
             </div>
             {hasSitesData ? (
               <Toggle
