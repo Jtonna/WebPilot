@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 101,
-    "body": "Implementation status (auto-approved gate, epic #99 autonomous run)\n\n[sub-task 1] DONE: 11 checkForUpdates failure-handling tests (ed25519-signed fixtures, fetch stub, tmp data dir), 9 red before impl (d634081)\n[sub-task 2] DONE: updater applies only a verified bundle; empty placeholder removed; missing list file reports a reason; getStatus adds lastCheckedAt/lastCheckError (+ masked remote errors on cache fallback); server.js status fallbacks (9382b08)\n[sub-task 3] DONE: CHANGELOG Fixed entries (c2c5500)\n[sub-task 4] DONE: verification — 207/207 tests, greps clean, two-process offline smoke kept seeded rows (version v-smoke, 3 domains, lastCheckError set) and left a fresh DB with no meta row; a real fetch applied version 1 with 61 domains\nFollow-up: #116 (ship a signed snapshot with the installer for first boot offline)."
-  }
-]
+[]
