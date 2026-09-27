@@ -1488,8 +1488,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     require('./db/connection').init();
   } catch (e) {
     console.error('[server] SQLite init failed:', e && e.message);
-    // TODO: once the DB is mandatory across all stateful modules, rethrow
-    // here instead of swallowing.
+    throw e;
   }
 
   const app = express();
