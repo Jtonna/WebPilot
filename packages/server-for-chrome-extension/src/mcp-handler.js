@@ -21,6 +21,18 @@ const TAB_ID_TOOLS = new Set([
   'webpilot_run_workflow',
 ]);
 
+// Machine-readable `reason` codes carried by the fail-closed "site policy
+// check failed" envelope (see _buildPolicyUnavailableResponse). The gate
+// fails CLOSED: any time a policy verdict cannot be reached, the call is
+// refused with one of these reasons instead of being let through.
+const POLICY_FAILURE_REASONS = Object.freeze({
+  POLICY_ERROR: 'policy_error',
+  EXTENSION_DISCONNECTED: 'extension_disconnected',
+  TAB_URL_UNAVAILABLE: 'tab_url_unavailable',
+  INVALID_TAB_ID: 'invalid_tab_id',
+  INVALID_URL: 'invalid_url',
+});
+
 // Auto-close countdown for tabs that hit a blocked-by-policy check on a
 // tab_id-bearing tool. The error response carries the deadline so the agent
 // knows the tab is going away on its own.
@@ -925,13 +937,23 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       // dispatches so a blocked site never reaches the extension. A null
       // return means "allowed — proceed". A non-null return is the full MCP
       // result envelope and short-circuits the dispatch.
+      // Fails CLOSED: an exception while evaluating policy blocks the request
+      // with the 'site policy check failed' / policy_error envelope.
       try {
         const blocked = await _enforceSitePolicy(params.name, params.arguments || {}, effectiveKey);
         if (blocked) {
           return { jsonrpc: '2.0', id, result: blocked };
         }
       } catch (err) {
-        console.log(`[policy] enforcement threw: ${err.message} — failing open`);
+        console.error('[policy] enforcement threw — blocking request:', err);
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: _buildPolicyUnavailableResponse({
+            reason: POLICY_FAILURE_REASONS.POLICY_ERROR,
+            message: `Site policy could not be evaluated: ${err.message}. Request blocked.`,
+          }),
+        };
       }
 
       // Formatter-guide gate. Runs after site-policy. Requires agents to call
@@ -1041,15 +1063,23 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
   // ----------------------------------------------------------------------
 
   /**
+   * The canonical "extension not connected" message. Shared by
+   * _requireExtensionConnected, _browserCreateTab, the generic dispatch
+   * connectivity check, and the site-policy gate's extension_disconnected
+   * fail-closed envelope so the wording stays identical everywhere.
+   */
+  function _disconnectedMessage(profileId) {
+    return `No browser instance connected for profile '${profileId}'. Call browser_create_tab to launch Chrome.`;
+  }
+
+  /**
    * Ensure the extension is connected for the resolved profile. Throws an
    * Error with a helpful message if not. Returns the resolved profileId.
    */
   function _requireExtensionConnected(apiKey) {
     const targetProfile = resolveTargetProfile(apiKey);
     if (!extensionBridge.isConnected(targetProfile)) {
-      throw new Error(
-        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
-      );
+      throw new Error(_disconnectedMessage(targetProfile));
     }
     return targetProfile;
   }
@@ -1083,9 +1113,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     }
 
     if (!extensionBridge.isConnected(targetProfile)) {
-      throw new Error(
-        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
-      );
+      throw new Error(_disconnectedMessage(targetProfile));
     }
 
     return await extensionBridge.sendCommand(targetProfile, 'create_tab', { url });
@@ -1309,10 +1337,23 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
   //      schedule a delayed `close_tab` so the agent isn't stuck on a
   //      forbidden page.
   //
-  // Always-allowed tools: browser_get_tabs, browser_close_tab,
-  // request_pairing, check_pairing_status, every webpilot_* and webpilot_dev_*
-  // — they either don't touch a tab, or the agent legitimately needs them
-  // to clean up. Auth is enforced separately.
+  // Checked tools: browser_create_tab (A) and every tool in TAB_ID_TOOLS (B)
+  // — browser_click, browser_type, browser_scroll,
+  // browser_get_accessibility_tree, browser_inject_script,
+  // browser_execute_js and webpilot_run_workflow (this one IS checked; it
+  // is not exempt despite the webpilot_ prefix).
+  //
+  // Explicitly exempt: browser_get_tabs, browser_close_tab (the agent needs
+  // them to inspect/clean up, including on blocked tabs) and
+  // browser_request_chain (site-agnostic wrapper; each chained step is
+  // re-checked individually). Every other tool (request_pairing,
+  // check_pairing_status, the remaining webpilot_* / webpilot_dev_* tools)
+  // falls through as not site-bearing. Auth is enforced separately.
+  //
+  // The gate fails CLOSED: when a checked tool's verdict cannot be reached
+  // (malformed tab_id/url, extension disconnected, tab URL unreadable, or
+  // the policy evaluation throws) the call is refused with the
+  // 'site policy check failed' envelope rather than let through.
   // ----------------------------------------------------------------------
 
   /**
@@ -1333,6 +1374,29 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       if (willCloseAt) body.tabWillCloseAt = willCloseAt;
       if (typeof closeInSeconds === 'number') body.tabCloseInSeconds = closeInSeconds;
     }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
+      isError: true,
+    };
+  }
+
+  /**
+   * Fail-closed envelope for when the site-policy gate could NOT reach a
+   * verdict. Distinct from 'site blocked by policy': there is no domain,
+   * no policySource and no auto-close, and nothing is recorded in the
+   * site_policy_events log (no verdict exists to record). Body shape:
+   *   { ok: false, error: 'site policy check failed', reason, message,
+   *     [tabId] }
+   * where `reason` is one of POLICY_FAILURE_REASONS.
+   */
+  function _buildPolicyUnavailableResponse({ reason, message, tabId }) {
+    const body = {
+      ok: false,
+      error: 'site policy check failed',
+      reason,
+      message,
+    };
+    if (Number.isInteger(tabId)) body.tabId = tabId;
     return {
       content: [{ type: 'text', text: JSON.stringify(body, null, 2) }],
       isError: true,
@@ -1363,34 +1427,50 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
   }
 
   /**
-   * Look up the current URL for a given tab via `browser_get_tabs`. Returns
-   * the URL string or null if the tab isn't present. The extension already
-   * publishes a tabs list; we reuse the same RPC rather than introduce a
-   * separate "get one tab" command. The call adds a single extra
-   * roundtrip per checkpoint-B tool call — acceptable for v1; if it shows
-   * up as a hot spot, the extension could cache the active URL on every
-   * page state change.
+   * Strictly look up the current URL for a given tab via the extension's
+   * `get_tabs` command. Never throws. Returns one of:
+   *   { found: true, url }  — tab present (url is whatever the extension
+   *                           reported; may be non-string)
+   *   { found: false }      — get_tabs succeeded but the tab is not listed
+   *   { error }             — get_tabs failed (message string)
+   * Used by the fail-closed site-policy gate, which must distinguish these
+   * outcomes. The extension already publishes a tabs list; we reuse the
+   * same RPC rather than introduce a separate "get one tab" command. The
+   * call adds a single extra roundtrip per checkpoint-B tool call.
+   */
+  async function _lookupTabUrlStrict(profileId, tabId) {
+    let tabsResult;
+    try {
+      tabsResult = await extensionBridge.sendCommand(profileId, 'get_tabs', {});
+    } catch (err) {
+      return { error: (err && err.message) || String(err) };
+    }
+    const tabs = Array.isArray(tabsResult && tabsResult.tabs)
+      ? tabsResult.tabs
+      : Array.isArray(tabsResult)
+        ? tabsResult
+        : [];
+    for (const t of tabs) {
+      if (t && Number(t.id) === tabId) {
+        return { found: true, url: t.url };
+      }
+    }
+    return { found: false };
+  }
+
+  /**
+   * Lenient tab-URL lookup for non-policy callers (formatter-guide gate,
+   * webpilot_get_formatter_info). Returns the URL string, or null if the
+   * tab isn't present, has no string URL, or the lookup failed.
    */
   async function _resolveTabUrl(profileId, tabId) {
     if (!profileId || typeof tabId !== 'number') return null;
-    try {
-      const tabsResult = await extensionBridge.sendCommand(profileId, 'get_tabs', {});
-      const tabs = Array.isArray(tabsResult && tabsResult.tabs)
-        ? tabsResult.tabs
-        : Array.isArray(tabsResult)
-          ? tabsResult
-          : [];
-      for (const t of tabs) {
-        if (t && Number(t.id) === Number(tabId)) {
-          return typeof t.url === 'string' ? t.url : null;
-        }
-      }
-    } catch (err) {
-      console.log(
-        `[policy] _resolveTabUrl failed for tabId=${tabId}: ${err.message}`
-      );
+    const r = await _lookupTabUrlStrict(profileId, tabId);
+    if (r.error) {
+      console.log(`[policy] _resolveTabUrl failed for tabId=${tabId}: ${r.error}`);
+      return null;
     }
-    return null;
+    return r.found && typeof r.url === 'string' ? r.url : null;
   }
 
   function _recordPolicyEvent(agentId, verdict) {
@@ -1419,12 +1499,23 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       return null;
     }
 
-    const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
-
-    // Checkpoint A: browser_create_tab gates on args.url.
+    // Checkpoint A: browser_create_tab gates on args.url. No connectivity
+    // check here — _browserCreateTab may launch Chrome itself.
     if (name === 'browser_create_tab') {
       const url = args && args.url;
-      if (typeof url !== 'string' || url.length === 0) return null;
+      // Missing url: let the extension raise its own "URL is required".
+      if (url == null) return null;
+      if (typeof url !== 'string') {
+        console.warn(
+          `[policy] checkpoint-A FAIL-CLOSED reason=${POLICY_FAILURE_REASONS.INVALID_URL} tool=${name}`
+        );
+        return _buildPolicyUnavailableResponse({
+          reason: POLICY_FAILURE_REASONS.INVALID_URL,
+          message: 'url must be a string',
+        });
+      }
+      if (url.length === 0) return null;
+      const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
       const verdict = sitePolicy.isAllowed(agentId, url);
       _recordPolicyEvent(agentId, verdict);
       if (!verdict.allowed) {
@@ -1437,18 +1528,45 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       return null;
     }
 
-    // Checkpoint B: tools that operate on an existing tab_id.
+    // Checkpoint B: tools that operate on an existing tab_id. Every early
+    // return below fails CLOSED and happens before any _recordPolicyEvent.
     if (TAB_ID_TOOLS.has(name)) {
-      const tabId = args && (args.tab_id ?? args.tabId);
-      if (typeof tabId !== 'number') return null; // let the regular handler raise the missing-arg error
+      const raw = args ? args.tab_id : undefined;
+      const fail = (reason, message, tabId) => {
+        console.warn(
+          `[policy] checkpoint-B FAIL-CLOSED reason=${reason} tool=${name} tabId=${JSON.stringify(raw)}`
+        );
+        return _buildPolicyUnavailableResponse({ reason, message, tabId });
+      };
+
+      if (raw == null) {
+        return fail(POLICY_FAILURE_REASONS.INVALID_TAB_ID, 'tab_id is required');
+      }
+      if (!Number.isInteger(raw)) {
+        return fail(
+          POLICY_FAILURE_REASONS.INVALID_TAB_ID,
+          `tab_id must be an integer (got ${typeof raw}: ${JSON.stringify(raw)})`
+        );
+      }
+      const tabId = raw;
       const profileId = resolveTargetProfile(apiKey);
       if (!extensionBridge.isConnected(profileId)) {
-        // Don't block on a missing extension — the regular handler will
-        // surface the "not connected" error which is the more useful one.
-        return null;
+        return fail(POLICY_FAILURE_REASONS.EXTENSION_DISCONNECTED, _disconnectedMessage(profileId), tabId);
       }
-      const currentUrl = await _resolveTabUrl(profileId, tabId);
-      if (!currentUrl) return null; // tab not found / not navigated yet — let it through
+      const r = await _lookupTabUrlStrict(profileId, tabId);
+      if (r.error) {
+        return fail(POLICY_FAILURE_REASONS.TAB_URL_UNAVAILABLE, 'could not read tab URL: ' + r.error, tabId);
+      }
+      if (!r.found) {
+        return fail(POLICY_FAILURE_REASONS.TAB_URL_UNAVAILABLE, `tab ${tabId} not found`, tabId);
+      }
+      if (typeof r.url !== 'string') {
+        return fail(POLICY_FAILURE_REASONS.TAB_URL_UNAVAILABLE, `tab ${tabId} has no readable URL`, tabId);
+      }
+      const currentUrl = r.url;
+      const agentId = apiKey ? sitePolicy.resolveAgentIdFromApiKey(apiKey) : null;
+      // An empty URL (tab not navigated yet) yields the default-allow verdict
+      // with domain null, so _recordPolicyEvent is a no-op for it.
       const verdict = sitePolicy.isAllowed(agentId, currentUrl);
       _recordPolicyEvent(agentId, verdict);
       if (verdict.allowed) return null;
@@ -2007,9 +2125,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     }
 
     if (!extensionBridge.isConnected(targetProfile)) {
-      throw new Error(
-        `No browser instance connected for profile '${targetProfile}'. Call browser_create_tab to launch Chrome.`
-      );
+      throw new Error(_disconnectedMessage(targetProfile));
     }
 
     let commandType;
@@ -2134,7 +2250,14 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
                 stepResult = blocked;
               }
             } catch (e) {
-              console.log(`[policy] chain-step enforcement threw: ${e.message}`);
+              // Fail CLOSED: this step becomes the policy_error envelope; the
+              // truthy stepResult skips the formatter gate and dispatch, and
+              // later steps still run.
+              console.error('[policy] chain-step enforcement threw — blocking step:', e);
+              stepResult = _buildPolicyUnavailableResponse({
+                reason: POLICY_FAILURE_REASONS.POLICY_ERROR,
+                message: `Site policy could not be evaluated: ${e.message}. Step blocked.`,
+              });
             }
             if (!stepResult) {
               try {

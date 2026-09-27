@@ -57,11 +57,11 @@ Invariants:
 
 ## Where the gate runs
 
-The gate `_enforceSitePolicy` (`mcp-handler.js:1412-1472`) runs after auth and before dispatch (`mcp-handler.js:928-935`).
+The gate `_enforceSitePolicy` (`mcp-handler.js:1482-1590`) runs after auth and before dispatch (`mcp-handler.js:935-957`).
 
-- **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`mcp-handler.js:1424-1438`). A blocked URL is never opened.
-- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, which is resolved through the extension's `get_tabs` command (`_resolveTabUrl`, `:1374-1394`). A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:27`, `:1440-1467`).
-- **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2123-2138`). A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2130-2161`). A blocked step that takes a `tab_id` still triggers the auto-close.
+- **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`mcp-handler.js:1502-1529`). A blocked URL is never opened.
+- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, which is resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`; the lenient `_resolveTabUrl` wrapper at `:1461-1474` is used only by the formatter-guide gate and `webpilot_get_formatter_info`). A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
+- **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2241-2261`). A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`). A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues. A blocked step that takes a `tab_id` still triggers the auto-close.
 
 ### Checked and exempt tools
 
@@ -70,14 +70,14 @@ The gate `_enforceSitePolicy` (`mcp-handler.js:1412-1472`) runs after auth and b
 | `browser_create_tab` | yes | Checkpoint A |
 | `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow` | yes | Checkpoint B |
 | Each step inside `browser_request_chain` | yes | Gated again as its own tool |
-| `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (`mcp-handler.js:1414-1419`) |
-| `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (`mcp-handler.js:1469-1471`) |
+| `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (`mcp-handler.js:1493-1500`) |
+| `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (`mcp-handler.js:1587-1589`) |
 
 A new tool that takes `tab_id` must be added to `TAB_ID_TOOLS`. If it is not, the gate skips it without any warning.
 
 ### Blocked response
 
-Built by `_buildBlockedResponse` (`mcp-handler.js:1324-1340`) and returned with `isError: true`:
+Built by `_buildBlockedResponse` (`mcp-handler.js:1359-1381`) and returned with `isError: true`:
 
 ```json
 { "ok": false, "error": "site blocked by policy", "domain": "chase.com", "policySource": "global_site_blocklist" }
@@ -85,18 +85,33 @@ Built by `_buildBlockedResponse` (`mcp-handler.js:1324-1340`) and returned with 
 
 Checkpoint B adds `tabId`, `tabWillCloseAt` (an ISO timestamp) and `tabCloseInSeconds: 5`. Checkpoint A has none of these fields because the tab was never opened.
 
-### Fail-open cases
+When the gate cannot reach a verdict it returns a different envelope, built by `_buildPolicyUnavailableResponse` (`mcp-handler.js:1383-1404`), also with `isError: true`:
 
-This is current behavior, tracked in #100. In each case below, the call proceeds as if it were allowed:
+```json
+{ "ok": false, "error": "site policy check failed", "reason": "tab_url_unavailable", "message": "tab 123 not found", "tabId": 123 }
+```
 
-| Case | Where |
-|---|---|
-| Any exception thrown by the gate | `mcp-handler.js:927-935` |
-| Any exception thrown by the gate for a chain step | `mcp-handler.js:2136-2138` |
-| Checkpoint A with a missing or empty `url` | `mcp-handler.js:1427` |
-| Checkpoint B when `tab_id` is not a number | `mcp-handler.js:1443` |
-| Checkpoint B when the extension is disconnected | `mcp-handler.js:1445-1449` |
-| Checkpoint B when the tab URL can't be resolved (tab not found, or `get_tabs` failed) | `mcp-handler.js:1451` |
+It has no `domain`, `policySource` or auto-close fields. `tabId` is present only when the call carried a valid integer `tab_id`. See [Fail-closed cases](#fail-closed-cases).
+
+### Fail-closed cases
+
+Since #100, the gate fails closed: when a checked tool's verdict cannot be reached, the call is refused with the `site policy check failed` envelope (see [Blocked response](#blocked-response)). `reason` is one of `POLICY_FAILURE_REASONS` (`mcp-handler.js:28-34`):
+
+| `reason` | Case | Where |
+|---|---|---|
+| `policy_error` | Any exception thrown by the gate. Message: `Site policy could not be evaluated: <err>. Request blocked.` | `mcp-handler.js:947-957` |
+| `policy_error` | Any exception thrown by the gate for a chain step. Message ends `Step blocked.` The envelope becomes that step's result, and the chain continues | `mcp-handler.js:2252-2261` |
+| `invalid_url` | Checkpoint A with a non-string `url` (`url must be a string`) | `mcp-handler.js:1508-1516` |
+| `invalid_tab_id` | Checkpoint B with a missing `tab_id` (`tab_id is required`) or a non-integer one, including numeric strings (`tab_id must be an integer (got <type>: <value>)`) | `mcp-handler.js:1542-1550` |
+| `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.`) | `mcp-handler.js:1553-1555` |
+| `tab_url_unavailable` | Checkpoint B when `get_tabs` fails (`could not read tab URL: <err>`), the tab is not listed (`tab <id> not found`), or its URL is not a string (`tab <id> has no readable URL`) | `mcp-handler.js:1556-1565` |
+
+These cases still proceed without a check:
+
+- Checkpoint A with a missing, `null` or empty `url` (`:1507`, `:1517`). The extension raises its own "URL is required". Checkpoint A has no connectivity check, because `browser_create_tab` may launch Chrome itself.
+- Checkpoint B on a found tab whose URL is `''` (not yet navigated). This evaluates to default allow with a null domain, so no event is recorded (`:1566-1572`).
+
+Fail-closed refusals are not recorded in the event log, and the tab is not auto-closed.
 
 ## Storage
 
@@ -129,9 +144,9 @@ Each site-policy check made for a known agent is recorded in `site_policy_events
 - **Allows are logged**, including default allows.
 - **Retention**: rows older than 30 days are removed first, then the table is cut to the newest 5000 rows (`DEFAULT_MAX_AGE_DAYS` / `DEFAULT_MAX_ROWS`, `site-policy-events.js:31-32`; `cleanup`, `:148-181`).
 - **Not recorded**:
-  - checks with no agent or no domain (`_recordPolicyEvent`, `mcp-handler.js:1396-1400`), such as popup lookups or calls without a valid key;
+  - checks with no agent or no domain (`_recordPolicyEvent`, `mcp-handler.js:1476-1480`), such as popup lookups or calls without a valid key;
   - non-network URLs (`chrome://`, `file://`, …), which resolve to a null domain;
-  - checks the gate skipped (see [Fail-open cases](#fail-open-cases)).
+  - checks the gate could not complete, which are refused with the fail-closed envelope (see [Fail-closed cases](#fail-closed-cases)).
 - **IP literals and single-label hosts** such as `localhost` are stored under their raw lowercased host. Only the agent's `*` rule covers them, and the events API marks them `actionable: false` (`site-policy-events.js:265`).
 - **Allow / Revoke actions** (`POST /api/ui/agents/:agentId/site-events/{allow,revoke}`) create per-agent rules for the exact domain. Revoke always writes `block` and never deletes (`site-policy-events-routes.js:79-117`).
 - A failure to record is logged and never blocks or changes the tool call.
@@ -211,8 +226,8 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 
 | Gap | Tracking |
 |---|---|
-| Fail-open cases in the gate | #100 |
 | No remote and no cache writes an empty placeholder that empties the signed tier | #101 |
 | Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
-| Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (`mcp-handler.js:1312-1315`, the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings); `release-stable.yml:121` points to an old CONTRIBUTING heading | #112 |
+| Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings); `release-stable.yml:121` points to an old CONTRIBUTING heading | #112 |
+| Workflow primitives bypass the gate; pending-navigation gap | #114 |
 | The verifier ignores the signed manifest's `kind`; CI checks hashes but not signatures | untracked |

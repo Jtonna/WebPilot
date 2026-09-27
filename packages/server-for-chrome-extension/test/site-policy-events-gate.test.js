@@ -74,14 +74,19 @@ for (const m of ['../src/site-policy', '../src/site-policy-events', '../src/mcp-
 }
 const sitePolicyEvents = require('../src/site-policy-events');
 const { createMcpHandler } = require('../src/mcp-handler');
+// Load through the same require cache mcp-handler used, so tests that
+// monkeypatch sitePolicy.isAllowed patch the SAME instance mcp-handler holds.
+const sitePolicy = require('../src/site-policy');
 
 // ---- fakes ----
 let sentCommands = [];
+let connected = true;
+let getTabsImpl = async () => ({ tabs: [{ id: 7, url: 'https://www.example.com/x' }] });
 const fakeBridge = {
-  isConnected: () => true,
+  isConnected: (_profileId) => connected,
   sendCommand: async (_profileId, cmd, args) => {
     sentCommands.push({ cmd, args });
-    if (cmd === 'get_tabs') return { tabs: [{ id: 7, url: 'https://www.example.com/x' }] };
+    if (cmd === 'get_tabs') return getTabsImpl();
     if (cmd === 'create_tab') return { tab_id: 7 };
     return {};
   },
@@ -89,6 +94,7 @@ const fakeBridge = {
 const fm = {
   getFormatterNameForUrl: () => null,
   formatTree: (_url, nodes) => nodes,
+  getWorkflow: () => null,
 };
 
 function makeHandler({ pairingRequired = true } = {}) {
@@ -107,10 +113,43 @@ function bodyOf(res) {
   return JSON.parse(res.result.content[0].text);
 }
 
+// Asserts the fail-closed envelope shape:
+// { ok:false, error:'site policy check failed', reason, message, [tabId] }
+// in result.content[0].text with result.isError === true; nothing recorded
+// in site_policy_events, and (when `cmd` is given) that command never sent.
+function assertFailClosed(res, reason, cmd) {
+  assert.ok(res && res.result, `expected result envelope, got ${JSON.stringify(res)}`);
+  assert.equal(res.result.isError, true, `expected isError=true, got ${JSON.stringify(res.result)}`);
+  const body = JSON.parse(res.result.content[0].text);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'site policy check failed');
+  assert.equal(body.reason, reason);
+  assert.equal(body.domain, undefined);
+  if (cmd) {
+    assert.ok(!sentCommands.some((c) => c.cmd === cmd), `${cmd} must not reach the extension`);
+  }
+  assert.equal(eventRows().length, 0);
+  return body;
+}
+
+// True only when `res` is the fail-closed policy envelope (used by guard
+// tests to assert the CURRENT/legacy paths are untouched).
+function isFailClosedEnvelope(res) {
+  if (!res || !res.result || res.result.isError !== true) return false;
+  try {
+    const body = JSON.parse(res.result.content[0].text);
+    return !!body && body.ok === false && body.error === 'site policy check failed';
+  } catch (e) {
+    return false;
+  }
+}
+
 beforeEach(() => {
   freshDb();
   sitePolicyEvents._resetForTests();
   sentCommands = [];
+  connected = true;
+  getTabsImpl = async () => ({ tabs: [{ id: 7, url: 'https://www.example.com/x' }] });
 });
 
 test('create_tab twice -> one allow/default row with hit_count 2', async () => {
@@ -226,5 +265,197 @@ test('throwing recorder does not widen fail-open: allow still allows, block stil
     t.mock.timers.tick(5000);
   } finally {
     sitePolicyEvents.record = origRecord;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed gate cases (issue #100). The [fail-closed] cases are expected
+// to fail until the fail-closed implementation lands; the [guard] cases
+// protect existing behavior and must pass on current HEAD.
+// ---------------------------------------------------------------------------
+
+test('isAllowed throws -> policy_error fail-closed, no command sent [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const origIsAllowed = sitePolicy.isAllowed;
+  sitePolicy.isAllowed = () => {
+    throw new Error('db down');
+  };
+  try {
+    const h = makeHandler();
+
+    const scrollRes = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
+    assertFailClosed(scrollRes, 'policy_error', 'scroll');
+
+    sentCommands = [];
+    const createRes = await callTool(h, 'browser_create_tab', { url: 'https://www.example.com/a' });
+    assertFailClosed(createRes, 'policy_error', 'create_tab');
+  } finally {
+    sitePolicy.isAllowed = origIsAllowed;
+  }
+});
+
+test('extension disconnected -> extension_disconnected fail-closed result envelope [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  connected = false;
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
+  const body = assertFailClosed(res, 'extension_disconnected', 'scroll');
+  assert.ok(!res.error, 'must be a result envelope, not a jsonrpc error');
+  assert.ok(
+    body.message && body.message.includes('No browser instance connected'),
+    `expected message to mention "No browser instance connected", got: ${body.message}`
+  );
+});
+
+test('get_tabs command rejects -> tab_url_unavailable fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  getTabsImpl = async () => {
+    throw new Error('Command timeout');
+  };
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
+  const body = assertFailClosed(res, 'tab_url_unavailable', 'scroll');
+  assert.ok(
+    body.message && body.message.includes('Command timeout'),
+    `expected message to mention "Command timeout", got: ${body.message}`
+  );
+});
+
+test('get_tabs returns no tabs -> tab_url_unavailable fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  getTabsImpl = async () => ({ tabs: [] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
+  assertFailClosed(res, 'tab_url_unavailable', 'scroll');
+});
+
+test('tab_id as a numeric string -> invalid_tab_id fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: '7', direction: 'down' });
+  assertFailClosed(res, 'invalid_tab_id', 'scroll');
+});
+
+test('tab_id as a non-integer number -> invalid_tab_id fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: 7.5, direction: 'down' });
+  assertFailClosed(res, 'invalid_tab_id', 'scroll');
+});
+
+test('missing tab_id on browser_scroll -> invalid_tab_id fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { direction: 'down' });
+  assertFailClosed(res, 'invalid_tab_id', 'scroll');
+});
+
+test('non-string url on browser_create_tab -> invalid_url fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_create_tab', { url: ['https://www.example.com'] });
+  assertFailClosed(res, 'invalid_url', 'create_tab');
+});
+
+test('[guard] empty tab url is allowed by default, no event row', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  getTabsImpl = async () => ({ tabs: [{ id: 7, url: '' }] });
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_scroll', { tab_id: 7, direction: 'down' });
+  assert.ok(!isFailClosedEnvelope(res), `expected a normal (non-policy) response, got: ${JSON.stringify(res)}`);
+  assert.ok(sentCommands.some((c) => c.cmd === 'scroll'), 'scroll should have been dispatched');
+  assert.equal(eventRows().length, 0);
+});
+
+test('chain step whose check throws -> that step is the policy_error envelope, later steps still run [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const origIsAllowed = sitePolicy.isAllowed;
+  sitePolicy.isAllowed = () => {
+    throw new Error('db down');
+  };
+  try {
+    const h = makeHandler();
+    const res = await callTool(h, 'browser_request_chain', {
+      steps: [
+        { tool: 'browser_scroll', arguments: { tab_id: 7, direction: 'down' } },
+        { tool: 'browser_get_tabs', arguments: {} },
+      ],
+    });
+    const body = bodyOf(res);
+    assert.ok(Array.isArray(body.results), `expected chain results, got: ${JSON.stringify(body)}`);
+    assert.equal(body.results.length, 2);
+
+    const step0 = body.results[0];
+    assert.equal(step0.ok, false);
+    assert.equal(step0.error, 'site policy check failed');
+    assert.equal(step0.reason, 'policy_error');
+
+    const step1 = body.results[1];
+    assert.ok(step1, 'step 1 should have run and produced a result');
+
+    assert.ok(!sentCommands.some((c) => c.cmd === 'scroll'), 'scroll must not reach the extension');
+  } finally {
+    sitePolicy.isAllowed = origIsAllowed;
+  }
+});
+
+test('webpilot_run_workflow with no tab_id -> invalid_tab_id fail-closed [fail-closed]', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = makeHandler();
+  const res = await callTool(h, 'webpilot_run_workflow', { platform: 'x', workflow: 'y' });
+  assertFailClosed(res, 'invalid_tab_id');
+});
+
+test('[guard] disconnected extension: checkpoint-A still records event and does not return the policy envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  connected = false;
+  const h = makeHandler();
+  const res = await callTool(h, 'browser_create_tab', { url: 'https://www.example.com' });
+  assert.ok(!isFailClosedEnvelope(res), `expected the legacy path, got: ${JSON.stringify(res)}`);
+  const sentCreateTab = sentCommands.some((c) => c.cmd === 'create_tab');
+  const mentionsDisconnected =
+    (res.error && /No browser instance/.test(res.error.message || '')) ||
+    (res.result && JSON.stringify(res.result).includes('No browser instance'));
+  assert.ok(
+    sentCreateTab || mentionsDisconnected,
+    `expected either a dispatched create_tab or a "No browser instance" error, got: ${JSON.stringify(res)}`
+  );
+  const rows = eventRows();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].domain, 'example.com');
+  assert.equal(rows[0].decision, 'allow');
+  assert.equal(rows[0].source, 'default');
+});
+
+test('[guard] disconnected extension: browser_get_tabs/browser_close_tab never fail-closed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  connected = false;
+  const h = makeHandler();
+
+  const getTabsRes = await callTool(h, 'browser_get_tabs', {});
+  assert.ok(!isFailClosedEnvelope(getTabsRes), `expected the legacy path, got: ${JSON.stringify(getTabsRes)}`);
+
+  const closeTabRes = await callTool(h, 'browser_close_tab', { tab_id: 7 });
+  assert.ok(!isFailClosedEnvelope(closeTabRes), `expected the legacy path, got: ${JSON.stringify(closeTabRes)}`);
+
+  const origIsAllowed = sitePolicy.isAllowed;
+  sitePolicy.isAllowed = () => {
+    throw new Error('db down');
+  };
+  try {
+    const closeTabRes2 = await callTool(h, 'browser_close_tab', { tab_id: 7 });
+    const isPolicyError =
+      closeTabRes2.result &&
+      closeTabRes2.result.isError === true &&
+      (() => {
+        try {
+          return JSON.parse(closeTabRes2.result.content[0].text).reason === 'policy_error';
+        } catch (e) {
+          return false;
+        }
+      })();
+    assert.ok(!isPolicyError, `browser_close_tab must not surface a policy_error, got: ${JSON.stringify(closeTabRes2)}`);
+  } finally {
+    sitePolicy.isAllowed = origIsAllowed;
   }
 });

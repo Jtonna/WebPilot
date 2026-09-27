@@ -65,13 +65,13 @@ Site-policy enforcement is **server-side** — see [`docs/SITE_POLICY.md`](./SIT
 - **Checked** against the tab's current URL (or, for `browser_create_tab`, the URL being opened): `browser_create_tab` (on its `url`), `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow` — and each individual step of a `browser_request_chain`.
 - **Exempt** (no site involved): `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call itself, `request_pairing`, `check_pairing_status`, and the `webpilot_get_formatter_info` / `webpilot_reload_formatters` / `webpilot_dev_*` tools.
 
-**Chains:** each step of a `browser_request_chain` is checked again independently. A policy-blocked step returns the blocked envelope (see [Blocked by Site Policy](#blocked-by-site-policy)) as that step's result, and the chain **continues** with later steps — a block is not treated as a step failure. If the blocked step targets a `tab_id`, that tab still gets the standard 5-second auto-close.
+**Chains:** each step of a `browser_request_chain` is checked again independently. A policy-blocked step returns the blocked envelope (see [Blocked by Site Policy](#blocked-by-site-policy)) as that step's result, and the chain **continues** with later steps — a block is not treated as a step failure. If the blocked step targets a `tab_id`, that tab still gets the standard 5-second auto-close. If a step's check cannot complete, its result is the [`site policy check failed`](#site-policy-check-failed) envelope instead, and the chain still continues.
 
 **Agent-relevant notes:**
 - Without a valid API key, calls have no agent identity, so the per-agent tier is skipped entirely.
 - IP addresses and `localhost` are matched only by an agent's `*` rule — they never match named-domain rules in any tier.
 - Non-network URLs (`about:`, `chrome:`, `data:`, `file:`) are never policy-managed and always default-allow.
-- Some internal failure paths let the call through rather than blocking it — see [fail-open cases](./SITE_POLICY.md#fail-open-cases) and #100.
+- The gate fails closed: if a verdict cannot be reached (internal error, extension disconnected, unreadable tab URL, malformed `tab_id`/`url`), the call is refused with a [`site policy check failed`](#site-policy-check-failed) envelope, which is distinct from [Blocked by Site Policy](#blocked-by-site-policy). See [fail-closed cases](./SITE_POLICY.md#fail-closed-cases).
 - The signed global blocklist is **fetched from the WebPilot repo, signature-verified, cached locally, and refreshed at boot and every 24 hours** — not bundled with the package.
 - Toggling the global tier and managing rules is done at `http://localhost:3456/ui/sites/` — see [global tier toggle](./SITE_POLICY.md#global-tier-toggle).
 
@@ -1104,11 +1104,11 @@ browser_request_chain(
 
 **Per-step locking behavior:** If a step targets a tab that's locked behind a formatter guide, that step's result is the inline `platform_guide_required` block envelope (with `platform`, `tab_id`, `unlock_call`). Other steps continue executing. An earlier step that calls `webpilot_get_formatter_info({platform, tab_id})` unlocks the tab for subsequent steps in the same chain.
 
-**Per-step site-policy behavior:** Each step is re-checked against site policy independently (the same gate documented in [Security: Site Policy](#security-site-policy) — checking the outer `browser_request_chain` call itself would be meaningless, since it has no single URL). If a step is blocked, that step's result is the [`Blocked by Site Policy`](#blocked-by-site-policy) envelope, and **the chain continues** with the remaining steps — a policy block is not treated as a step failure and does not stop execution (see "On step failure" below, which covers thrown errors from the underlying tool, not policy blocks). A blocked step that targets a `tab_id` still triggers the standard 5-second auto-close of that tab.
+**Per-step site-policy behavior:** Each step is re-checked against site policy independently (the same gate documented in [Security: Site Policy](#security-site-policy) — checking the outer `browser_request_chain` call itself would be meaningless, since it has no single URL). If a step is blocked, that step's result is the [`Blocked by Site Policy`](#blocked-by-site-policy) envelope, and **the chain continues** with the remaining steps — a policy block is not treated as a step failure and does not stop execution (see "On step failure" below, which covers thrown errors from the underlying tool, not policy blocks). A blocked step that targets a `tab_id` still triggers the standard 5-second auto-close of that tab. If a step's policy check cannot complete, that step's result is the [`site policy check failed`](#site-policy-check-failed) envelope, and the chain likewise continues.
 
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
-- Blocked by site policy — a step's result is the [Blocked by Site Policy](#blocked-by-site-policy) envelope; the chain continues past it (see "Per-step site-policy behavior" above)
+- Blocked by site policy — a step's result is the [Blocked by Site Policy](#blocked-by-site-policy) envelope or the [`site policy check failed`](#site-policy-check-failed) envelope; the chain continues past it (see "Per-step site-policy behavior" above)
 - `Unknown tool(s) in chain: step 0: "nonexistent_tool"` -- invalid tool name
 - `Step 2 references $2 which has not executed yet` -- forward or self reference
 - `Cannot use return_mode "last" with an empty steps array` -- empty steps with last mode
@@ -1230,6 +1230,31 @@ If the block happens on an existing tab (checkpoint B — any `TAB_ID_TOOLS` cal
 
 **Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds` — no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/sites/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
 
+### Site policy check failed
+
+When the gate cannot reach a verdict, the call is refused (`isError: true`) with:
+```json
+{
+  "ok": false,
+  "error": "site policy check failed",
+  "reason": "policy_error | extension_disconnected | tab_url_unavailable | invalid_tab_id | invalid_url",
+  "message": "tab 1234567890 not found",
+  "tabId": 1234567890
+}
+```
+
+`tabId` is present only when the call carried a valid integer `tab_id`. There is no auto-close, and nothing is recorded in the site-policy event log.
+
+| `reason` | Meaning | What to do |
+|---|---|---|
+| `policy_error` | The policy evaluation threw | Retry once; if it persists, report it (server logs have details) |
+| `extension_disconnected` | A tab-scoped tool was called with no extension connected | Call `browser_create_tab` to launch Chrome, then re-fetch tabs |
+| `tab_url_unavailable` | `get_tabs` failed, the tab isn't listed, or it has no readable URL | Re-fetch tabs with `browser_get_tabs` and use a current `tab_id` |
+| `invalid_tab_id` | `tab_id` is missing or not an integer (numeric strings like `"7"` are rejected) | Pass `tab_id` as an integer |
+| `invalid_url` | `browser_create_tab` got a non-string `url` | Pass `url` as a string |
+
+See [Fail-closed cases](./SITE_POLICY.md#fail-closed-cases).
+
 ### Tab Not Found
 
 If you try to close a tab that doesn't exist:
@@ -1248,8 +1273,10 @@ If you try to close a tab that doesn't exist:
 If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The exact error string is:
 
 ```
-No browser instance connected for profile "<profileId>". Call browser_create_tab to launch Chrome.
+No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.
 ```
+
+Tab-scoped tools (those taking `tab_id`) receive this text inside the [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "extension_disconnected"`. Other tools receive it as a plain JSON-RPC error (`-32000`).
 
 The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
 

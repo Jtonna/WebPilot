@@ -71,7 +71,7 @@ case 'browser_your_tool_name': {
 }
 ```
 
-Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. It owns the WebSocket round-trip to the extension via `extension-bridge.js`. Site policy is **not** enforced in the helper: the gate runs in `handleToolCall` before dispatch. If your tool takes a `tab_id`, add it to `TAB_ID_TOOLS` at the top of `mcp-handler.js`, otherwise the gate skips it without any warning. If it opens a URL, extend checkpoint A in `_enforceSitePolicy` to cover it. See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. It owns the WebSocket round-trip to the extension via `extension-bridge.js`. Site policy is **not** enforced in the helper: the gate runs in `handleToolCall` before dispatch. If your tool takes a `tab_id`, add it to `TAB_ID_TOOLS` at the top of `mcp-handler.js`, otherwise the gate skips it without any warning. Tools in `TAB_ID_TOOLS` must take an integer argument named `tab_id`; any other shape (missing, a numeric string, `tabId`) is refused by the gate with `invalid_tab_id`. If it opens a URL, extend checkpoint A in `_enforceSitePolicy` to cover it. See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
 
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
