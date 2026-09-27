@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 100,
-    "body": "Implementation status (auto-approved gate, epic #99 autonomous run)\n\n[sub-task 1] DONE: 10 fail-closed tests + 3 guards in test/site-policy-events-gate.test.js, red before impl (4c9e547)\n[sub-task 2] DONE: gate fails closed — new 'site policy check failed' envelope with reason codes policy_error / extension_disconnected / tab_url_unavailable / invalid_tab_id / invalid_url; strict tab-URL resolver; chain steps; stale comment fixed (fceb0d0)\n[sub-task 3] DONE: CHANGELOG Fixed entries (dc3fbc3)\n[sub-task 4] DONE: verification — 196/196 tests, no \"failing open\" left, daemon smoke without the extension confirmed every reason code and that browser_create_tab still reaches its launch path; no event rows for fail-closed outcomes\nFollow-up: #114 (workflow primitives bypass the gate; pending-navigation gap)."
-  }
-]
+[]
