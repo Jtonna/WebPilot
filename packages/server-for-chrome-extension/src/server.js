@@ -15,6 +15,7 @@ const formatterLogs = require('./formatter-logs');
 const sitePolicyEvents = require('./site-policy-events');
 const { mountSiteEventRoutes } = require('./site-policy-events-routes');
 const { mountPopupRoutes } = require('./popup-routes');
+const { upsertGlobalUserRule, clearGlobalUserRule } = require('./global-user-rules');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
 
@@ -1252,43 +1253,15 @@ function mountWebUiRoutes(app, deps) {
 
   // POST /api/ui/sites
   // Body: { domain, decision: 'allow'|'block' }. Adds (or upserts) a
-  // source='user' global rule.
+  // source='user' global rule via the shared global-user-rules write path.
   app.post('/api/ui/sites', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const body = req.body || {};
-      const rawDomain = body.domain;
-      const decision = body.decision;
-      if (typeof rawDomain === 'string' && rawDomain.trim() === sitePolicy.WILDCARD) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page",
-        });
-      }
-      const normalized = sitePolicy.normalizeDomain(rawDomain);
-      if (!normalized) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
-        });
-      }
-      if (decision !== 'allow' && decision !== 'block') {
-        return res.status(400).json({
-          error: 'invalid decision',
-          reason: "decision must be 'allow' or 'block'",
-        });
-      }
-      const result = sitePolicy.setGlobalRule(normalized, decision);
-      // Read back the persisted row so we include created_at / updated_at.
-      const row = sitePolicy.getGlobalUserRule(result.domain);
-      console.log(`[ui-api:sites] upsert global rule domain=${result.domain} decision=${result.decision}`);
+      const r = upsertGlobalUserRule({ domain: body.domain, decision: body.decision });
+      if (!r.ok) return res.status(r.status).json(r.body);
+      console.log(`[ui-api:sites] upsert global rule domain=${r.rule.domain} decision=${r.rule.decision}`);
       _broadcastSitesChanged('global_rule_upsert');
-      res.status(201).json({
-        domain: row ? row.domain : result.domain,
-        decision: row ? row.decision : result.decision,
-        source: 'user',
-        createdAt: row ? row.createdAt : null,
-        updatedAt: row ? row.updatedAt : null,
-      });
+      res.status(201).json(r.rule);
     } catch (e) {
       console.error('[ui-api] POST /sites failed:', e.message);
       res.status(500).json({ error: e.message });
@@ -1296,35 +1269,15 @@ function mountWebUiRoutes(app, deps) {
   });
 
   // DELETE /api/ui/sites/:domain
-  // Only removes rows in the global user tier (`global_user_site_rules`).
-  // Refuses signed-blocklist entries with a 400 and a message that nudges
-  // the user toward the global tier toggle in Settings.
+  // Only removes rows in the global user tier (`global_user_site_rules`);
+  // signed-blocklist entries are refused with a 400 (see global-user-rules.js).
   app.delete('/api/ui/sites/:domain', auth, mutatingAuth, (req, res) => {
     try {
-      const rawDomain = req.params.domain;
-      const normalized = sitePolicy.normalizeDomain(rawDomain);
-      if (!normalized) {
-        return res.status(400).json({
-          error: 'invalid domain',
-          reason: `domain ${JSON.stringify(rawDomain)} did not normalize to a usable hostname`,
-        });
-      }
-      if (sitePolicy.getGlobalUserRule(normalized)) {
-        sitePolicy.removeGlobalRule(normalized);
-        console.log(`[ui-api:sites] delete global rule domain=${normalized}`);
-        _broadcastSitesChanged('global_rule_delete');
-        return res.json({ ok: true, domain: normalized });
-      }
-      if (sitePolicy.isSignedBlocklisted(normalized)) {
-        return res.status(400).json({
-          error: 'cannot delete signed blocklist rule',
-          reason:
-            "signed block list entries can't be deleted; turn off the global block list on the Sites page",
-          domain: normalized,
-          source: 'global_site_blocklist',
-        });
-      }
-      return res.status(404).json({ error: 'rule not found', domain: normalized });
+      const r = clearGlobalUserRule(req.params.domain);
+      if (!r.ok) return res.status(r.status).json(r.body);
+      console.log(`[ui-api:sites] delete global rule domain=${r.domain}`);
+      _broadcastSitesChanged('global_rule_delete');
+      return res.json({ ok: true, domain: r.domain });
     } catch (e) {
       console.error('[ui-api] DELETE /sites/:domain failed:', e.message);
       res.status(500).json({ error: e.message });
