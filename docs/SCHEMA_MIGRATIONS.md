@@ -69,6 +69,16 @@ Migration filenames follow the pattern `NNN-kebab-case-description.js`, where `N
 
 The runner sorts files lexically. Lexical order matches numerical order through `999`. Past `999`, lexical sort breaks (`1000` sorts before `999` because `'1' < '9'` as characters), so new migrations appear in the wrong position in the list. Stay within the 001–999 range; if that limit ever approaches, switch to 4-digit padding (`0001`-style) consistently across all files.
 
+## Migration History
+
+| # | File | What it does |
+|---|------|---------------|
+| 001 | `001-rename-baseline-to-global-site-blocklist.js` | Renames the `baseline` family of persisted identifiers to `global_site_blocklist`: the config key, the meta table, the `global_site_rules` CHECK value (and existing `source='baseline'` rows), and the on-disk cache directory. |
+| 002 | `002-split-site-rules-per-tier.js` | Splits the shared `global_site_rules` table into `global_user_site_rules` and `global_site_blocklist_rules` (wildcard domains and signed-allow rows are skipped, since they can't be represented in the new shape), and renames `global_site_blocklist_enabled` → `global_tier_enabled`. When user rows were migrated, the stored blocklist version is prefixed with `pre-002:` to force a re-sync on the next updater tick, restoring any domains that a user rule had masked (see the header comment of `002-split-site-rules-per-tier.js` and its lines 156-162). |
+| 003 | `003-rename-agent-site-overrides-to-agent-site-rules.js` | Renames `agent_site_overrides` → `agent_site_rules`, and rebuilds `site_policy_events` so its `source` CHECK reads `agent_rule` instead of `agent_override`. |
+
+Add a row here when you add a migration.
+
 ## Migration File Shape
 
 Each file exports a plain object:
@@ -115,6 +125,7 @@ Also note: the daemon's log file is truncated at the start of every run (`SizeMa
 2. Create `NNN-your-description.js` exporting `{ id, description, up(db, opts) }`.
 3. Write `up()` to be idempotent in spirit (see [Dual-Layer Idempotency](#dual-layer-idempotency)): guard each step against the already-applied state. Just as important: guard each step against the table/column it touches **not existing yet**, since on a fresh install the migration runs against a DB containing only the `schema_migrations` ledger — none of the application tables exist until `schema.sql` runs afterward. Do not assume `schema.sql` or any earlier migration has already created what you need.
 4. Test via `packages/server-for-chrome-extension/test/db-migration.test.js`: create an in-memory SQLite fixture seeded with the pre-migration shape, call `runAll`, and assert the post-migration shape. Also keep the fresh-DB tests in `test/db-migration.test.js` and `test/db-connection.test.js` green — `db-connection.test.js` runs every real migration against a brand-new database via `init()`, so it is what catches future regressions like #96 (a migration step that only works when a table already exists).
+5. Add a row to [Migration History](#migration-history) describing the migration.
 
 ### Testing a new migration
 

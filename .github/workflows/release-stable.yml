@@ -118,7 +118,7 @@ jobs:
           if [ -z "${WEBPILOT_SIGNING_KEY_BASE64:-}" ]; then
             echo "ERROR: WEBPILOT_SIGNING_KEY_BASE64 secret is not set."
             echo "Add the base64-encoded Ed25519 signing key to the repo secrets"
-            echo "before cutting a release. See CONTRIBUTING.md > Signing formatter releases."
+            echo "before cutting a release. See CONTRIBUTING.md > Signing and updating the signed bundles."
             exit 1
           fi
           set -euo pipefail

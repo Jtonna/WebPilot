@@ -61,6 +61,8 @@ packages/
 
 **Site-specific formatters** live in [`accessibility-tree-formatters/`](accessibility-tree-formatters/). Each is a small JS module with a `manifest.json` that transforms a site's a11y tree into something agent-friendly. Bundled: `discord`, `threads`, `zillow`. The server pulls fresh copies from GitHub on startup. Bundled formatters are cryptographically signed (Ed25519); the daemon refuses to apply any update whose signature doesn't verify against the bundled `PUBKEY.pem`. Some formatters expose composite operations as **workflows** — server-side multi-step actions invoked via `webpilot_run_workflow` (e.g. Discord's `send_message` does fetch-tree + locate + click + type + Enter in one call).
 
+**Site policy:** the server can block or allow sites per agent or for all agents, and applies a signed global blocklist of financial sites fetched from this repo. See [docs/SITE_POLICY.md](docs/SITE_POLICY.md).
+
 ### Custom formatters (sideloading)
 
 You can ship your own formatter for any site without going through the repo. Drop your files into `<userData>/custom-formatters/`:
