@@ -68,7 +68,7 @@ Site-policy enforcement is **server-side** — see [`docs/SITE_POLICY.md`](./SIT
 **Chains:** each step of a `browser_request_chain` is checked again independently. A policy-blocked step returns the blocked envelope (see [Blocked by Site Policy](#blocked-by-site-policy)) as that step's result, and the chain **continues** with later steps — a block is not treated as a step failure. If the blocked step targets a `tab_id`, that tab still gets the standard 5-second auto-close. If a step's check cannot complete, its result is the [`site policy check failed`](#site-policy-check-failed) envelope instead, and the chain still continues.
 
 **Agent-relevant notes:**
-- Without a valid API key, calls have no agent identity, so the per-agent tier is skipped entirely.
+- The per-agent tier needs an agent identity; every gated tool call is authenticated, and only the popup's lookups run without one.
 - IP addresses and `localhost` are matched only by an agent's `*` rule — they never match named-domain rules in any tier.
 - Non-network URLs (`about:`, `chrome:`, `data:`, `file:`) are never policy-managed and always default-allow.
 - The gate fails closed: if a verdict cannot be reached (internal error, extension disconnected, unreadable tab URL, malformed `tab_id`/`url`), the call is refused with a [`site policy check failed`](#site-policy-check-failed) envelope, which is distinct from [Blocked by Site Policy](#blocked-by-site-policy). See [fail-closed cases](./SITE_POLICY.md#fail-closed-cases).
@@ -320,6 +320,7 @@ Internally this workflow fetches the formatted accessibility tree, locates the c
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`invalid_tab_id`, `extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `Workflow not found: <workflow>` — Workflow does not exist or is not implemented (`implemented: false` in manifest).
 - `Invalid workflow parameters: ...` — Parameter types do not match the workflow declaration.
 
@@ -421,6 +422,7 @@ Opens a new browser tab with the specified URL.
 
 **Errors:**
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`invalid_url`, `policy_error`)
 
 **Notes:**
 - Title may be empty if the page hasn't finished loading
@@ -564,9 +566,10 @@ Ghost posts are ephemeral content on Threads that appear inline but don't have p
 Refs (e1, e2, e3...) are stable identifiers for each element. These can be used with interaction tools like `browser_click(ref="e7")`.
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `Another debugger is already attached to this tab` - DevTools or another extension is debugging the tab
 - `Failed to attach debugger: ...` - Tab may not exist or be a protected page (chrome://, etc.)
 - Formatter errors return `{ ok: false, error: "<message>", diagnostics: {...} }` (rather than throwing). The `diagnostics` object includes `phase`, `platform`, `tabId`, and error context.
@@ -610,9 +613,10 @@ Injects a script from a URL into a browser tab. The MCP server fetches the scrip
 | `persistent` | boolean | Whether script will be re-injected on navigation |
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `Fetched script is empty` - Script fetch returned empty content
 - `Cannot inject scripts into protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Unsupported protocol: ...` - Script URL uses non-HTTP(S) protocol
@@ -678,9 +682,10 @@ browser_execute_js(tab_id, 'fetch("/api/data").then(r => r.json())')
 ```
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `code is required` - Missing code parameter
 - `Cannot execute scripts on protected pages` - Tab is chrome://, chrome-extension://, or about: URL
 - `Another debugger is already attached to this tab` - Close DevTools or other debuggers first
@@ -822,9 +827,10 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 - Provide explicit `delay` for deterministic behavior
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `Either selector, ref, or x,y coordinates are required` - No click target provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist in stored refs
 - `Element for ref "eX" no longer exists in DOM` - Page changed since tree fetch
@@ -938,9 +944,10 @@ browser_scroll(tab_id, ref="e5")
 - Container scrolls use a slightly slower timing (75ms per 50px) compared to window scrolls (50ms per 50px)
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `Either ref/selector OR pixels is required` - No scroll target provided
 - `Cannot specify both element target and pixels - use one or the other` - Both ref/selector and pixels provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
@@ -1023,9 +1030,10 @@ browser_type(tab_id, text="test", delay=100)
 - When `ref` or `selector` is provided, a click with cursor animation (`showCursor: true`) is performed first to focus the element
 
 **Errors:**
-- `tab_id is required` - Missing tab_id parameter
+- `tab_id` missing or not an integer → [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "invalid_tab_id"` (message `tab_id is required` / `tab_id must be an integer …`)
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
 - Blocked by site policy — see [Blocked by Site Policy](#blocked-by-site-policy)
+- Site policy check failed — see [Site policy check failed](#site-policy-check-failed) (`extension_disconnected`, `tab_url_unavailable`, `policy_error`)
 - `text is required` - Missing text parameter
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist
 - `Another debugger is already attached to this tab` - Close DevTools first
@@ -1117,6 +1125,7 @@ browser_request_chain(
 **Notes:**
 - Steps execute sequentially; there is no parallel step execution
 - On step failure (the underlying tool throws), execution stops and returns all prior successful results plus the error. A site-policy block is **not** a step failure — see "Per-step site-policy behavior" above; the chain keeps going.
+- The outer chain response is not marked `isError`; check each step result for `ok: false`.
 - Site policy is re-checked on each individual step; see [Security: Site Policy](#security-site-policy)
 - `browser_request_chain` cannot be used as a step tool (no recursive chaining)
 
@@ -1203,7 +1212,7 @@ If a tool call is made without a valid API key (or with no key at all):
 
 ### Blocked by Site Policy
 
-If a tool call resolves to a domain that site policy blocks (checkpoint A, `browser_create_tab`):
+If a tool call resolves to a domain that site policy blocks (checkpoint A, `browser_create_tab`), the call is refused (`isError: true`) with:
 ```json
 {
   "ok": false,
@@ -1276,7 +1285,7 @@ If no Chrome extension is connected for the agent's bound profile, browser tools
 No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.
 ```
 
-Tab-scoped tools (those taking `tab_id`) receive this text inside the [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "extension_disconnected"`. Other tools receive it as a plain JSON-RPC error (`-32000`).
+The gated tab tools (`browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow`), when called with an integer `tab_id`, get this text inside the [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "extension_disconnected"`. All other tools, including `browser_close_tab` and `browser_get_tabs`, get a plain JSON-RPC `-32000` error. `browser_create_tab` tries to launch Chrome instead.
 
 The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
 
