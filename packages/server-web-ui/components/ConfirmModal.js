@@ -9,16 +9,18 @@ import Modal from './Modal';
  * window.confirm() in the web UI.
  *
  * Behavior:
- *   - Backdrop click cancels; Escape cancels; Enter confirms.
+ *   - Backdrop click cancels; Escape cancels. Enter does NOT auto-confirm
+ *     (per DESIGN_AND_UX.md) — a focused button still activates natively on
+ *     Enter/Space, but there's no global listener that confirms regardless
+ *     of focus.
  *   - Closes with the inverse keyframes (faster), driven by an `is-closing`
  *     class. The component keeps the modal mounted until the keyframe
  *     finishes (see <Modal>).
  *
  * Built on the shared <Modal> base for backdrop, keyboard dismiss, and exit-
- * animation lifecycle. ConfirmModal owns the Enter-to-confirm shortcut and
- * latches its props across exit so the card doesn't blank out mid-animation
- * when the parent clears body/title. Exit duration is 240ms to match other
- * modals in this app.
+ * animation lifecycle. ConfirmModal latches its props across exit so the
+ * card doesn't blank out mid-animation when the parent clears body/title.
+ * Exit duration is 240ms to match other modals in this app.
  */
 export default function ConfirmModal({
   open,
@@ -40,19 +42,13 @@ export default function ConfirmModal({
     }
   }, [open, title, body, confirmLabel, cancelLabel, confirmDanger]);
 
-  // Enter-to-confirm. <Modal> handles Esc / backdrop dismiss.
+  // Dev-visibility log. <Modal> handles Esc / backdrop dismiss; there is no
+  // window-level Enter-to-confirm listener (Enter does not auto-confirm).
   useEffect(() => {
-    if (!open) return undefined;
-    function handleKey(e) {
-      if (e.key === 'Enter') {
-        if (typeof onConfirm === 'function') onConfirm();
-      }
-    }
-    window.addEventListener('keydown', handleKey);
+    if (!open) return;
     // eslint-disable-next-line no-console
     console.log('[confirm-modal] opened:', title);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onConfirm, title]);
+  }, [open, title]);
 
   const view = open ? { title, body, confirmLabel, cancelLabel, confirmDanger } : lastPropsRef.current;
 
