@@ -39,7 +39,7 @@ function seedAgent(id, state = 'active') {
 
 function seedAgentRule(agentId, domain, decision) {
   db.prepare(
-    `INSERT INTO agent_site_overrides (agent_id, domain, decision, created_at) VALUES (?, ?, ?, ?)`
+    `INSERT INTO agent_site_rules (agent_id, domain, decision, created_at) VALUES (?, ?, ?, ?)`
   ).run(agentId, domain, decision, new Date().toISOString());
 }
 
@@ -57,9 +57,9 @@ function recordEvent(agentId, domain, decision, iso, source = 'default') {
   );
 }
 
-function overrides(agentId, domain) {
+function agentRules(agentId, domain) {
   return db
-    .prepare('SELECT * FROM agent_site_overrides WHERE agent_id = ? AND domain = ?')
+    .prepare('SELECT * FROM agent_site_rules WHERE agent_id = ? AND domain = ?')
     .all(agentId, domain);
 }
 
@@ -231,7 +231,7 @@ describe('GET /api/ui/sites/events', () => {
 // ── POST allow / revoke ─────────────────────────────────────────────────────
 
 describe('POST /api/ui/agents/:agentId/site-events/allow', () => {
-  test('writes an allow override that beats the signed blocklist and an agent "*" block', async () => {
+  test('writes an allow rule that beats the signed blocklist and an agent "*" block', async () => {
     seedSigned('evil.com');
     seedAgentRule(1, '*', 'block');
     assert.equal(sitePolicy.isAllowed(1, 'https://evil.com').allowed, false);
@@ -245,7 +245,7 @@ describe('POST /api/ui/agents/:agentId/site-events/allow', () => {
     assert.equal(typeof body.createdAt, 'string');
     assert.ok(!Number.isNaN(Date.parse(body.createdAt)));
 
-    const rows = overrides(1, 'evil.com');
+    const rows = agentRules(1, 'evil.com');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'allow');
     assert.equal(sitePolicy.isAllowed(1, 'https://evil.com').allowed, true);
@@ -257,12 +257,12 @@ describe('POST /api/ui/agents/:agentId/site-events/allow', () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.domain, sitePolicy.normalizeRuleDomain('WWW.Example.COM'));
-    assert.equal(overrides(1, body.domain).length, 1);
+    assert.equal(agentRules(1, body.domain).length, 1);
   });
 });
 
 describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
-  test('writes a block override', async () => {
+  test('writes a block rule', async () => {
     const res = await post('hash_1', 'revoke', { domain: 'x.com' });
     assert.equal(res.status, 201);
     const body = await res.json();
@@ -271,7 +271,7 @@ describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
       { agentKey: 'hash_1', domain: 'x.com', decision: 'block' }
     );
     assert.equal(typeof body.createdAt, 'string');
-    const rows = overrides(1, 'x.com');
+    const rows = agentRules(1, 'x.com');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'block');
     assert.deepEqual(broadcasts, [{ type: 'sites_changed', reason: 'site_event_revoke' }]);
@@ -279,10 +279,10 @@ describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
 
   test('overwrites a same-domain allow in place (row count stays 1)', async () => {
     seedAgentRule(1, 'x.com', 'allow');
-    const prior = overrides(1, 'x.com')[0];
+    const prior = agentRules(1, 'x.com')[0];
     const res = await post('hash_1', 'revoke', { domain: 'x.com' });
     assert.equal(res.status, 201);
-    const rows = overrides(1, 'x.com');
+    const rows = agentRules(1, 'x.com');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].decision, 'block');
     assert.equal((await res.json()).createdAt, prior.created_at);
@@ -293,7 +293,7 @@ describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
     seedAgentRule(1, 'example.com', 'allow');
     const res = await post('hash_1', 'revoke', { domain: 'sub.example.com' });
     assert.equal(res.status, 201);
-    const parent = overrides(1, 'example.com');
+    const parent = agentRules(1, 'example.com');
     assert.equal(parent.length, 1);
     assert.equal(parent[0].decision, 'allow');
     assert.equal(sitePolicy.isAllowed(1, 'https://sub.example.com').allowed, false);
@@ -317,7 +317,7 @@ describe('POST validation and auth', () => {
         const json = await res.json();
         assert.equal(json.error, 'invalid domain');
         assert.match(json.reason, /cannot be the target of a per-agent rule/);
-        assert.equal(db.prepare('SELECT COUNT(*) c FROM agent_site_overrides').get().c, 0);
+        assert.equal(db.prepare('SELECT COUNT(*) c FROM agent_site_rules').get().c, 0);
         assert.equal(broadcasts.length, 0);
       });
     }
@@ -331,14 +331,14 @@ describe('POST validation and auth', () => {
     test(`${action}: revoked agent -> 404`, async () => {
       const res = await post('hash_3', action, { domain: 'x.com' });
       assert.equal(res.status, 404);
-      assert.equal(overrides(3, 'x.com').length, 0);
+      assert.equal(agentRules(3, 'x.com').length, 0);
     });
 
     test(`${action}: mutatingAuth 403 blocks the write`, async () => {
       denyMutating = true;
       const res = await post('hash_1', action, { domain: 'x.com' });
       assert.equal(res.status, 403);
-      assert.equal(overrides(1, 'x.com').length, 0);
+      assert.equal(agentRules(1, 'x.com').length, 0);
       assert.equal(broadcasts.length, 0);
     });
   }

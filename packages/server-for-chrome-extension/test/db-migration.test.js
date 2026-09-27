@@ -513,7 +513,7 @@ const EXPECTED_TABLES = [
   'pairings',
   'global_user_site_rules',
   'global_site_blocklist_rules',
-  'agent_site_overrides',
+  'agent_site_rules',
   'global_site_blocklist_meta',
   'site_policy_events',
   'formatter_incidents',

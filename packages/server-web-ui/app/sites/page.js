@@ -5,749 +5,525 @@ import ErrorCard from '../../components/ErrorCard';
 import Toggle from '../../components/Toggle';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
-import EmptyState from '../../components/EmptyState';
-import Pill from '../../components/Pill';
-import SectionToolbar from '../../components/SectionToolbar';
-import Modal from '../../components/Modal';
 import {
   createSequencedFetcher,
   getStatus,
   getSites,
   createSiteRule,
   deleteSiteRule,
-  getAgentSiteOverrides,
-  setAgentSiteOverride,
-  deleteAgentSiteOverride,
+  getAgentSiteRules,
+  setAgentSiteRule,
+  deleteAgentSiteRule,
   toggleGlobalTier,
+  getSiteEvents,
+  allowSiteForAgent,
+  revokeSiteForAgent,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
-import { formatRelativeTime } from '../../lib/format';
+import GlobalListModal, { apiErrorMessage, relTime } from './GlobalListModal';
+import AgentRulesPanel from './AgentRulesPanel';
+import SiteEventLog, { eventKey } from './SiteEventLog';
 
 /**
  * Sites — admin surface for the WebPilot site policy model.
  *
- * Three sections:
- *   1. Global Blocklist       — bundled-pack toggle, version/last-fetch/domain-count
- *                               metadata, and a "View global blocklist" button that
- *                               opens a searchable, paginated modal listing the
- *                               bundled global_site_blocklist domains read-only.
- *   2. Custom rules           — user-set (domain, decision) rows. "+ Add rule"
- *                               opens an inline form. All rows deletable.
- *   3. Per-agent overrides    — agent dropdown, then the picked agent's
- *                               agent_site_overrides list. Same +Add / Delete
- *                               pattern; deletes always allowed (overrides only
- *                               exist as user actions).
+ *   - Enable Global Block List (left card): global tier toggle, signed list
+ *     facts, and "View / manage list" opening GlobalListModal (your global
+ *     allows / blocks plus the signed list; add + delete your own rules).
+ *   - Per-agent rules (right card): agent picker + that agent's rules,
+ *     including a `*` default.
+ *   - Site access log (below): one row per agent + domain with per-agent
+ *     Allow (typed confirm) / Revoke actions.
  *
- * State shape from /api/ui/sites: { globalRules: [...], globalSiteBlocklist: {...} }.
- *
- * Live updates via the `sites_changed` UI WebSocket event — every successful
- * write on the server side broadcasts it and the page refetches.
+ * Live updates: `sites_changed` (any reason) refetches sites, the selected
+ * agent's rules and the log; `site_policy_events_changed` refetches the log;
+ * `agents_changed` refetches agents + log; `reconnected` refetches all.
  */
 
-// Lightweight domain syntactic check used in the +Add forms to render a
-// normalization preview without round-tripping the server. The real
-// validation still happens on the server (site-policy.normalizeDomain) — this
-// is for the live preview only.
-function previewNormalizedDomain(input) {
-  if (typeof input !== 'string') return '';
-  let raw = input.trim().toLowerCase();
-  if (raw.length === 0) return '';
-  // Strip a scheme if present.
-  raw = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
-  // Drop everything past the first slash (path) or colon (port).
-  raw = raw.split('/')[0].split(':')[0];
-  if (raw.startsWith('www.')) raw = raw.slice(4);
-  return raw;
-}
+const EVENTS_PAGE_SIZE = 50;
+const EVENTS_MAX_REFETCH = 200;
+const EVENTS_COALESCE_MS = 250;
 
-function decisionPill(decision) {
-  if (decision === 'allow') {
-    return <Pill state="ready" label="Allow" />;
-  }
-  return <Pill state="danger" label="Block" />;
-}
-
-
-function AddRuleForm({ onSubmit, onCancel, busy, defaultDecision = 'block' }) {
-  const [domain, setDomain] = useState('');
-  const [decision, setDecision] = useState(defaultDecision);
-  const preview = previewNormalizedDomain(domain);
-  const canSubmit = preview.length > 0 && preview.includes('.') && !busy;
-  return (
-    <form
-      className="wp-card"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!canSubmit) return;
-        onSubmit({ domain: preview, decision });
-      }}
-      style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-1)' }}>
-        <label htmlFor="wp-sites-add-domain" className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-          Domain
-        </label>
-        <input
-          id="wp-sites-add-domain"
-          className="wp-input"
-          type="text"
-          autoComplete="off"
-          placeholder="example.com"
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-          autoFocus
-        />
-        {preview && preview !== domain.trim().toLowerCase() ? (
-          <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-            Will be saved as <strong style={{ color: 'var(--wp-fg)' }}>{preview}</strong>
-          </span>
-        ) : null}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-4)' }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)', cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="wp-sites-add-decision"
-            value="allow"
-            checked={decision === 'allow'}
-            onChange={() => setDecision('allow')}
-          />
-          <span>Allow</span>
-        </label>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)', cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="wp-sites-add-decision"
-            value="block"
-            checked={decision === 'block'}
-            onChange={() => setDecision('block')}
-          />
-          <span>Block</span>
-        </label>
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--s-2)', justifyContent: 'flex-end' }}>
-        <button type="button" className="wp-btn wp-btn-compact" onClick={onCancel} disabled={busy}>
-          Cancel
-        </button>
-        <button type="submit" className="wp-btn wp-btn-primary" disabled={!canSubmit}>
-          {busy ? 'Saving…' : 'Add rule'}
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function GlobalRuleRow({ rule, onDelete, busy }) {
-  return (
-    <div className="wp-row">
-      <div className="wp-row-grow">
-        <div className="wp-row-title">{rule.domain}</div>
-        <div className="wp-row-sub">
-          <span>{decisionPill(rule.decision)}</span>
-          {rule.updatedAt ? (
-            <>
-              <span className="wp-row-sep">·</span>
-              <span>updated {formatRelativeTime(rule.updatedAt)}</span>
-            </>
-          ) : null}
-        </div>
-      </div>
-      <div className="wp-row-actions">
-        <button
-          type="button"
-          className="wp-btn wp-btn-compact"
-          onClick={() => onDelete(rule)}
-          disabled={busy}
-          title="Remove this rule"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function OverrideRow({ override, onDelete, busy }) {
-  return (
-    <div className="wp-row">
-      <div className="wp-row-grow">
-        <div className="wp-row-title">{override.domain}</div>
-        <div className="wp-row-sub">
-          <span>{decisionPill(override.decision)}</span>
-          {override.createdAt ? (
-            <>
-              <span className="wp-row-sep">·</span>
-              <span>added {formatRelativeTime(override.createdAt)}</span>
-            </>
-          ) : null}
-        </div>
-      </div>
-      <div className="wp-row-actions">
-        <button
-          type="button"
-          className="wp-btn wp-btn-compact"
-          onClick={() => onDelete(override)}
-          disabled={busy}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const BLOCKLIST_PAGE_SIZE = 25;
-
-function BlocklistViewerModal({ open, onClose, rules, version, lastFetchedAt, domainCount, returnFocusRef }) {
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(0);
-  const searchRef = useRef(null);
-
-  // Reset internal state when the modal opens; restore focus to the trigger on close.
-  useEffect(() => {
-    if (open) {
-      setQuery('');
-      setPage(0);
-    } else if (returnFocusRef && returnFocusRef.current) {
-      try { returnFocusRef.current.focus(); } catch (_) { /* ignore */ }
-    }
-  }, [open, returnFocusRef]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return rules;
-    return rules.filter((r) => r.domain.toLowerCase().includes(q));
-  }, [rules, query]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / BLOCKLIST_PAGE_SIZE));
-  const safePage = Math.min(page, totalPages - 1);
-  const pageRows = useMemo(
-    () => filtered.slice(safePage * BLOCKLIST_PAGE_SIZE, (safePage + 1) * BLOCKLIST_PAGE_SIZE),
-    [filtered, safePage]
-  );
-
-  // If a search shrinks the result set below the current page, drift back.
-  useEffect(() => {
-    if (page > totalPages - 1) setPage(totalPages - 1);
-  }, [page, totalPages]);
-
-  return (
-    <Modal open={open} onClose={onClose} titleId="wp-blocklist-title" size="lg" initialFocusRef={searchRef}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
-        <div>
-          <h2 id="wp-blocklist-title" className="wp-modal-title">Global Blocklist Contents</h2>
-          <div className="wp-row-sub" style={{ marginTop: 4 }}>
-            {version ? (
-              <>
-                <span>version <strong style={{ color: 'var(--wp-fg)' }}>{version}</strong></span>
-                <span className="wp-row-sep">·</span>
-                <span>last fetched {formatRelativeTime(lastFetchedAt)}</span>
-                <span className="wp-row-sep">·</span>
-                <span>
-                  <strong style={{ color: 'var(--wp-fg)' }}>{domainCount || 0}</strong>{' '}
-                  {(domainCount || 0) === 1 ? 'domain' : 'domains'} in the pack
-                </span>
-              </>
-            ) : (
-              <span>No pack fetched yet.</span>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          className="wp-btn wp-btn-compact"
-          onClick={onClose}
-          aria-label="Close"
-          title="Close"
-        >
-          ×
-        </button>
-      </div>
-
-      <input
-        ref={searchRef}
-        className="wp-input"
-        type="search"
-        autoComplete="off"
-        placeholder="Search domains…"
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setPage(0); }}
-      />
-
-      <div className="wp-row-list" style={{ maxHeight: '50vh', overflow: 'auto' }}>
-        {filtered.length === 0 ? (
-          <EmptyState body={query.trim() ? `No domains match "${query.trim()}"` : 'No pack domains loaded yet.'} />
-        ) : (
-          pageRows.map((r) => (
-            <div key={r.domain} className="wp-row">
-              <div className="wp-row-grow">
-                <div className="wp-row-title">{r.domain}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-3)' }}>
-        <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-          {filtered.length} {filtered.length === 1 ? 'result' : 'results'}
-        </span>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-3)' }}>
-          <button
-            type="button"
-            className="wp-link"
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={safePage === 0}
-            style={safePage === 0 ? { opacity: 0.4, cursor: 'default' } : undefined}
-          >
-            ← Prev
-          </button>
-          <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-            Page {safePage + 1} of {totalPages}
-          </span>
-          <button
-            type="button"
-            className="wp-link"
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={safePage >= totalPages - 1}
-            style={safePage >= totalPages - 1 ? { opacity: 0.4, cursor: 'default' } : undefined}
-          >
-            Next →
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
+function makeFetcher(ref) {
+  if (ref.current === null) ref.current = createSequencedFetcher();
+  return ref.current;
 }
 
 export default function SitesPage() {
   const toast = useToast();
-  // Global rules + globalSiteBlocklist summary, from /api/ui/sites.
+
+  // --- Global rules + signed list summary (/api/ui/sites) -------------------
   const [sitesData, setSitesData] = useState({ globalRules: [], globalSiteBlocklist: null });
   const [sitesLoading, setSitesLoading] = useState(true);
   const [sitesError, setSitesError] = useState(null);
-  const [addRuleOpen, setAddRuleOpen] = useState(false);
-  const [blocklistOpen, setBlocklistOpen] = useState(false);
-  const viewBlocklistBtnRef = useRef(null);
-  const [busy, setBusy] = useState(false);
-  const sitesFetcher = useRef(null);
-  if (sitesFetcher.current === null) {
-    sitesFetcher.current = createSequencedFetcher();
-  }
+  const [globalBusy, setGlobalBusy] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const viewListBtnRef = useRef(null);
+  const sitesFetcherRef = useRef(null);
 
-  // Agents list (for the per-agent overrides dropdown), from /api/ui/status.
+  // --- Agents (/api/ui/status) ---------------------------------------------
   const [agents, setAgents] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [selectedAgentKey, setSelectedAgentKey] = useState('');
+  const selectedAgentKeyRef = useRef('');
 
-  // Overrides for the currently-selected agent.
-  const [overrides, setOverrides] = useState([]);
-  const [overridesLoading, setOverridesLoading] = useState(false);
-  const [overridesError, setOverridesError] = useState(null);
-  const [addOverrideOpen, setAddOverrideOpen] = useState(false);
-  const overridesFetcher = useRef(null);
-  if (overridesFetcher.current === null) {
-    overridesFetcher.current = createSequencedFetcher();
+  // --- Per-agent rules -------------------------------------------------------
+  const [agentRules, setAgentRules] = useState([]);
+  const [agentRulesLoading, setAgentRulesLoading] = useState(false);
+  const [agentRulesError, setAgentRulesError] = useState(null);
+  const [agentRulesBusy, setAgentRulesBusy] = useState(false);
+  const agentRulesFetcherRef = useRef(null);
+
+  // --- Site access log -------------------------------------------------------
+  const [events, setEvents] = useState([]);
+  const eventsRef = useRef([]);
+  const [eventsCursor, setEventsCursor] = useState(null);
+  const [eventsHasMore, setEventsHasMore] = useState(false);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsLoadingMore, setEventsLoadingMore] = useState(false);
+  const [eventsError, setEventsError] = useState(null);
+  const [eventBusyKey, setEventBusyKey] = useState(null);
+  const [agentFilter, setAgentFilter] = useState('');
+  const [decisionFilter, setDecisionFilter] = useState('');
+  const agentFilterRef = useRef('');
+  const decisionFilterRef = useRef('');
+  const eventsFetcherRef = useRef(null);
+  // Bumped by every first-page (re)fetch so an in-flight load-more from an
+  // older list is discarded instead of appended.
+  const eventsGenRef = useRef(0);
+  const eventsTimerRef = useRef(null);
+  const unmountedRef = useRef(false);
+
+  function commitEvents(list) {
+    eventsRef.current = list;
+    setEvents(list);
   }
 
   async function refreshSites() {
     try {
-      const { data, isStale } = await sitesFetcher.current.fetch(() => getSites());
-      if (isStale) return;
+      const { data, isStale } = await makeFetcher(sitesFetcherRef).fetch(() => getSites());
+      if (isStale || unmountedRef.current) return;
       setSitesData({
-        globalRules: Array.isArray(data.globalRules) ? data.globalRules : [],
-        globalSiteBlocklist: data.globalSiteBlocklist || null,
+        globalRules: Array.isArray(data && data.globalRules) ? data.globalRules : [],
+        globalSiteBlocklist: (data && data.globalSiteBlocklist) || null,
       });
       setSitesError(null);
     } catch (err) {
-      setSitesError(err);
+      if (!unmountedRef.current) setSitesError(err);
     } finally {
-      setSitesLoading(false);
+      if (!unmountedRef.current) setSitesLoading(false);
     }
+  }
+
+  async function refreshAgentRules(agentKey) {
+    if (!agentKey) {
+      setAgentRules([]);
+      setAgentRulesError(null);
+      setAgentRulesLoading(false);
+      return;
+    }
+    setAgentRulesLoading(true);
+    try {
+      const { data, isStale } = await makeFetcher(agentRulesFetcherRef).fetch(
+        () => getAgentSiteRules(agentKey)
+      );
+      if (isStale || agentKey !== selectedAgentKeyRef.current || unmountedRef.current) return;
+      setAgentRules(Array.isArray(data) ? data : []);
+      setAgentRulesError(null);
+    } catch (err) {
+      if (agentKey === selectedAgentKeyRef.current && !unmountedRef.current) setAgentRulesError(err);
+    } finally {
+      // Guard on the selection ref (not a locally-scoped `stale` flag) so a
+      // fetch that rejects (rather than resolving stale) still leaves the
+      // loading flag alone if a newer request has since taken over.
+      if (agentKey === selectedAgentKeyRef.current && !unmountedRef.current) setAgentRulesLoading(false);
+    }
+  }
+
+  function selectAgent(key) {
+    selectedAgentKeyRef.current = key;
+    setSelectedAgentKey(key);
+    setAgentRules([]);
+    setAgentRulesError(null);
+    refreshAgentRules(key);
+  }
+
+  // Fetch the first page of the log. With `preserveSize`, a list of up to
+  // 200 loaded rows is refetched at its current length so a live update
+  // doesn't collapse what the user already paged through.
+  async function refreshEvents({ preserveSize = false } = {}) {
+    const gen = ++eventsGenRef.current;
+    const loaded = eventsRef.current.length;
+    const limit = preserveSize && loaded <= EVENTS_MAX_REFETCH
+      ? Math.max(EVENTS_PAGE_SIZE, loaded)
+      : EVENTS_PAGE_SIZE;
+    setEventsLoading(true);
+    setEventsLoadingMore(false);
+    try {
+      const { data, isStale } = await makeFetcher(eventsFetcherRef).fetch(() => getSiteEvents({
+        agentId: agentFilterRef.current || undefined,
+        decision: decisionFilterRef.current || undefined,
+        limit,
+      }));
+      if (isStale || gen !== eventsGenRef.current || unmountedRef.current) return;
+      commitEvents(Array.isArray(data && data.entries) ? data.entries : []);
+      setEventsHasMore(!!(data && data.hasMore));
+      setEventsCursor((data && data.nextCursor) || null);
+      setEventsError(null);
+    } catch (err) {
+      if (gen === eventsGenRef.current && !unmountedRef.current) setEventsError(err);
+    } finally {
+      // Guard on the generation ref (not a locally-scoped `stale` flag) so a
+      // fetch that rejects (rather than resolving stale) still leaves the
+      // loading flag alone if a newer request has since taken over.
+      if (gen === eventsGenRef.current && !unmountedRef.current) setEventsLoading(false);
+    }
+  }
+
+  // Coalesce bursts of WS events into one refetch.
+  function scheduleEventsRefetch() {
+    if (eventsTimerRef.current) return;
+    eventsTimerRef.current = setTimeout(() => {
+      eventsTimerRef.current = null;
+      if (!unmountedRef.current) refreshEvents({ preserveSize: true });
+    }, EVENTS_COALESCE_MS);
+  }
+
+  async function loadMoreEvents() {
+    if (!eventsCursor || eventsLoadingMore) return;
+    const gen = eventsGenRef.current;
+    setEventsLoadingMore(true);
+    try {
+      const data = await getSiteEvents({
+        agentId: agentFilterRef.current || undefined,
+        decision: decisionFilterRef.current || undefined,
+        limit: EVENTS_PAGE_SIZE,
+        cursor: eventsCursor,
+      });
+      // A first-page refetch started while we were in flight: drop this page.
+      if (gen !== eventsGenRef.current || unmountedRef.current) return;
+      const seen = new Set(eventsRef.current.map(eventKey));
+      const more = (Array.isArray(data && data.entries) ? data.entries : [])
+        .filter((e) => !seen.has(eventKey(e)));
+      commitEvents([...eventsRef.current, ...more]);
+      setEventsHasMore(!!(data && data.hasMore));
+      setEventsCursor((data && data.nextCursor) || null);
+    } catch (err) {
+      if (gen === eventsGenRef.current && !unmountedRef.current) {
+        toast.error(apiErrorMessage(err, 'Couldn’t load more entries.'));
+      }
+    } finally {
+      if (gen === eventsGenRef.current && !unmountedRef.current) setEventsLoadingMore(false);
+    }
+  }
+
+  function changeFilters(next) {
+    if ('agent' in next) {
+      agentFilterRef.current = next.agent;
+      setAgentFilter(next.agent);
+    }
+    if ('decision' in next) {
+      decisionFilterRef.current = next.decision;
+      setDecisionFilter(next.decision);
+    }
+    // Back to page 1.
+    commitEvents([]);
+    setEventsCursor(null);
+    setEventsHasMore(false);
+    setEventsError(null);
+    refreshEvents();
   }
 
   async function refreshAgents() {
     try {
       const data = await getStatus();
-      const list = (data.pairedAgents || []).map((a) => ({
+      if (unmountedRef.current) return;
+      const list = ((data && data.pairedAgents) || []).map((a) => ({
         key: a.key,
         name: a.agentName || 'Unnamed agent',
-        profileId: a.profileId || null,
       }));
       setAgents(list);
-      // Default-select first agent on initial load so the section is useful
-      // immediately rather than showing an empty dropdown.
-      setSelectedAgentKey((prev) => prev || (list[0] ? list[0].key : ''));
+      const keys = new Set(list.map((a) => a.key));
+      const current = selectedAgentKeyRef.current;
+      if (!current || !keys.has(current)) {
+        selectAgent(list[0] ? list[0].key : '');
+      }
+      if (agentFilterRef.current && !keys.has(agentFilterRef.current)) {
+        changeFilters({ agent: '' });
+      }
     } catch (_e) {
-      /* surfaced indirectly via the empty-state copy */
+      /* Status failures surface through the app shell's connection state. */
     } finally {
-      setAgentsLoading(false);
-    }
-  }
-
-  async function refreshOverrides(agentKey) {
-    if (!agentKey) {
-      setOverrides([]);
-      setOverridesLoading(false);
-      return;
-    }
-    setOverridesLoading(true);
-    try {
-      const { data, isStale } = await overridesFetcher.current.fetch(
-        () => getAgentSiteOverrides(agentKey)
-      );
-      if (isStale) return;
-      setOverrides(Array.isArray(data) ? data : []);
-      setOverridesError(null);
-    } catch (err) {
-      setOverridesError(err);
-    } finally {
-      setOverridesLoading(false);
+      if (!unmountedRef.current) setAgentsLoading(false);
     }
   }
 
   useEffect(() => {
+    unmountedRef.current = false;
     refreshSites();
     refreshAgents();
+    refreshEvents();
     const client = createUiEventsClient();
     client.connect();
     const unsubs = [
+      // Every reason (global/agent rule writes, tier toggle, popup toggle,
+      // log allow/revoke) is handled the same way: full refetch.
       client.subscribe('sites_changed', () => {
         refreshSites();
-        // The currently-selected agent's overrides may have changed too.
-        if (selectedAgentKeyRef.current) {
-          refreshOverrides(selectedAgentKeyRef.current);
-        }
+        if (selectedAgentKeyRef.current) refreshAgentRules(selectedAgentKeyRef.current);
+        scheduleEventsRefetch();
       }),
-      client.subscribe('agents_changed', () => refreshAgents()),
+      client.subscribe('site_policy_events_changed', () => scheduleEventsRefetch()),
+      client.subscribe('agents_changed', () => {
+        refreshAgents();
+        scheduleEventsRefetch();
+      }),
+      client.subscribe('reconnected', () => {
+        refreshSites();
+        refreshAgents();
+        if (selectedAgentKeyRef.current) refreshAgentRules(selectedAgentKeyRef.current);
+        scheduleEventsRefetch();
+      }),
     ];
     return () => {
+      unmountedRef.current = true;
+      if (eventsTimerRef.current) {
+        clearTimeout(eventsTimerRef.current);
+        eventsTimerRef.current = null;
+      }
       unsubs.forEach((u) => u && u());
       client.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mirror the selected agent into a ref so the long-lived WS subscription
-  // can read its latest value without re-binding on every selection change.
-  const selectedAgentKeyRef = useRef(selectedAgentKey);
-  useEffect(() => {
-    selectedAgentKeyRef.current = selectedAgentKey;
-    refreshOverrides(selectedAgentKey);
-  }, [selectedAgentKey]);
+  // --- Global tier + global rules -------------------------------------------
 
-  async function handleToggleGlobalSiteBlocklist(next) {
+  async function handleToggleGlobalTier(next) {
     const prev = sitesData.globalSiteBlocklist;
     setSitesData((d) => ({ ...d, globalSiteBlocklist: { ...(d.globalSiteBlocklist || {}), enabled: next } }));
     try {
       const result = await toggleGlobalTier(next);
-      setSitesData((d) => ({ ...d, globalSiteBlocklist: result.globalSiteBlocklist || d.globalSiteBlocklist }));
-      toast.info(`Global blocklist ${next ? 'enabled' : 'disabled'}.`);
-    } catch (e) {
-      // Roll back on failure.
+      setSitesData((d) => ({
+        ...d,
+        globalSiteBlocklist: (result && result.globalSiteBlocklist) || d.globalSiteBlocklist,
+      }));
+      toast.info(`Global block list ${next ? 'enabled' : 'disabled'}.`);
+    } catch (err) {
       setSitesData((d) => ({ ...d, globalSiteBlocklist: prev }));
-      toast.error(e.message || 'Couldn’t update global blocklist setting.');
+      toast.error(apiErrorMessage(err, 'Couldn’t update the global block list.'));
     }
   }
 
-  async function handleAddRule({ domain, decision }) {
-    setBusy(true);
+  async function handleAddGlobalRule({ domain, decision }) {
+    if (domain.includes('*')) return false; // wildcards are per-agent only
+    setGlobalBusy(true);
     try {
       await createSiteRule({ domain, decision });
       toast.success(`Added ${decision} rule for ${domain}.`);
-      setAddRuleOpen(false);
       await refreshSites();
-    } catch (e) {
-      const msg = (e && e.payload && (e.payload.reason || e.payload.error)) || e.message;
-      toast.error(msg || 'Couldn’t add rule.');
+      return true;
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Couldn’t add rule.'));
+      return false;
     } finally {
-      setBusy(false);
+      setGlobalBusy(false);
     }
   }
 
-  async function handleDeleteRule(rule) {
-    setBusy(true);
+  async function handleDeleteGlobalRule(domain) {
+    setGlobalBusy(true);
     try {
-      await deleteSiteRule(rule.domain);
-      toast.info(`Removed rule for ${rule.domain}.`);
+      await deleteSiteRule(domain);
+      toast.info(`Removed rule for ${domain}.`);
       await refreshSites();
-    } catch (e) {
-      const msg = (e && e.payload && (e.payload.reason || e.payload.error)) || e.message;
-      toast.error(msg || 'Couldn’t delete rule.');
+      return true;
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Couldn’t remove rule.'));
+      return false;
     } finally {
-      setBusy(false);
+      setGlobalBusy(false);
     }
   }
 
-  async function handleAddOverride({ domain, decision }) {
-    if (!selectedAgentKey) return;
-    setBusy(true);
+  function closeGlobalList() {
+    setListOpen(false);
+    // Modal does not restore focus on close.
+    try { viewListBtnRef.current && viewListBtnRef.current.focus(); } catch (_) { /* ignore */ }
+  }
+
+  // --- Per-agent rules -------------------------------------------------------
+
+  async function handleAddAgentRule({ domain, decision }) {
+    const agentKey = selectedAgentKeyRef.current;
+    if (!agentKey) return false;
+    setAgentRulesBusy(true);
     try {
-      await setAgentSiteOverride(selectedAgentKey, { domain, decision });
-      toast.success(`Added ${decision} override for ${domain}.`);
-      setAddOverrideOpen(false);
-      await refreshOverrides(selectedAgentKey);
-    } catch (e) {
-      const msg = (e && e.payload && (e.payload.reason || e.payload.error)) || e.message;
-      toast.error(msg || 'Couldn’t add override.');
+      await setAgentSiteRule(agentKey, { domain, decision });
+      toast.success(`Added ${decision} rule for ${domain}.`);
+      await refreshAgentRules(agentKey);
+      scheduleEventsRefetch();
+      return true;
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Couldn’t add rule.'));
+      return false;
     } finally {
-      setBusy(false);
+      setAgentRulesBusy(false);
     }
   }
 
-  async function handleDeleteOverride(override) {
-    if (!selectedAgentKey) return;
-    setBusy(true);
+  async function handleDeleteAgentRule(domain) {
+    const agentKey = selectedAgentKeyRef.current;
+    if (!agentKey) return false;
+    setAgentRulesBusy(true);
     try {
-      await deleteAgentSiteOverride(selectedAgentKey, override.domain);
-      toast.info(`Removed override for ${override.domain}.`);
-      await refreshOverrides(selectedAgentKey);
-    } catch (e) {
-      const msg = (e && e.payload && (e.payload.reason || e.payload.error)) || e.message;
-      toast.error(msg || 'Couldn’t delete override.');
+      await deleteAgentSiteRule(agentKey, domain);
+      toast.info(`Removed rule for ${domain}.`);
+      await refreshAgentRules(agentKey);
+      scheduleEventsRefetch();
+      return true;
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Couldn’t remove rule.'));
+      return false;
     } finally {
-      setBusy(false);
+      setAgentRulesBusy(false);
     }
   }
 
-  const customRules = useMemo(
-    () => (sitesData?.globalRules || []).filter((r) => r.source === 'user'),
-    [sitesData?.globalRules]
-  );
+  // --- Site access log actions ----------------------------------------------
 
-  const userRuleCount = useMemo(
-    () => sitesData.globalRules.filter((r) => r.source === 'user').length,
-    [sitesData.globalRules]
-  );
+  async function runEventAction(entry, action, successText) {
+    const key = eventKey(entry);
+    setEventBusyKey(key);
+    try {
+      await action(entry.agentKey, entry.domain);
+      toast.success(successText);
+      await refreshEvents({ preserveSize: true });
+      if (selectedAgentKeyRef.current === entry.agentKey) {
+        refreshAgentRules(entry.agentKey);
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Couldn’t update this agent’s rule.'));
+    } finally {
+      if (!unmountedRef.current) setEventBusyKey((k) => (k === key ? null : k));
+    }
+  }
+
+  function handleAllowEvent(entry) {
+    const name = entry.agentName || 'Unnamed agent';
+    return runEventAction(entry, allowSiteForAgent, `Allowed ${entry.domain} for ${name}.`);
+  }
+
+  function handleRevokeEvent(entry) {
+    const name = entry.agentName || 'Unnamed agent';
+    return runEventAction(entry, revokeSiteForAgent, `Blocked ${entry.domain} for ${name}.`);
+  }
+
+  // --- Derived ---------------------------------------------------------------
 
   const globalSiteBlocklist = sitesData.globalSiteBlocklist;
-
-  const bundledBlocklistRules = useMemo(
-    () => (sitesData?.globalRules || []).filter((r) => r.source === 'global_site_blocklist'),
-    [sitesData?.globalRules]
+  const tierEnabled = !!(globalSiteBlocklist && globalSiteBlocklist.enabled);
+  const userRuleCount = useMemo(
+    () => sitesData.globalRules.reduce((n, r) => (r.source === 'user' ? n + 1 : n), 0),
+    [sitesData.globalRules]
   );
+  const signedCount = (globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0;
+  const hasSitesData = !!globalSiteBlocklist || sitesData.globalRules.length > 0;
 
   return (
     <>
       <header className="wp-page-head">
         <h1 className="wp-page-title">Sites</h1>
         <p className="wp-page-sub">
-          Decide which sites WebPilot agents can touch. Per-agent overrides beat custom rules; custom rules beat the bundled global blocklist; everything else is allowed.
+          Control which sites your agents can open: per-agent rules beat global rules, and anything unmatched is allowed.
         </p>
       </header>
 
-      {sitesError ? <ErrorCard error={sitesError} /> : null}
+      <div className="wp-sites-cols">
+        <section className="wp-card wp-sites-card" aria-labelledby="wp-sites-global-title">
+          <div className="wp-sites-card-head">
+            <div>
+              <h2 id="wp-sites-global-title" className="wp-sites-card-title">Enable Global Block List</h2>
+              <p className="wp-sites-card-sub">Applies to all agents regardless of their custom rules.</p>
+            </div>
+            {hasSitesData ? (
+              <Toggle
+                checked={tierEnabled}
+                onChange={handleToggleGlobalTier}
+                ariaLabel="Enable global block list"
+              />
+            ) : null}
+          </div>
 
-      {/* Global Blocklist summary */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Global Blocklist</h2>
-        </div>
-        <div className="wp-card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
-          {sitesLoading ? (
-            <SkeletonRow titleWidth="40%" subWidth="55%" />
-          ) : (
+          {sitesError ? (
+            <ErrorCard title="Couldn’t load global rules." error={sitesError} onRetry={refreshSites} />
+          ) : null}
+
+          {sitesLoading && !hasSitesData ? (
+            <SkeletonRow titleWidth="70%" subWidth="45%" padded={false} />
+          ) : hasSitesData ? (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s-4)' }}>
-                <div>
-                  <div style={{ fontWeight: 500, color: 'var(--wp-fg)' }}>
-                    Global blocklist {globalSiteBlocklist && globalSiteBlocklist.enabled ? 'enabled' : 'disabled'}
-                  </div>
-                  <div className="wp-row-sub" style={{ marginTop: 4 }}>
-                    {globalSiteBlocklist && globalSiteBlocklist.version ? (
-                      <>
-                        <span>version <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.version}</strong></span>
-                        <span className="wp-row-sep">·</span>
-                        <span>last fetched {formatRelativeTime(globalSiteBlocklist.lastFetchedAt)}</span>
-                        <span className="wp-row-sep">·</span>
-                        <span>
-                          <strong style={{ color: 'var(--wp-fg)' }}>{globalSiteBlocklist.domainCount || 0}</strong>{' '}
-                          {((globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0) === 1 ? 'domain' : 'domains'} in the pack
-                        </span>
-                      </>
-                    ) : (
-                      <span>No pack fetched yet.</span>
-                    )}
-                  </div>
-                </div>
-                <Toggle
-                  checked={!!(globalSiteBlocklist && globalSiteBlocklist.enabled)}
-                  onChange={handleToggleGlobalSiteBlocklist}
-                  label={globalSiteBlocklist && globalSiteBlocklist.enabled ? 'On' : 'Off'}
-                  title="When disabled, WebPilot ignores the bundled blocklist when deciding whether a request is allowed. Per-agent overrides and your custom rules still apply."
-                />
+              <div className="wp-sites-facts">
+                {signedCount} signed domains · {userRuleCount} custom {userRuleCount === 1 ? 'rule' : 'rules'} · updated {relTime(globalSiteBlocklist && globalSiteBlocklist.lastFetchedAt)}
               </div>
-              <div style={{ marginTop: 'var(--s-3)' }}>
+              {!tierEnabled ? (
+                <div className="wp-sites-note">Global rules are off. Only per-agent rules and defaults apply.</div>
+              ) : null}
+              <div className="wp-sites-actions">
                 <button
-                  ref={viewBlocklistBtnRef}
+                  ref={viewListBtnRef}
                   type="button"
-                  className="wp-btn wp-btn-compact"
-                  onClick={() => setBlocklistOpen(true)}
+                  className="wp-btn"
+                  onClick={() => setListOpen(true)}
                 >
-                  View global blocklist
+                  View / manage list
                 </button>
               </div>
             </>
-          )}
-        </div>
-      </section>
+          ) : null}
+        </section>
 
-      {/* Custom rules */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Custom rules</h2>
-          <span className="wp-section-aside">
-            {sitesLoading
-              ? ''
-              : `${userRuleCount} ${userRuleCount === 1 ? 'rule' : 'rules'}`}
-          </span>
-        </div>
-
-        <SectionToolbar
-          left={null}
-          right={(
-            <button
-              type="button"
-              className="wp-btn wp-btn-primary"
-              onClick={() => setAddRuleOpen((v) => !v)}
-              disabled={busy}
-            >
-              {addRuleOpen ? 'Close' : '+ Add rule'}
-            </button>
-          )}
+        <AgentRulesPanel
+          agents={agents}
+          agentsLoading={agentsLoading}
+          selectedAgentKey={selectedAgentKey}
+          onSelectAgent={selectAgent}
+          rules={agentRules}
+          rulesLoading={agentRulesLoading}
+          rulesError={agentRulesError}
+          onRetry={() => refreshAgentRules(selectedAgentKeyRef.current)}
+          busy={agentRulesBusy}
+          onAddRule={handleAddAgentRule}
+          onDeleteRule={handleDeleteAgentRule}
         />
+      </div>
 
+      <SiteEventLog
+        agents={agents}
+        agentFilter={agentFilter}
+        decisionFilter={decisionFilter}
+        onAgentFilterChange={(v) => changeFilters({ agent: v })}
+        onDecisionFilterChange={(v) => changeFilters({ decision: v })}
+        entries={events}
+        loading={eventsLoading}
+        error={eventsError}
+        onRetry={() => refreshEvents({ preserveSize: true })}
+        hasMore={eventsHasMore}
+        loadingMore={eventsLoadingMore}
+        onLoadMore={loadMoreEvents}
+        eventBusyKey={eventBusyKey}
+        onAllow={handleAllowEvent}
+        onRevoke={handleRevokeEvent}
+      />
 
-        {addRuleOpen ? (
-          <div style={{ marginBottom: 'var(--s-3)' }}>
-            <AddRuleForm
-              onSubmit={handleAddRule}
-              onCancel={() => setAddRuleOpen(false)}
-              busy={busy}
-              defaultDecision="block"
-            />
-          </div>
-        ) : null}
-
-        {sitesLoading ? (
-          <div className="wp-inset-group">
-            <SkeletonRow titleWidth="45%" subWidth="35%" showTrailing />
-            <SkeletonRow titleWidth="52%" subWidth="40%" showTrailing />
-            <SkeletonRow titleWidth="38%" subWidth="32%" showTrailing />
-          </div>
-        ) : customRules.length === 0 ? (
-          <EmptyState body="No custom rules yet. Click &quot;+ Add rule&quot; to allow or block a domain." />
-        ) : (
-          <div className="wp-row-list">
-            {customRules.map((rule) => (
-              <GlobalRuleRow
-                key={`${rule.source}:${rule.domain}`}
-                rule={rule}
-                onDelete={handleDeleteRule}
-                busy={busy}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Per-agent overrides */}
-      <section className="wp-section">
-        <div className="wp-section-head">
-          <h2 className="wp-section-title">Per-agent overrides</h2>
-          <span className="wp-section-aside">
-            {agents.length === 0
-              ? agentsLoading ? '' : 'No agents'
-              : `${agents.length} ${agents.length === 1 ? 'agent' : 'agents'}`}
-          </span>
-        </div>
-
-        <SectionToolbar
-          left={(
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-2)' }}>
-              <span className="wp-secondary" style={{ fontSize: 'var(--fs-small)' }}>
-                Agent
-              </span>
-              <select
-                className="wp-input"
-                value={selectedAgentKey}
-                onChange={(e) => setSelectedAgentKey(e.target.value)}
-                disabled={agents.length === 0}
-              >
-                {agents.length === 0 ? (
-                  <option value="">No paired agents</option>
-                ) : (
-                  agents.map((a) => (
-                    <option key={a.key} value={a.key}>
-                      {a.name}
-                      {a.profileId ? ` · ${a.profileId}` : ''}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-          )}
-          right={(
-            <button
-              type="button"
-              className="wp-btn wp-btn-primary"
-              onClick={() => setAddOverrideOpen((v) => !v)}
-              disabled={busy || !selectedAgentKey}
-            >
-              {addOverrideOpen ? 'Close' : '+ Add override'}
-            </button>
-          )}
-        />
-
-
-        {addOverrideOpen && selectedAgentKey ? (
-          <div style={{ marginBottom: 'var(--s-3)' }}>
-            <AddRuleForm
-              onSubmit={handleAddOverride}
-              onCancel={() => setAddOverrideOpen(false)}
-              busy={busy}
-              defaultDecision="allow"
-            />
-          </div>
-        ) : null}
-
-        {overridesError ? (
-          <ErrorCard error={overridesError} title="Couldn’t load overrides." />
-        ) : !selectedAgentKey ? (
-          <EmptyState
-            body={agentsLoading
-              ? 'Loading agents…'
-              : 'No paired agents yet. Pair an agent first to give it per-site overrides.'}
-          />
-        ) : overridesLoading ? (
-          <div className="wp-inset-group">
-            <SkeletonRow titleWidth="42%" subWidth="30%" showTrailing />
-            <SkeletonRow titleWidth="50%" subWidth="35%" showTrailing />
-          </div>
-        ) : overrides.length === 0 ? (
-          <EmptyState body="No overrides for this agent." />
-        ) : (
-          <div className="wp-row-list">
-            {overrides.map((o) => (
-              <OverrideRow
-                key={o.domain}
-                override={o}
-                onDelete={handleDeleteOverride}
-                busy={busy}
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <BlocklistViewerModal
-        open={blocklistOpen}
-        onClose={() => setBlocklistOpen(false)}
-        rules={bundledBlocklistRules}
-        version={globalSiteBlocklist ? globalSiteBlocklist.version : null}
-        lastFetchedAt={globalSiteBlocklist ? globalSiteBlocklist.lastFetchedAt : null}
-        domainCount={globalSiteBlocklist ? globalSiteBlocklist.domainCount : 0}
-        returnFocusRef={viewBlocklistBtnRef}
+      <GlobalListModal
+        open={listOpen}
+        onClose={closeGlobalList}
+        globalRules={sitesData.globalRules}
+        globalSiteBlocklist={globalSiteBlocklist}
+        busy={globalBusy}
+        onAddRule={handleAddGlobalRule}
+        onDeleteRule={handleDeleteGlobalRule}
       />
     </>
   );

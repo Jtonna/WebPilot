@@ -75,7 +75,7 @@ Each file exports a plain object:
 
 ```js
 module.exports = {
-  id:          '003-your-migration',  // ledger PK; matches the filename without `.js`
+  id:          '004-your-migration',  // ledger PK; matches the filename without `.js`
   description: 'Human-readable one-liner shown in runner log lines',
   up(db, opts) {
     // db  — open better-sqlite3 handle

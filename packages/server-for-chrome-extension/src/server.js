@@ -1260,7 +1260,7 @@ function mountWebUiRoutes(app, deps) {
       if (typeof rawDomain === 'string' && rawDomain.trim() === sitePolicy.WILDCARD) {
         return res.status(400).json({
           error: 'invalid domain',
-          reason: "wildcard ('*') rules are per-agent only — use the agent site-overrides routes",
+          reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Sites page",
         });
       }
       const normalized = sitePolicy.normalizeDomain(rawDomain);
@@ -1318,7 +1318,7 @@ function mountWebUiRoutes(app, deps) {
         return res.status(400).json({
           error: 'cannot delete signed blocklist rule',
           reason:
-            'signed blocklist entries cannot be removed — turn off the global tier toggle in Settings (disables the whole global tier) or add a per-agent allow instead',
+            "signed block list entries can't be deleted; turn off the global block list on the Sites page",
           domain: normalized,
           source: 'global_site_blocklist',
         });
@@ -1330,10 +1330,10 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // GET /api/ui/agents/:agentId/site-overrides
+  // GET /api/ui/agents/:agentId/site-rules
   // The :agentId param here is the api_key_hash exposed by listKeys() as
   // `key`. We resolve it to the numeric agents.id for the lookup.
-  app.get('/api/ui/agents/:agentId/site-overrides', auth, (req, res) => {
+  app.get('/api/ui/agents/:agentId/site-rules', auth, (req, res) => {
     try {
       const agentId = _agentIdFromKey(req.params.agentId);
       if (!agentId) {
@@ -1342,7 +1342,7 @@ function mountWebUiRoutes(app, deps) {
       const db = require('./db/connection').getDb();
       const rows = db
         .prepare(
-          'SELECT domain, decision, created_at FROM agent_site_overrides WHERE agent_id = ? ORDER BY domain ASC'
+          'SELECT domain, decision, created_at FROM agent_site_rules WHERE agent_id = ? ORDER BY domain ASC'
         )
         .all(agentId);
       res.json(
@@ -1353,14 +1353,14 @@ function mountWebUiRoutes(app, deps) {
         }))
       );
     } catch (e) {
-      console.error('[ui-api] GET /agents/:agentId/site-overrides failed:', e.message);
+      console.error('[ui-api] GET /agents/:agentId/site-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // POST /api/ui/agents/:agentId/site-overrides
+  // POST /api/ui/agents/:agentId/site-rules
   // Body: { domain, decision }
-  app.post('/api/ui/agents/:agentId/site-overrides', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/agents/:agentId/site-rules', auth, mutatingAuth, express.json(), (req, res) => {
     try {
       const agentId = _agentIdFromKey(req.params.agentId);
       if (!agentId) {
@@ -1380,37 +1380,37 @@ function mountWebUiRoutes(app, deps) {
           reason: "decision must be 'allow' or 'block'",
         });
       }
-      sitePolicy.setAgentOverride(agentId, normalized, body.decision);
+      sitePolicy.setAgentRule(agentId, normalized, body.decision);
       const db = require('./db/connection').getDb();
       const row = db
         .prepare(
-          'SELECT domain, decision, created_at FROM agent_site_overrides WHERE agent_id = ? AND domain = ?'
+          'SELECT domain, decision, created_at FROM agent_site_rules WHERE agent_id = ? AND domain = ?'
         )
         .get(agentId, normalized);
       console.log(
-        `[ui-api:sites] upsert agent override agentId=${agentId} domain=${normalized} decision=${body.decision}`
+        `[ui-api:sites] upsert agent rule agentId=${agentId} domain=${normalized} decision=${body.decision}`
       );
-      _broadcastSitesChanged('agent_override_upsert');
+      _broadcastSitesChanged('agent_rule_upsert');
       res.status(201).json({
         domain: row ? row.domain : normalized,
         decision: row ? row.decision : body.decision,
         createdAt: row ? row.created_at : null,
       });
     } catch (e) {
-      console.error('[ui-api] POST /agents/:agentId/site-overrides failed:', e.message);
+      console.error('[ui-api] POST /agents/:agentId/site-rules failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  // DELETE /api/ui/agents/:agentId/site-overrides/:domain
-  app.delete('/api/ui/agents/:agentId/site-overrides/:domain', auth, mutatingAuth, (req, res) => {
+  // DELETE /api/ui/agents/:agentId/site-rules/:domain
+  app.delete('/api/ui/agents/:agentId/site-rules/:domain', auth, mutatingAuth, (req, res) => {
     try {
       const agentId = _agentIdFromKey(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
       // The domain path param may arrive URL-encoded (e.g. '*' as '%2A');
-      // decode before normalizing so the wildcard override can be removed.
+      // decode before normalizing so the wildcard rule can be removed.
       let rawDomainParam = req.params.domain;
       try {
         rawDomainParam = decodeURIComponent(rawDomainParam);
@@ -1424,17 +1424,17 @@ function mountWebUiRoutes(app, deps) {
           reason: `domain ${JSON.stringify(req.params.domain)} did not normalize`,
         });
       }
-      const removed = sitePolicy.removeAgentOverride(agentId, normalized);
+      const removed = sitePolicy.removeAgentRule(agentId, normalized);
       if (!removed) {
-        return res.status(404).json({ error: 'override not found', domain: normalized });
+        return res.status(404).json({ error: 'agent rule not found', domain: normalized });
       }
       console.log(
-        `[ui-api:sites] delete agent override agentId=${agentId} domain=${normalized}`
+        `[ui-api:sites] delete agent rule agentId=${agentId} domain=${normalized}`
       );
-      _broadcastSitesChanged('agent_override_delete');
+      _broadcastSitesChanged('agent_rule_delete');
       res.json({ ok: true, domain: normalized });
     } catch (e) {
-      console.error('[ui-api] DELETE /agents/:agentId/site-overrides/:domain failed:', e.message);
+      console.error('[ui-api] DELETE /agents/:agentId/site-rules/:domain failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1442,7 +1442,7 @@ function mountWebUiRoutes(app, deps) {
   // POST /api/ui/sites/global-tier/toggle — writes config.global_tier_enabled
   // via sitePolicy.setGlobalTierEnabled. Disables the WHOLE global tier when
   // false: both the global user rules AND the signed global site blocklist
-  // stop applying; per-agent overrides are unaffected. The auto-updater
+  // stop applying; per-agent rules are unaffected. The auto-updater
   // keeps writing the signed tier regardless of the toggle — it only gates
   // whether isAllowed consults those rows, not whether they're fetched.
   // Broadcasts a sites_changed WS event so connected Sites pages re-render.
@@ -2200,7 +2200,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // popup UI: 'allowed' | 'blocked_global_site_blocklist' | 'blocked_user'
     // | 'allowed_override' | 'blocked_override'.
     function _statePillFromPolicy(policy) {
-      if (policy.source === 'agent_override') {
+      if (policy.source === 'agent_rule') {
         return policy.decision === 'allow' ? 'allowed_override' : 'blocked_override';
       }
       if (policy.decision === 'allow') return 'allowed';
@@ -2211,7 +2211,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // GET /api/popup/state?tabUrl=<url>
     // Returns connection + current-tab policy state + dashboard URL.
     // The popup operates in profile-context (no agent identity) — global
-    // site rules apply; per-agent overrides do not. `agent` is always null.
+    // site rules apply; per-agent rules do not. `agent` is always null.
     app.get('/api/popup/state', (req, res) => {
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });
@@ -2232,7 +2232,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         const domain = sitePolicyPopup.normalizeDomain(tabUrlRaw);
         if (domain) {
           // No agent context — pass null so the policy resolves global-only
-          // (no agent_site_overrides applied).
+          // (no agent_site_rules applied).
           const policy = sitePolicyPopup.isAllowed(null, tabUrlRaw);
           currentTab = {
             url: tabUrlRaw,
@@ -2262,7 +2262,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // POST /api/popup/site-toggle  { domain, action: 'block' | 'allow' }
     // Sets a GLOBAL user rule for the domain (per the locked design decision —
     // the popup's toggle is the "no AI touches this site" fast button; per-
-    // agent overrides live on the webapp Sites page).
+    // agent rules live on the webapp Sites page).
     app.post('/api/popup/site-toggle', express.json(), (req, res) => {
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });
@@ -2294,7 +2294,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
         `[popup:site-toggle] domain="${normalized}" action="${action}" ` +
           `installId="${installId.slice(0, 8)}..." profileId="${profileId}"`
       );
-      // Compute new pill state (global-only, no agent override).
+      // Compute new pill state (global-only, no agent rule).
       const policy = sitePolicyPopup.isAllowed(null, normalized);
       const newState = _statePillFromPolicy(policy);
       // Tell the webapp Sites page (and any other UI consumer) the rule list

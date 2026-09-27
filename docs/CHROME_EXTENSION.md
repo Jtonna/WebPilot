@@ -227,7 +227,7 @@ The two popup endpoints live in `packages/server-for-chrome-extension/src/server
 2. Resolve via `extensionInstalls.getProfileForInstall(installId)`. An unknown installId → 401.
 3. Pass the **Origin gate (S3)**. The `Origin` header must either be absent (server-side caller, the popup itself, or a `chrome-extension://…` origin) or any non-`http(s)://` scheme. Any `http://` or `https://` origin is rejected outright — that pattern is a webpage running in some Chrome profile trying to ride the loopback bind to mutate site policy. This is the same hardening as the extension-WS `S1` gate and the UI-WS `S2` gate.
 
-A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context — policy is resolved with `sitePolicy.isAllowed(null, …)`, so `agent_site_overrides` are not consulted. When the global tier is enabled (the `global_tier_enabled` config key, default on), the global tier applies: `global_user_site_rules` first, then `global_site_blocklist_rules`, each matched by public-suffix walk. When the global tier is off, every domain resolves to default-allow.
+A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context — policy is resolved with `sitePolicy.isAllowed(null, …)`, so `agent_site_rules` are not consulted. When the global tier is enabled (the `global_tier_enabled` config key, default on), the global tier applies: `global_user_site_rules` first, then `global_site_blocklist_rules`, each matched by public-suffix walk. When the global tier is off, every domain resolves to default-allow.
 
 #### `GET /api/popup/state`
 
@@ -254,7 +254,7 @@ Response fields:
 | Body | `{ domain, action: 'block' \| 'allow' }`. Raw `domain` strings longer than 512 chars → 400. |
 | Response | `{ ok, domain, decision, newState, globalTierEnabled }` |
 
-Upserts a row in `global_user_site_rules` via `sitePolicy.setGlobalRule(normalized, action)`. Audit log line records the truncated installId and bound profileId (no agent identity — popup is not in agent context). Broadcasts a `sites_changed` event over `/api/ui/events` so the Sites admin page stays in sync. `decision` echoes the requested `action`. `newState` is the recomputed pill key (global tier only, no agent override) so the popup can update its toggle without a follow-up `GET /api/popup/state`. `globalTierEnabled` is included so the popup can tell that a rule it just wrote is not in effect: while the global tier is off, `newState` is `'allowed'` even after a `block`.
+Upserts a row in `global_user_site_rules` via `sitePolicy.setGlobalRule(normalized, action)`. Audit log line records the truncated installId and bound profileId (no agent identity — popup is not in agent context). Broadcasts a `sites_changed` event over `/api/ui/events` so the Sites admin page stays in sync. `decision` echoes the requested `action`. `newState` is the recomputed pill key (global tier only, no agent rule) so the popup can update its toggle without a follow-up `GET /api/popup/state`. `globalTierEnabled` is included so the popup can tell that a rule it just wrote is not in effect: while the global tier is off, `newState` is `'allowed'` even after a `block`.
 
 It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
 

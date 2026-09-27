@@ -15,6 +15,7 @@ export class UiEventsClient {
     this._autoReconnect = autoReconnect;
     this._reconnectDelayMs = 2000;
     this._reconnectTimer = null;
+    this._hasConnected = false;
   }
 
   _defaultUrl(path) {
@@ -40,6 +41,16 @@ export class UiEventsClient {
     this._ws.addEventListener('open', () => {
       // eslint-disable-next-line no-console
       console.log('[ui-ws] connected', this._url);
+      // Events that occur during a disconnect/reconnect gap are lost (the
+      // server does not replay them). On every open AFTER the first
+      // successful connection, emit `reconnected` to named listeners so
+      // pages know to refetch their state via REST instead of relying on
+      // the WS event stream alone. Not broadcast to `'*'` listeners since
+      // it is a synthetic client-side signal, not a server event type.
+      if (this._hasConnected) {
+        this._emit('reconnected', { type: 'reconnected' });
+      }
+      this._hasConnected = true;
     });
 
     this._ws.addEventListener('message', (event) => {

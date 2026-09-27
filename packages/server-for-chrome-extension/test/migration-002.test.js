@@ -15,6 +15,7 @@ const migration002 = require('../src/db/schema-migrations/002-split-site-rules-p
 const SCHEMA_SQL = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
 const ID_001 = '001-rename-baseline-to-global-site-blocklist';
 const ID_002 = '002-split-site-rules-per-tier';
+const ID_003 = '003-rename-agent-site-overrides-to-agent-site-rules';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -378,7 +379,7 @@ describe('migration 002: split global_site_rules per tier', () => {
     assert.doesNotThrow(() => db.exec(SCHEMA_SQL));
 
     const ledger = db.prepare('SELECT id FROM schema_migrations ORDER BY id').all().map(r => r.id);
-    assert.deepEqual(ledger, [ID_001, ID_002]);
+    assert.deepEqual(ledger, [ID_001, ID_002, ID_003]);
     assert.equal(tableExists(db, 'global_site_rules'), false);
     assert.equal(tableExists(db, 'baseline_blocklist_meta'), false);
     assert.deepEqual(
@@ -411,10 +412,10 @@ describe('migration 002: split global_site_rules per tier', () => {
       () => db.prepare("INSERT INTO global_site_blocklist_rules VALUES ('*', ?)").run(T1),
       /CHECK constraint failed/
     );
-    // agent_site_overrides.domain may be the literal '*'.
+    // agent_site_rules.domain may be the literal '*'.
     db.exec(`INSERT INTO agents (id, name, api_key_hash, created_at, state) VALUES (1, 'a', 'h', '${T1}', 'active')`);
     assert.doesNotThrow(() =>
-      db.prepare("INSERT INTO agent_site_overrides (agent_id, domain, decision, created_at) VALUES (1, '*', 'block', ?)").run(T1)
+      db.prepare("INSERT INTO agent_site_rules (agent_id, domain, decision, created_at) VALUES (1, '*', 'block', ?)").run(T1)
     );
     db.close();
   });

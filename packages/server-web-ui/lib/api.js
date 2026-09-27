@@ -213,7 +213,7 @@ export function dismissAllForFormatter(name) {
 // Sites
 //
 // CRUD over the per-tier site-policy tables (global_user_site_rules,
-// global_site_blocklist_rules, agent_site_overrides) plus the global-tier on/off toggle.
+// global_site_blocklist_rules, agent_site_rules) plus the global-tier on/off toggle.
 //
 // All helpers follow the existing convention: throw on non-2xx, return the
 // parsed JSON body otherwise. The Sites page subscribes to the
@@ -242,25 +242,26 @@ export function deleteSiteRule(domain) {
   });
 }
 
-// GET /api/ui/agents/:agentId/site-overrides — agentId is the api_key_hash
+// GET /api/ui/agents/:agentId/site-rules — agentId is the api_key_hash
 // returned by getStatus().pairedAgents[i].key. Returns an array of
-// { domain, decision, createdAt }.
-export function getAgentSiteOverrides(agentId) {
-  return apiFetch(`/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides`);
+// { domain, decision, createdAt } from agent_site_rules. WS `sites_changed`
+// reasons for per-agent rule writes are `agent_rule_upsert` / `agent_rule_delete`.
+export function getAgentSiteRules(agentId) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(agentId)}/site-rules`);
 }
 
-// POST /api/ui/agents/:agentId/site-overrides — body { domain, decision }.
-export function setAgentSiteOverride(agentId, { domain, decision }) {
+// POST /api/ui/agents/:agentId/site-rules — body { domain, decision }.
+export function setAgentSiteRule(agentId, { domain, decision }) {
   return apiFetch(
-    `/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides`,
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-rules`,
     { method: 'POST', body: { domain, decision } }
   );
 }
 
-// DELETE /api/ui/agents/:agentId/site-overrides/:domain
-export function deleteAgentSiteOverride(agentId, domain) {
+// DELETE /api/ui/agents/:agentId/site-rules/:domain
+export function deleteAgentSiteRule(agentId, domain) {
   return apiFetch(
-    `/api/ui/agents/${encodeURIComponent(agentId)}/site-overrides/${encodeURIComponent(domain)}`,
+    `/api/ui/agents/${encodeURIComponent(agentId)}/site-rules/${encodeURIComponent(domain)}`,
     { method: 'DELETE' }
   );
 }
