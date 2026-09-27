@@ -921,7 +921,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       }
 
       // Site-policy gate. Runs AFTER auth so we have the agent
-      // identity available for per-agent overrides, and BEFORE the tool
+      // identity available for per-agent rules, and BEFORE the tool
       // dispatches so a blocked site never reaches the extension. A null
       // return means "allowed — proceed". A non-null return is the full MCP
       // result envelope and short-circuits the dispatch.
