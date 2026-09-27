@@ -171,22 +171,22 @@ Live UI WebSocket events:
 
 `global-site-blocklist-updater.js`.
 
-- **Not bundled.** The list is fetched from `https://raw.githubusercontent.com/Jtonna/WebPilot/main/global-site-blocklists` (`:68-69`). It always comes from `main`, whatever the release channel. Only `PUBKEY.pem` ships with the install (`packages/server-for-chrome-extension/package.json:21-28`, `packages/electron/electron-builder.yml:20-24`). The key file is `accessibility-tree-formatters/PUBKEY.pem`, and the same key verifies both the formatter and blocklist bundles.
+- **Not bundled.** The list is fetched from `https://raw.githubusercontent.com/Jtonna/WebPilot/main/global-site-blocklists` (`:70-71`). It always comes from `main`, whatever the release channel. Only `PUBKEY.pem` ships with the install (`packages/server-for-chrome-extension/package.json:21-28`, `packages/electron/electron-builder.yml:20-24`). The key file is `accessibility-tree-formatters/PUBKEY.pem`, and the same key verifies both the formatter and blocklist bundles.
 - **Schedule**: runs 5 s after boot and then every 24 h (`server.js:1927-1937`). Formatters update hourly (`server.js:1913-1916`); the blocklist does not.
-- **Cache**: `<dataDir>/global-site-blocklists/` (`:104-107`). The signature and every file hash are checked again each time the cache is read (`_readLocalCache`, `:150-208`).
+- **Cache**: `<dataDir>/global-site-blocklists/` (`:106-109`). The signature and every file hash are checked again each time the cache is read (`_readLocalCache`, `:152-210`).
 - **Verifier**: `lib/manifest-verifier.js`. It looks for the pubkey in this order: `WEBPILOT_PUBKEY_PATH`, repo/snapshot-relative paths, `process.resourcesPath`, then the executable's directory (`_pubkeyCandidates`, `:64-84`). Fetches time out after 10 s (`:169`). It does not check the signed manifest's `kind` field (`parseSignedManifest`, `:142-162`).
-- **Apply rule**: a manifest is applied when its version string **differs** from the stored one, not only when it is higher (`:463-469`).
-- **Apply**: `_applySignedTier` (`:273-303`) deletes every row, inserts the new domains and upserts the meta row in one transaction.
-- **Status**: `getStatus()` (`:532-555`) returns `{ enabled, version, lastFetchedAt, domainCount }`. `lastFetchedAt` is the time of the last **apply**, not the last check. `version` may read `pre-002:<v>` until the first successful sync after migration 002.
+- **Apply rule**: a manifest is applied when its version string **differs** from the stored one, not only when it is higher (`:439-450`).
+- **Apply**: `_applySignedTier` (`:254-284`) deletes every row, inserts the new domains and upserts the meta row in one transaction.
+- **Status**: `getStatus()` (`:538-568`) returns `{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`. `lastFetchedAt` is the time of the last **apply**, not the last check. `lastCheckedAt` is the time of the last check, and `lastCheckError` is its failure reason or `null`. Both are held in memory by `checkForUpdates` (`:513-526`) and are `null` until the first check after a daemon start. `lastCheckError` is also set when a check succeeded from the cache after the remote failed. `version` is `null` on an install that has never fetched successfully, and may read `pre-002:<v>` until the first successful sync after migration 002.
 
 ### Failure modes
 
 | Condition | Result |
 |---|---|
-| Hash mismatch on a remote `manifest.json` or list file after the signature verified | The run is aborted and the DB is unchanged (`:361-363`, `:388-391`) |
-| Signature failure, network error or missing list file | Falls back to the verified local cache (`:340-345`, `:416-432`) |
-| Signed manifest returns 404, no usable cache, meta row exists | Skipped with `no-signed-manifest`; the DB is unchanged (`:441-443`) |
-| No remote and no cache | An empty placeholder with version `'0'` is written, which **empties the signed tier** (`:445-454`). Current behavior, tracked in #101 |
+| Hash mismatch on a remote `manifest.json` or list file after the signature verified | The run is aborted and the DB is unchanged (`:346-348`, `:374-376`) |
+| Signature failure, network error or missing list file | Falls back to the verified local cache (`:325-330`, `:402-418`) |
+| Signed manifest returns 404 and no usable cache | Skipped with `no-signed-manifest`; the DB and cache are unchanged, whether or not a meta row exists (`:420-430`) |
+| No verified remote and no verified cache (network error, signature failure, missing `manifest.json` or list file) | Skipped with `unavailable` and a `reason` (for example `list "<file>": list file missing on remote`). Nothing is written to the DB or the cache. Existing rows and the stored version are kept, and the next tick retries (`:420-430`). A fresh install that has never fetched successfully has no rows and `version: null` until its first success. An install emptied by the old version-`'0'` placeholder recovers on the next verified fetch |
 | `signed-manifest.json` edited by hand | CI passes because it checks hashes only. Daemons reject the bundle at signature verification and keep what they have |
 
 ## Updating the blocklist
@@ -214,7 +214,7 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 
 1. Make the common edits above and open the PR without re-signing.
 2. `check-signed-manifest` **fails** with a hash mismatch on the PR, and fails again on `main` after merge. Merging requires overriding the red check.
-3. Daemons reject the unsigned change with `manifest.json hash mismatch — refusing update` (`global-site-blocklist-updater.js:361-363`, `:389-390`) and keep the last good list.
+3. Daemons reject the unsigned change with `manifest.json hash mismatch — refusing update` (`global-site-blocklist-updater.js:346-348`, `:375-376`) and keep the last good list.
 4. `release-stable.yml` re-signs and commits the result to `main` (`.github/workflows/release-stable.yml:113-129`, `:158-166`). `release-nightly.yml` re-signs only inside the runner and never commits (`.github/workflows/release-nightly.yml:129-144`).
 5. The list goes live within 24 h of the next **stable** release.
 
@@ -226,7 +226,7 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 
 | Gap | Tracking |
 |---|---|
-| No remote and no cache writes an empty placeholder that empties the signed tier | #101 |
+| First boot offline: until the first successful fetch the signed tier has no rows, because no signed snapshot ships with the installer | #116 |
 | Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
 | Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings); `release-stable.yml:121` points to an old CONTRIBUTING heading | #112 |
 | Workflow primitives bypass the gate; pending-navigation gap | #114 |
