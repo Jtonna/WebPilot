@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Site policy event log: one row per agent + domain that an agent's browser tools were checked against (domain only, no path). Repeat checks bump a hit count and last-seen time; when the verdict changes the row flips in place, with no history rows. Default allows are logged too. Rows are pruned after 30 days or beyond 5,000 rows, at boot and hourly. Stored in the new `site_policy_events` table. (#103)
+- `GET /api/ui/sites/events`: paginated read API for the log (filter by agent and decision), including whether the domain can be targeted by a per-agent rule and the agent's current rule for it. (#103)
+- `POST /api/ui/agents/:agentId/site-events/allow` and `.../revoke`: create a per-agent allow or block rule for a logged domain. Revoke always creates a block for that agent only and never deletes an allow rule (a same-domain per-agent allow is overwritten in place). (#103)
+- New WebSocket event `site_policy_events_changed`, emitted when a row is created, its decision flips, or retention removes rows (not on every hit). (#103)
+
 ### Changed
 - Site rules are now stored per tier (per-agent, global user, signed global blocklist). User rules no longer overwrite or mask signed blocklist entries; removing a user rule immediately restores signed-list behavior. (#102)
 - The global toggle now disables the whole global tier (signed blocklist AND global user rules). Users who had the toggle off will find their global user rules inactive until they turn it back on. Per-agent rules are unaffected. (#102)
