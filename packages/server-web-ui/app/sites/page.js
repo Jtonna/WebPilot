@@ -123,19 +123,20 @@ export default function SitesPage() {
       return;
     }
     setAgentRulesLoading(true);
-    let stale = false;
     try {
       const { data, isStale } = await makeFetcher(agentRulesFetcherRef).fetch(
         () => getAgentSiteRules(agentKey)
       );
-      stale = isStale || agentKey !== selectedAgentKeyRef.current;
-      if (stale || unmountedRef.current) return;
+      if (isStale || agentKey !== selectedAgentKeyRef.current || unmountedRef.current) return;
       setAgentRules(Array.isArray(data) ? data : []);
       setAgentRulesError(null);
     } catch (err) {
       if (agentKey === selectedAgentKeyRef.current && !unmountedRef.current) setAgentRulesError(err);
     } finally {
-      if (!stale && !unmountedRef.current) setAgentRulesLoading(false);
+      // Guard on the selection ref (not a locally-scoped `stale` flag) so a
+      // fetch that rejects (rather than resolving stale) still leaves the
+      // loading flag alone if a newer request has since taken over.
+      if (agentKey === selectedAgentKeyRef.current && !unmountedRef.current) setAgentRulesLoading(false);
     }
   }
 
@@ -158,15 +159,13 @@ export default function SitesPage() {
       : EVENTS_PAGE_SIZE;
     setEventsLoading(true);
     setEventsLoadingMore(false);
-    let stale = false;
     try {
       const { data, isStale } = await makeFetcher(eventsFetcherRef).fetch(() => getSiteEvents({
         agentId: agentFilterRef.current || undefined,
         decision: decisionFilterRef.current || undefined,
         limit,
       }));
-      stale = isStale || gen !== eventsGenRef.current;
-      if (stale || unmountedRef.current) return;
+      if (isStale || gen !== eventsGenRef.current || unmountedRef.current) return;
       commitEvents(Array.isArray(data && data.entries) ? data.entries : []);
       setEventsHasMore(!!(data && data.hasMore));
       setEventsCursor((data && data.nextCursor) || null);
@@ -174,7 +173,10 @@ export default function SitesPage() {
     } catch (err) {
       if (gen === eventsGenRef.current && !unmountedRef.current) setEventsError(err);
     } finally {
-      if (!stale && !unmountedRef.current) setEventsLoading(false);
+      // Guard on the generation ref (not a locally-scoped `stale` flag) so a
+      // fetch that rejects (rather than resolving stale) still leaves the
+      // loading flag alone if a newer request has since taken over.
+      if (gen === eventsGenRef.current && !unmountedRef.current) setEventsLoading(false);
     }
   }
 
