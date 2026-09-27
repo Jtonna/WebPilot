@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - MCP clients: the `policySource` value in a blocked-site response changes from `agent_override` to `agent_rule`. The `site_policy_events` table is rebuilt with the new `source` value. (#104)
 - Confirmation dialogs no longer confirm on Enter; Enter only activates the focused button. Escape still cancels. (#104)
 - The web UI event stream client now emits `reconnected` after a dropped connection so pages can refetch state missed during the gap. (#104)
+- The extension popup's site toggle now goes through the same server code as the Sites page (`upsertGlobalUserRule`), including rejecting `*` with the same explanation. No popup-only policy logic remains. `POST /api/popup/site-toggle` also accepts `decision` alongside `action`; its error bodies now carry `{ error, reason }`. (#105)
+- Popup: the pill now says whether the verdict comes from your own rule ("Allowed (your rule)" / "Blocked (your rule)" / "Blocked (global block list)"), shows a "Rule on <domain>" line when a parent-domain rule matched, and disables the toggle with an explanation while global rules are off. `GET /api/popup/state` adds `currentTab.matchedDomain`. (#105)
+
+### Removed
+- The unreachable "Override · Allowed / Blocked" popup pills and the unused "Agent:" line. The popup shows the global policy for the Chrome profile only; per-agent rules live on the Sites page. (#105)
 
 ### Fixed
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
