@@ -144,7 +144,7 @@ Two sidebar groups. Order matches `components/AppShell.js`.
 /ui/settings               Settings
 ```
 
-Sidebar (desktop ≥900px): fixed 240px, no shadow. Active state = elevated fill + 3px `--wp-fg` left-edge bar + solid Heroicon variant + 600-weight label — **no accent tint**. Brand wordmark at top links to Dashboard. Footer is a small connection dot + label (`Connected` / `Disconnected` / `Connecting…`); polls every 15s after first success, 500ms before. The Pairings row shows a mono pending-count on its right edge — the single allowed nav-item count.
+Sidebar (desktop ≥900px): fixed 240px, no shadow. Active state = elevated fill + 3px `--wp-fg` left-edge bar + solid Heroicon variant + 600-weight label — **no accent tint**. Brand wordmark at top links to Dashboard. Footer is a small connection dot + label (`Connected` / `Disconnected` / `Connecting…`); polls every 15s after first success, 500ms before. The Pairings row shows a mono pending-count on its right edge — the single allowed nav-item count. Internal links (sidebar, brand wordmark, back links, in-page links like the Site Policy access log's agent link) use `next/link` with basePath-relative hrefs (omit `/ui`) for client-side navigation; nav `match` functions compare `usePathname()` output against paths without `/ui` since the basePath is stripped from it.
 
 Mobile (<900px): top bar 56px with hamburger (top-left) and connection dot (top-right, also opens the sheet). Sidebar slides in as a left sheet from `translateX(-12px)` over `dur-normal`. Backdrop scrim dismisses.
 
@@ -196,7 +196,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 ## Boot & connection states
 
-**Connecting splash** (`components/AppShell.js` `ConnectingSplash`). Until the first successful `/api/ui/status`, AppShell renders a full-window splash — not the page with a "Disconnected" banner. Centered `WebPilot` wordmark (28px / weight 500) on `var(--wp-bg)`, single-line `Starting server…` / `Connecting…`, three pulsing dots. Mirrors `electron/splash.html` (do not redesign one without the other). Polled at 500ms during boot, 15s heartbeat after first success. Once cleared, splash never returns — transient drops surface only via the sidebar dot.
+**Connecting splash** (`components/AppShell.js` `ConnectingSplash`). Until the first successful `/api/ui/status`, AppShell renders a full-window splash — not the page with a "Disconnected" banner. Centered `WebPilot` wordmark (28px / weight 500) on `var(--wp-bg)`, single-line `Starting server…` / `Connecting…`, three pulsing dots. Mirrors `electron/splash.html` (do not redesign one without the other). Polled at 500ms during boot, 15s heartbeat after first success. Once cleared, splash never returns for that tab — transient drops surface only via the sidebar dot. The shell remembers the first successful connection for the browser session (`sessionStorage` key `webpilot.hasConnected`), so switching tabs via the client-side nav or reloading in the same tab skips the splash too; a new tab or window still shows it until the server responds.
 
 **Dark-mode native-dropdown contract.** Native `<option>` popup chrome does not inherit theme colors. `globals.css` anchors `background-color` and `color` on `option` directly (under `.wp-select option, .wp-input option`) to `--wp-bg-card` / `--wp-fg`. Every dropdown surface — profile picker, agent picker, pairing-card profile select — **must** use `.wp-select` or `.wp-input`. Don't introduce a bespoke `<select>` without re-applying the option color anchors.
 
