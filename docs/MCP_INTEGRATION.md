@@ -874,9 +874,9 @@ This happens automatically - agents just call `browser_click(ref="e16")` and the
 
 ### browser_scroll
 
-Scroll to element OR by pixel amount. Uses smooth easing (50ms per 50px for window scrolls, 75ms per 50px for container scrolls).
+Scroll to element OR by pixel amount. Uses smooth easing: 50ms per 50px by default, for both window scrolls and pixel-based container scrolls; scrolling an element into view within a container uses 75ms per 50px instead.
 
-> **Note:** The registered MCP tool description in `mcp-handler.js` says "Uses smooth easing (75ms per 50px)" without differentiating window vs container scrolls. In practice, `calculateScrollDuration()` in `utils/scroll.js` defaults to 50ms per 50px for window scrolls, while container scrolls use 75ms per 50px (hardcoded in `scrollElementIntoView()`). The tool description string is slightly inaccurate; the behavior documented below is correct.
+> **Note:** The registered MCP tool description in `mcp-handler.js` says "Uses smooth easing (75ms per 50px)" without differentiating these cases, and `handlers/scroll.js`'s header comment repeats that figure. In practice, `calculateScrollDuration()` in `utils/scroll.js` defaults to 50ms per 50px, and pixel-based container scrolls (`animateContainerScroll()`, called from `handlers/scroll.js` with no duration override) use that default. Only `scrollElementIntoView()` in `utils/scroll.js` hardcodes 75ms per 50px. The tool description string and handler comment are slightly inaccurate; the behavior documented above is correct.
 
 **Parameters:**
 | Parameter | Type | Required | Description |

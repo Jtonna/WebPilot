@@ -61,7 +61,7 @@ platform-agnostic and only relies on `paths.js` for the binary path.
 
 ## 2. What was scaffolded honestly but never tested on real hardware
 
-Every Linux file under `chrome/` and `notifications/` carries a
+`chrome/linux-detector.js` and `notifications/linux.js` carry a
 `NOTE: scaffold-quality` comment. Functions most likely to surface
 real issues first, ranked by guessed risk:
 
@@ -152,7 +152,7 @@ Tick each of these by hand on first run.
 
 ### Process detection via `/proc/<pid>/cmdline`
 
-- [ ] After launching Chrome normally, hit `/api/ui/chrome/refresh`
+- [ ] After launching Chrome normally, hit `POST /api/ui/chrome/restart`
       and confirm `detectChromeBrowsers()` returns one entry per
       running Chrome browser-parent.
 - [ ] If empty: open a terminal and run `for p in /proc/[0-9]*; do

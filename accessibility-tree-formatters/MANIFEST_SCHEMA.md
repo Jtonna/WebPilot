@@ -44,7 +44,7 @@ that points at each formatter's entry file and lists files to sync.
   "match": "discord.com",
   "source": "remote",
   "description": "Discord chat — exposes channels, messages, members, composer",
-  "notes": "Use the send_message workflow for compose+send in one call. The composer ref appears in tree as role=textbox with name starting 'Message #'.",
+  "notes": "Use the send_message workflow for compose+send in one call. The composer's accessible role is a textbox, and its name starts with 'Message '.",
   "errorHandling": {
     "fallbackToRawTree": true
   },
@@ -136,7 +136,7 @@ the manifest declaration.
        },
        async run({ params, browser, tabId, findInTree }) {
          const tree = await browser.getAccessibilityTree({ tab_id: tabId });
-         const composer = findInTree(tree, { name: 'Message textbox' });
+         const composer = findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' });
          if (!composer) throw new Error('Composer textbox not found.');
          await browser.click({ ref: composer.ref, tab_id: tabId });
          await browser.type({
@@ -199,7 +199,7 @@ updater needs to download from GitHub — including each per-formatter
 
 ```json
 {
-  "version": "2",
+  "version": "3",
   "platforms": {
     "discord":  { "match": "discord.com",   "entry": "discord/discord.js" },
     "threads":  { "match": "threads.com",   "entry": "threads/router.js" },
@@ -219,6 +219,29 @@ updater needs to download from GitHub — including each per-formatter
 
 The `platforms` block stays as the at-a-glance routing table; the
 per-formatter manifests carry the descriptive metadata.
+
+### `signed-manifest.json`
+
+`signed-manifest.json` (and its detached `.sig`) sit alongside the
+top-level `manifest.json`. They are **generated**, by running
+`node scripts/sign-formatters.js` — never hand-edited. The script reads
+`manifest.json`, hashes every referenced file (LF-normalized) plus the
+manifest itself, and writes:
+
+```json
+{
+  "kind": "formatters",
+  "version": "3",
+  "algorithm": "sha256",
+  "files": { "manifest.json": "<sha256 hex>", "discord/manifest.json": "<sha256 hex>", "...": "..." }
+}
+```
+
+`kind` is `"formatters"` or `"blocklists"` depending on which bundle
+was signed; `version` mirrors the source manifest's `version`; `files`
+maps every referenced path (relative to the manifest's directory) to
+its SHA-256 hex digest. The signature over this JSON is written to
+`signed-manifest.json.sig` (base64, Ed25519).
 
 ---
 
