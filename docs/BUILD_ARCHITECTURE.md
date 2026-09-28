@@ -121,7 +121,7 @@ nsis:
 
 - **Target**: NSIS installer (Windows), `.dmg` (macOS), AppImage (Linux)
 - **Install location**: `%LOCALAPPDATA%\Programs\WebPilot\` (Windows default for per-user NSIS installs; `perMachine: false`)
-- **extraResources**: The server binary, unpacked Chrome extension, icon assets, and `PUBKEY.pem` (used to verify signed formatters and blocklists) bundle into the Electron app's `resources/` folder outside the Asar archive.
+- **extraResources**: The server binary, unpacked Chrome extension, and icon assets bundle into the Electron app's `resources/` folder, outside the Asar archive. `PUBKEY.pem` bundles alongside them and verifies signed formatters and blocklists.
 - **NSIS hook**: `build/installer.nsh` plugs in `customCheckAppRunning` and `customUnInstall` macros — see below.
 
 ### `generate-icons.js`

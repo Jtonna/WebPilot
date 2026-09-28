@@ -124,8 +124,9 @@ Tick each of these by hand on first run.
 
 ### Process detection
 
-- [ ] Launch Chrome normally. POST `/api/ui/chrome/restart` and verify
-      `detectChromeBrowsers()` returns one entry per running Chrome
+- [ ] Launch Chrome normally.
+- [ ] POST `/api/ui/chrome/restart`.
+- [ ] Verify `detectChromeBrowsers()` returns one entry per running Chrome
       browser-parent.
 - [ ] If it returns zero, run `pgrep -x "Google Chrome"` manually and
       compare. The matcher is case-sensitive and whitespace-sensitive.
@@ -183,7 +184,7 @@ Tick each of these by hand on first run.
 Every TODO/scaffold marker in the macOS code paths:
 
 - `chrome/macos-detector.js:8` — top-of-file scaffold note.
-- `chrome/macos-detector.js:85` — TODO log line printed on every call.
+- `chrome/macos-detector.js:85`: TODO log line printed on every call.
 - `chrome/detector.js:19` — `platform=darwin not yet fully implemented
   — running scaffold` log.
 - `notifications/macos.js:9` — scaffold note in module header.

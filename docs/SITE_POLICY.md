@@ -19,7 +19,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 
 ## Domain matching
 
-- **Normalization** (`normalizeDomain`, `site-policy.js:112-123`): the host is lowercased, and the scheme, port and a leading `www.` are removed. `https://www.chase.com/login` becomes `chase.com`.
+- **Normalization** (`normalizeDomain`, `site-policy.js:112-123`): the host is lowercased. The scheme, port and a leading `www.` are removed. `https://www.chase.com/login` becomes `chase.com`.
 - **Suffix walk** (`_suffixCandidates`, `site-policy.js:163-185`): the walk uses the public suffix list through `psl` and stops at the registrable domain. A rule on `chase.com` covers `secure.chase.com`. A rule on `secure.chase.com` covers only that host and its descendants.
 - **IP literals, `localhost` and other dotless hosts**: `normalizeDomain` rejects these hosts. When the URL uses http, https, ws or wss, or has no scheme, only the agent's `*` row can match it (`site-policy.js:253-260`, `_networkHost` `:147-153`). Named rules and global tiers never match these hosts.
 - URLs with no host or a dotless host (`about:`, `chrome://`, `data:`, `file:///…`) resolve to a null domain and are allowed by default. `normalizeDomain` does not check the scheme, so a `file://` or `ftp://` URL with a dotted host is evaluated like any network URL.
@@ -28,7 +28,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 
 ## Global tier toggle
 
-- Stored in `config.global_tier_enabled`. A missing key means on, and a read error also means on. Only the values `'false'` and `'0'` turn it off (`isGlobalTierEnabled`, `site-policy.js:212-224`). Written by `setGlobalTierEnabled` (`site-policy.js:226-236`).
+- Stored in `config.global_tier_enabled`. A missing key means on. A read error also means on. Only the values `'false'` and `'0'` turn it off (`isGlobalTierEnabled`, `site-policy.js:212-224`). Written by `setGlobalTierEnabled` (`site-policy.js:226-236`).
 - Turning it off disables tiers 2 and 3 together (`site-policy.js:273`). Agent rules are unaffected. No rows are deleted.
 - The updater keeps fetching and writing the signed tier while the toggle is off (`global-site-blocklist-updater.js:51-56`, `:479-485`), so the data is current as soon as the tier is re-enabled.
 - Route: `POST /api/ui/site-policy/global-tier/toggle` (`server.js:1403-1419`) broadcasts `site_policy_changed` with reason `global_tier_toggle`.
@@ -60,8 +60,13 @@ Invariants:
 The gate `_enforceSitePolicy` (`mcp-handler.js:1482-1590`) runs after auth and before dispatch (`mcp-handler.js:935-957`).
 
 - **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`mcp-handler.js:1502-1529`). A blocked URL is never opened.
-- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`). The lenient `_resolveTabUrl` wrapper (`:1461-1474`) is used only by the formatter-guide gate and `webpilot_get_formatter_info`. A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
-- **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2241-2261`). A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`). A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues. A blocked step that takes a `tab_id` still triggers the auto-close.
+- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`).
+  - The lenient `_resolveTabUrl` wrapper (`:1461-1474`) is used only by the formatter-guide gate and `webpilot_get_formatter_info`.
+  - A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
+- **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2241-2261`).
+  - A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`).
+  - A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues.
+  - A blocked step that takes a `tab_id` still triggers the auto-close.
 
 ### Checked and exempt tools
 
@@ -108,7 +113,9 @@ Since #100, the gate fails closed: when a checked tool's verdict cannot be reach
 
 These cases still proceed without a check:
 
-- Checkpoint A with a missing, `null` or empty `url` (`:1507`, `:1517`). The extension raises its own "URL is required". Checkpoint A has no connectivity check, because `browser_create_tab` may launch Chrome itself.
+- Checkpoint A with a missing, `null` or empty `url` (`:1507`, `:1517`).
+  - The extension raises its own "URL is required".
+  - Checkpoint A has no connectivity check, because `browser_create_tab` may launch Chrome itself.
 - Checkpoint B on a found tab whose URL is `''` (not yet navigated). This evaluates to default allow with a null domain, so no event is recorded (`:1566-1572`).
 
 Fail-closed refusals are not recorded in the event log, and the tab is not auto-closed.
@@ -175,7 +182,10 @@ Live UI WebSocket events:
 - **Key**: only `PUBKEY.pem` ships with the install (`packages/server-for-chrome-extension/package.json:21-28`, `packages/electron/electron-builder.yml:20-24`), at `accessibility-tree-formatters/PUBKEY.pem`. The same key verifies both the formatter and blocklist bundles.
 - **Schedule**: runs 5 s after boot and then every 24 h (`server.js:1927-1937`). Formatters update hourly (`server.js:1913-1916`); the blocklist does not.
 - **Cache**: `<dataDir>/global-site-blocklists/` (`:106-109`). The signature and every file hash are checked again each time the cache is read (`_readLocalCache`, `:152-210`).
-- **Verifier**: `lib/manifest-verifier.js`. It looks for the pubkey in this order: `WEBPILOT_PUBKEY_PATH`, repo/snapshot-relative paths, `process.resourcesPath`, then the executable's directory (`_pubkeyCandidates`, `:64-84`). Fetches time out after 10 s (`:169`). It does not check the signed manifest's `kind` field (`parseSignedManifest`, `:142-162`).
+- **Verifier**: `lib/manifest-verifier.js`.
+  - Pubkey search order: `WEBPILOT_PUBKEY_PATH`, repo/snapshot-relative paths, `process.resourcesPath`, then the executable's directory (`_pubkeyCandidates`, `:64-84`).
+  - Fetches time out after 10 s (`:169`).
+  - It does not check the signed manifest's `kind` field (`parseSignedManifest`, `:142-162`).
 - **Apply rule**: a manifest is applied when its version string **differs** from the stored one, not only when it is higher (`:439-450`).
 - **Apply**: `_applySignedTier` (`:254-284`) deletes every row, inserts the new domains and upserts the meta row in one transaction.
 - **Status**: `getStatus()` (`:538-568`) returns `{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`.
@@ -220,13 +230,13 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 
 1. Make the common edits above and open the PR without re-signing.
 2. `check-signed-manifest` **fails** with a hash mismatch on the PR, and fails again on `main` after merge. Merging requires overriding the red check.
-3. Daemons reject the unsigned change with `remote manifest.json hash mismatch — refusing update` (`global-site-blocklist-updater.js:346-348`, `:375-376`) and keep the last good list; the returned `{error}` value is `manifest.json hash mismatch`.
+3. Daemons log `remote manifest.json hash mismatch` and refuse the update (`global-site-blocklist-updater.js:346-348`, `:375-376`), keeping the last good list; the returned `{error}` value is `manifest.json hash mismatch`.
 4. `release-stable.yml` re-signs and commits the result to `main` (`.github/workflows/release-stable.yml:113-129`, `:158-166`). `release-nightly.yml` re-signs only inside the runner and never commits (`.github/workflows/release-nightly.yml:129-144`).
 5. The list goes live within 24 h of the next **stable** release.
 
 ### Maintainer decision pending
 
-`SECURITY.md:63` says the signing key "never lives on a developer machine that pushes to `main`". Procedure A needs the key on exactly that kind of machine. Procedure B keeps the key in CI, but it needs a failing-check override and ties every list change to a stable release. Maintainer decision pending; until decided, both procedures are documented.
+`SECURITY.md:63` says the signing key "never lives on a developer machine that pushes to `main`". Procedure A needs the key on exactly that kind of machine. Procedure B keeps the key in CI, but it needs a failing-check override and ties every list change to a stable release. Maintainer decision pending. Until decided, both procedures are documented.
 
 ## Known gaps and follow-ups
 

@@ -136,7 +136,7 @@ the manifest declaration.
        },
        async run({ params, browser, tabId, findInTree }) {
          const tree = await browser.getAccessibilityTree({ tab_id: tabId });
-         const composer = findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' });
+         const composer = findInTree(tree, { name: 'Message textbox' });
          if (!composer) throw new Error('Composer textbox not found.');
          await browser.click({ ref: composer.ref, tab_id: tabId });
          await browser.type({
@@ -150,6 +150,13 @@ the manifest declaration.
      }
    };
    ```
+
+   The example above is simplified for illustration. The real Discord
+   workflow (`discord/workflows.js`) calls
+   `findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' })`,
+   which matches the composer's accessible role of `textbox` and its
+   accessible name starting with `'Message '` (e.g. `'Message #general'`
+   or `'Message @user'`).
 
    The `run()` function receives:
 
@@ -199,7 +206,7 @@ updater needs to download from GitHub — including each per-formatter
 
 ```json
 {
-  "version": "3",
+  "version": "2",
   "platforms": {
     "discord":  { "match": "discord.com",   "entry": "discord/discord.js" },
     "threads":  { "match": "threads.com",   "entry": "threads/router.js" },
@@ -220,13 +227,17 @@ updater needs to download from GitHub — including each per-formatter
 The `platforms` block stays as the at-a-glance routing table; the
 per-formatter manifests carry the descriptive metadata.
 
+Per the note above, changing any formatter file means bumping this
+`version` (e.g. from `"2"` to `"3"`) and regenerating
+`signed-manifest.json` so the auto-updater picks up the change.
+
 ### `signed-manifest.json`
 
-`signed-manifest.json` and its detached `.sig` live alongside the
-top-level `manifest.json`. Run `node scripts/sign-formatters.js` to
-generate them — do not edit by hand. The script reads `manifest.json`,
-hashes all referenced files (LF-normalized) and the manifest itself,
-then writes the signed manifest.
+Run `node scripts/sign-formatters.js` to generate `signed-manifest.json`
+and its detached `.sig`, which live alongside the top-level
+`manifest.json`. Do not edit them by hand. The script reads
+`manifest.json`, hashes all referenced files (LF-normalized) and the
+manifest itself, then writes the signed manifest.
 
 ```json
 {

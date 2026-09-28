@@ -27,7 +27,7 @@ Each step has an MCP tool. None of them require restarting the WebPilot server.
 | Inspect failures | `webpilot_dev_get_formatter_logs` | Returns the recent error ring buffer (max 50) + a health summary for one platform. Successful invocations are NOT stored as rows — they only update `successCount` and `lastSuccessAt` on the health summary. |
 | Reload extension | `webpilot_dev_reload_extension` | `chrome.runtime.reload()` inside the Chrome extension. **Required after editing files under `packages/chrome-extension-unpacked/`** — Chrome's service worker does not auto-pick-up source changes. |
 
-**Formatter-guide gate:** Gated tools (`browser_get_accessibility_tree`, `browser_click`, `browser_type`, `browser_scroll`, `browser_execute_js`, `browser_inject_script`, `browser_request_chain`, `webpilot_run_workflow` — marked `FORMATTER_GUIDE_GATED` in `mcp-handler.js`) return `platform_guide_required` errors on tabs matching a loaded formatter's URL until you call `webpilot_get_formatter_info({ platform, tab_id })`. The unlock is per (agent, tab_id) and expires if the tab navigates to a different formatter's platform. Call `webpilot_get_formatter_info` before the "Test" steps above.
+**Formatter-guide gate:** Call `webpilot_get_formatter_info({ platform, tab_id })` before any "Test" step above. Until you do, these tools block with a `platform_guide_required` error on a tab matching a loaded formatter's URL: `browser_get_accessibility_tree`, `browser_click`, `browser_type`, `browser_scroll`, `browser_execute_js`, `browser_inject_script`, `browser_request_chain`, `webpilot_run_workflow`. The unlock is per (agent, tab_id). It expires when the tab navigates to a different formatter's platform.
 
 ---
 
