@@ -73,9 +73,9 @@ The runner sorts files lexically. Lexical order matches numerical order through 
 
 | # | File | What it does |
 |---|------|---------------|
-| 001 | `001-rename-baseline-to-global-site-blocklist.js` | Renames the `baseline` family of persisted identifiers to `global_site_blocklist`: the config key, the meta table, the `global_site_rules` CHECK value (and existing `source='baseline'` rows), and the on-disk cache directory. |
-| 002 | `002-split-site-rules-per-tier.js` | Splits the shared `global_site_rules` table into `global_user_site_rules` and `global_site_blocklist_rules` (wildcard domains and signed-allow rows are skipped, since they can't be represented in the new shape), and renames `global_site_blocklist_enabled` → `global_tier_enabled`. When user rows were migrated, the stored blocklist version is prefixed with `pre-002:` to force a re-sync on the next updater tick, restoring any domains that a user rule had masked (see the header comment of `002-split-site-rules-per-tier.js` and its lines 156-162). |
-| 003 | `003-rename-agent-site-overrides-to-agent-site-rules.js` | Renames `agent_site_overrides` → `agent_site_rules`, drops the redundant `idx_agent_overrides` index (it duplicated the table's UNIQUE autoindex), and rebuilds `site_policy_events` so its `source` CHECK reads `agent_rule` instead of `agent_override`. Rows whose agent no longer exists are skipped as orphans (logged) in both steps. |
+| 001 | `001-rename-baseline-to-global-site-blocklist.js` | Renames the `baseline` family of identifiers to `global_site_blocklist`: config key, meta table, the `global_site_rules` CHECK value (and existing `source='baseline'` rows), and the cache directory. |
+| 002 | `002-split-site-rules-per-tier.js` | Splits `global_site_rules` into `global_user_site_rules` and `global_site_blocklist_rules`, skipping wildcard/signed-allow rows (can't be represented in new shape). Renames `global_site_blocklist_enabled` → `global_tier_enabled`. When user rows were migrated, prefixes the stored blocklist version with `pre-002:` to force a re-sync on the next updater tick and restore masked domains (see `002-split-site-rules-per-tier.js` lines 156-162). |
+| 003 | `003-rename-agent-site-overrides-to-agent-site-rules.js` | Renames `agent_site_overrides` → `agent_site_rules`. Drops redundant `idx_agent_overrides` index (it duplicated the table's UNIQUE autoindex). Rebuilds `site_policy_events` so its CHECK reads `agent_rule` instead of `agent_override`. Skips orphaned rows (logged) in both steps. |
 
 Add a row here when you add a migration.
 

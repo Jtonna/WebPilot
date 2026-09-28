@@ -60,7 +60,7 @@ Invariants:
 The gate `_enforceSitePolicy` (`mcp-handler.js:1482-1590`) runs after auth and before dispatch (`mcp-handler.js:935-957`).
 
 - **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`mcp-handler.js:1502-1529`). A blocked URL is never opened.
-- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, which is resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`; the lenient `_resolveTabUrl` wrapper at `:1461-1474` is used only by the formatter-guide gate and `webpilot_get_formatter_info`). A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
+- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`). The lenient `_resolveTabUrl` wrapper (`:1461-1474`) is used only by the formatter-guide gate and `webpilot_get_formatter_info`. A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
 - **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2241-2261`). A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`). A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues. A blocked step that takes a `tab_id` still triggers the auto-close.
 
 ### Checked and exempt tools
@@ -171,13 +171,18 @@ Live UI WebSocket events:
 
 `global-site-blocklist-updater.js`.
 
-- **Not bundled.** The list is fetched from `https://raw.githubusercontent.com/Jtonna/WebPilot/main/global-site-blocklists` (`:70-71`). It always comes from `main`, whatever the release channel. Only `PUBKEY.pem` ships with the install (`packages/server-for-chrome-extension/package.json:21-28`, `packages/electron/electron-builder.yml:20-24`). The key file is `accessibility-tree-formatters/PUBKEY.pem`, and the same key verifies both the formatter and blocklist bundles.
+- **Not bundled.** The list is fetched from `https://raw.githubusercontent.com/Jtonna/WebPilot/main/global-site-blocklists` (`:70-71`), always from `main`, whatever the release channel.
+- **Key**: only `PUBKEY.pem` ships with the install (`packages/server-for-chrome-extension/package.json:21-28`, `packages/electron/electron-builder.yml:20-24`), at `accessibility-tree-formatters/PUBKEY.pem`. The same key verifies both the formatter and blocklist bundles.
 - **Schedule**: runs 5 s after boot and then every 24 h (`server.js:1927-1937`). Formatters update hourly (`server.js:1913-1916`); the blocklist does not.
 - **Cache**: `<dataDir>/global-site-blocklists/` (`:106-109`). The signature and every file hash are checked again each time the cache is read (`_readLocalCache`, `:152-210`).
 - **Verifier**: `lib/manifest-verifier.js`. It looks for the pubkey in this order: `WEBPILOT_PUBKEY_PATH`, repo/snapshot-relative paths, `process.resourcesPath`, then the executable's directory (`_pubkeyCandidates`, `:64-84`). Fetches time out after 10 s (`:169`). It does not check the signed manifest's `kind` field (`parseSignedManifest`, `:142-162`).
 - **Apply rule**: a manifest is applied when its version string **differs** from the stored one, not only when it is higher (`:439-450`).
 - **Apply**: `_applySignedTier` (`:254-284`) deletes every row, inserts the new domains and upserts the meta row in one transaction.
-- **Status**: `getStatus()` (`:538-568`) returns `{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`. `lastFetchedAt` is the time of the last **apply**, not the last check. `lastCheckedAt` is the time of the last check, and `lastCheckError` is its failure reason or `null`. Both are held in memory by `checkForUpdates` (`:513-526`) and are `null` until the first check after a daemon start. `lastCheckError` is also set when a check succeeded from the cache after the remote failed. `version` is `null` on an install that has never fetched successfully, and may read `pre-002:<v>` until the first successful sync after migration 002.
+- **Status**: `getStatus()` (`:538-568`) returns `{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`.
+  - `lastFetchedAt` is the time of the last **apply**, not the last check.
+  - `lastCheckedAt` is the time of the last check; `lastCheckError` is its failure reason or `null`, also set when a check succeeded from the cache after the remote failed.
+  - Both are held in memory by `checkForUpdates` (`:513-526`) and are `null` until the first check after a daemon start.
+  - `version` is `null` on an install that has never fetched successfully, and may read `pre-002:<v>` until the first successful sync after migration 002.
 
 ### Failure modes
 

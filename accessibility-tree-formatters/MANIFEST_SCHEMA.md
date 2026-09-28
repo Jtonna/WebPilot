@@ -222,11 +222,11 @@ per-formatter manifests carry the descriptive metadata.
 
 ### `signed-manifest.json`
 
-`signed-manifest.json` (and its detached `.sig`) sit alongside the
-top-level `manifest.json`. They are **generated**, by running
-`node scripts/sign-formatters.js` — never hand-edited. The script reads
-`manifest.json`, hashes every referenced file (LF-normalized) plus the
-manifest itself, and writes:
+`signed-manifest.json` and its detached `.sig` live alongside the
+top-level `manifest.json`. Run `node scripts/sign-formatters.js` to
+generate them — do not edit by hand. The script reads `manifest.json`,
+hashes all referenced files (LF-normalized) and the manifest itself,
+then writes the signed manifest.
 
 ```json
 {
@@ -237,11 +237,10 @@ manifest itself, and writes:
 }
 ```
 
-`kind` is `"formatters"` or `"blocklists"` depending on which bundle
-was signed; `version` mirrors the source manifest's `version`; `files`
-maps every referenced path (relative to the manifest's directory) to
-its SHA-256 hex digest. The signature over this JSON is written to
-`signed-manifest.json.sig` (base64, Ed25519).
+- `kind`: `"formatters"` or `"blocklists"`, depending on which bundle was signed.
+- `version`: mirrors the source manifest's `version`.
+- `files`: maps each path (relative to the manifest's directory) to its SHA-256 hex digest.
+- The signature is written to `signed-manifest.json.sig` (base64-encoded Ed25519).
 
 ---
 

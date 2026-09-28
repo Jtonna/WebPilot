@@ -71,7 +71,12 @@ case 'browser_your_tool_name': {
 }
 ```
 
-Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. It owns the WebSocket round-trip to the extension via `extension-bridge.js`; site policy is **not** enforced inside the helper itself. If your tool takes a `tab_id`, add it to `TAB_ID_TOOLS` at the top of `mcp-handler.js` (it must be an integer argument named `tab_id` — any other shape is refused by the gate with `invalid_tab_id`). If it opens a URL, extend checkpoint A in `_enforceSitePolicy` to cover it. See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. Route the WebSocket round-trip to the extension via `extension-bridge.js`. Site policy checks happen outside the helper:
+
+- If your tool takes `tab_id`, add it to `TAB_ID_TOOLS` at the top of the file. The gate enforces `tab_id` as a mandatory integer — non-integer values fail with `invalid_tab_id`.
+- If it opens a URL, extend checkpoint A in `_enforceSitePolicy` to cover it.
+
+See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
 
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
@@ -398,7 +403,7 @@ Use this when adding a new tool:
 ```
 [ ] 1. mcp-handler.js - Add tool to `tools` array
 [ ] 2. mcp-handler.js - Add case to `handleToolCall`
-[ ] 2a. mcp-handler.js - If the tool takes a `tab_id`, add it to `TAB_ID_TOOLS` so the site-policy gate covers it (this makes `tab_id` a mandatory integer argument — the gate refuses any call missing it, or with a non-integer value, with `invalid_tab_id`; see SITE_POLICY.md#checked-and-exempt-tools)
+[ ] 2a. mcp-handler.js - If the tool takes `tab_id`, add it to `TAB_ID_TOOLS`. Gate enforces it as mandatory integer (non-integer values fail with `invalid_tab_id`; see SITE_POLICY.md#checked-and-exempt-tools)
 [ ] 2b. mcp-handler.js - If the tool opens a URL, extend checkpoint A in `_enforceSitePolicy`
 [ ] 3. manifest.json - Add permissions (if needed)
 [ ] 4. handlers/<file>.js - Create or update handler module
@@ -407,8 +412,8 @@ Use this when adding a new tool:
 [ ] 7. background.js - Add tab cleanup in onRemoved listener if storing per-tab state
 [ ] 8. MCP_SERVER.md - Update MCP Tools table
 [ ] 9. MCP_INTEGRATION.md - Add full documentation
-[ ] 9a. MCP_INTEGRATION.md - Add the tool to the Security: Site Policy section (checked/exempt list) with both site-policy error bullets
-[ ] 9b. SITE_POLICY.md - Add the tool to the Checked and exempt tools list
+[ ] 9a. MCP_INTEGRATION.md - Add to Security: Site Policy section (checked/exempt list, both error bullets)
+[ ] 9b. SITE_POLICY.md - Add to Checked and exempt tools list
 [ ] 10. Test the tool end-to-end
 ```
 

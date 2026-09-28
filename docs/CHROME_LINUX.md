@@ -62,8 +62,8 @@ platform-agnostic and only relies on `paths.js` for the binary path.
 ## 2. What was scaffolded honestly but never tested on real hardware
 
 `chrome/linux-detector.js` and `notifications/linux.js` carry a
-`NOTE: scaffold-quality` comment. Functions most likely to surface
-real issues first, ranked by guessed risk:
+`NOTE: scaffold-quality` comment. Functions ranked by guessed risk to
+surface issues:
 
 1. **`linux-detector.detect()`** — `/proc/<pid>/comm` is truncated to
    15 characters on Linux (`TASK_COMM_LEN` = 16 including the NUL).

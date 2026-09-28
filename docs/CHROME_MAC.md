@@ -124,9 +124,9 @@ Tick each of these by hand on first run.
 
 ### Process detection
 
-- [ ] After launching Chrome normally, hit `POST /api/ui/chrome/restart`
-      and check that `detectChromeBrowsers()` returns one entry per
-      running Chrome browser-parent.
+- [ ] Launch Chrome normally. POST `/api/ui/chrome/restart` and verify
+      `detectChromeBrowsers()` returns one entry per running Chrome
+      browser-parent.
 - [ ] If it returns zero, run `pgrep -x "Google Chrome"` manually and
       compare. The matcher is case-sensitive and whitespace-sensitive.
 - [ ] Verify `--user-data-dir=` is extracted correctly when the path
