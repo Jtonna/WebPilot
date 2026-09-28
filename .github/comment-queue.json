@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "issue": 121,
+    "body": "Approved plan (auto-approved gate, epic #99 autonomous run): switch internal links to next/link with basePath-relative hrefs (the daemon's static /ui handler already serves the export's index.txt navigation payloads as text/plain); fix nav match functions to compare paths without /ui; remember the first successful connection in sessionStorage (webpilot.hasConnected) via an isomorphic layout effect so reloads in the same tab skip the splash; leave the unused ?filter= query code alone."
+  },
+  {
+    "issue": 121,
+    "body": "Implementation status: app shell (b0a26ac) and link conversions across 8 files (80294e6); verification — web build clean with no warnings, 207/207 server tests, all internal links client-side or via BackLink, navigation payloads served with 200 text/plain for every route; docs/CHANGELOG updated."
+  }
+]
