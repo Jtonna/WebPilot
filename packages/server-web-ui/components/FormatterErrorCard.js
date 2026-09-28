@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 
 // Canonical issues URL — kept in sync with the link on the Settings page.
@@ -152,13 +153,13 @@ export default function FormatterErrorCard({ formatter, onDismiss }) {
           {truncate(message, MESSAGE_DISPLAY_MAX)}
         </div>
         <div style={{ marginTop: 'var(--s-2)' }}>
-          <a
-            href={`/ui/formatters/logs/?name=${encodeURIComponent(formatter.name)}`}
+          <Link
+            href={`/formatters/logs/?name=${encodeURIComponent(formatter.name)}`}
             className="wp-link"
             style={{ fontSize: 'var(--fs-small)' }}
           >
             View full logs →
-          </a>
+          </Link>
         </div>
       </div>
       <div className="wp-row-actions" style={{ flexWrap: 'wrap' }}>

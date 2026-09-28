@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useId, useState } from 'react';
 import ConfirmModal from '../../components/ConfirmModal';
 import TypedConfirmModal from '../../components/TypedConfirmModal';
@@ -119,9 +120,9 @@ export default function SiteEventLog({
                   </div>
                 </td>
                 <td data-label="Agent">
-                  <a href={`/ui/agents/?agent=${encodeURIComponent(entry.agentKey)}`} className="wp-link">
+                  <Link href={`/agents/?agent=${encodeURIComponent(entry.agentKey)}`} className="wp-link">
                     {name}
-                  </a>
+                  </Link>
                 </td>
                 <td data-label="Status">
                   <span className="wp-site-events-status">

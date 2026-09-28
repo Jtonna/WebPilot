@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import ErrorCard from '../../components/ErrorCard';
 import ProfileStatusBadge from '../../components/ProfileStatusBadge';
@@ -150,8 +151,8 @@ export default function ProfilesPage() {
                     {/* Agent count is the source of truth for which agents
                         this profile is hosting — clicking it deep-links to
                         the filtered Agents view. Zero counts de-emphasize. */}
-                    <a
-                      href={`/ui/agents/?profile=${encodeURIComponent(p.directoryName)}`}
+                    <Link
+                      href={`/agents/?profile=${encodeURIComponent(p.directoryName)}`}
                       className="wp-link"
                       style={{
                         fontSize: 'var(--fs-small)',
@@ -161,7 +162,7 @@ export default function ProfilesPage() {
                       title={`View ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} bound to this profile`}
                     >
                       {agentCount} {agentCount === 1 ? 'agent' : 'agents'}
-                    </a>
+                    </Link>
                     <ProfileStatusBadge status={p.webPilotStatus} />
                     {needsSetup ? (
                       <button

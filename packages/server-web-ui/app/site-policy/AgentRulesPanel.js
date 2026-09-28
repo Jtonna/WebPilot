@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useId, useMemo } from 'react';
 import EmptyState from '../../components/EmptyState';
 
@@ -52,7 +53,7 @@ export default function AgentRulesPanel({
         <EmptyState
           variant="bare"
           body="No agents paired yet."
-          action={<a href="/ui/agents/" className="wp-link">Go to Agents</a>}
+          action={<Link href="/agents/" className="wp-link">Go to Agents</Link>}
         />
       ) : (
         <>
