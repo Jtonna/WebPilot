@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { GlobeAltIcon, SignalIcon, ServerIcon } from '@heroicons/react/24/outline';
 import PairingPromptCard from '../components/PairingPromptCard';
@@ -314,9 +315,9 @@ export default function HomePage() {
                 const countText = `${count} ${count === 1 ? 'agent' : 'agents'}`;
                 const dim = count === 0 && p.webPilotStatus === 'needs_setup';
                 return (
-                  <a
+                  <Link
                     key={p.directoryName}
-                    href={`/ui/agents/?profile=${encodeURIComponent(p.directoryName)}`}
+                    href={`/agents/?profile=${encodeURIComponent(p.directoryName)}`}
                     className="wp-row wp-row-link"
                   >
                     <div className="wp-row-grow">
@@ -342,7 +343,7 @@ export default function HomePage() {
                       </span>
                       <ProfileStatusBadge status={p.webPilotStatus} />
                     </div>
-                  </a>
+                  </Link>
                 );
               })}
             </div>
@@ -371,9 +372,9 @@ export default function HomePage() {
             }}>
               Pair your first agent to get started.
             </p>
-            <a href="/ui/agents/" className="wp-btn wp-btn-primary wp-btn-cta">
+            <Link href="/agents/" className="wp-btn wp-btn-primary wp-btn-cta">
               Pair an agent
-            </a>
+            </Link>
           </div>
         </section>
       ) : null}

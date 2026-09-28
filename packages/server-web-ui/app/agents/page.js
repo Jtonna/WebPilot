@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
@@ -244,7 +245,7 @@ function AgentsPageInner() {
             >
               Showing agents on profile <strong style={{ color: 'var(--wp-fg)' }}>{filterDisplayName}</strong>
               {' · '}
-              <a href={agentFilter ? `/ui/agents/?agent=${encodeURIComponent(agentFilter)}` : '/ui/agents/'} className="wp-link">Clear</a>
+              <Link href={agentFilter ? `/agents/?agent=${encodeURIComponent(agentFilter)}` : '/agents/'} className="wp-link">Clear</Link>
             </div>
           ) : null}
           {agentFilter ? (
@@ -258,7 +259,7 @@ function AgentsPageInner() {
             >
               Showing agent <strong style={{ color: 'var(--wp-fg)' }}>{agentFilterName || 'not found'}</strong>
               {' · '}
-              <a href={profileFilter ? `/ui/agents/?profile=${encodeURIComponent(profileFilter)}` : '/ui/agents/'} className="wp-link">Clear</a>
+              <Link href={profileFilter ? `/agents/?profile=${encodeURIComponent(profileFilter)}` : '/agents/'} className="wp-link">Clear</Link>
             </div>
           ) : null}
           {filteredAgents.length === 0 ? (

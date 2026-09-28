@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { ArrowLeftIcon } from '@heroicons/react/20/solid';
 
 /**
@@ -14,13 +15,14 @@ import { ArrowLeftIcon } from '@heroicons/react/20/solid';
  * @param {{ href: string, label: string }} props
  */
 export default function BackLink({ href, label }) {
+  const target = href.startsWith('/ui/') ? href.slice(3) : href === '/ui' ? '/' : href;
   return (
-    <a href={href} className="wp-back-link">
+    <Link href={target} className="wp-back-link">
       <ArrowLeftIcon
         style={{ width: 16, height: 16, marginRight: 'var(--s-1)' }}
         aria-hidden="true"
       />
       {label}
-    </a>
+    </Link>
   );
 }
