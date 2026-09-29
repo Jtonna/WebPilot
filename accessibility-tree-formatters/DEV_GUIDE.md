@@ -27,6 +27,8 @@ Each step has an MCP tool. None of them require restarting the WebPilot server.
 | Inspect failures | `webpilot_dev_get_formatter_logs` | Returns the recent error ring buffer (max 50) + a health summary for one platform. Successful invocations are NOT stored as rows — they only update `successCount` and `lastSuccessAt` on the health summary. |
 | Reload extension | `webpilot_dev_reload_extension` | `chrome.runtime.reload()` inside the Chrome extension. **Required after editing files under `packages/chrome-extension-unpacked/`** — Chrome's service worker does not auto-pick-up source changes. |
 
+**Formatter-guide gate:** Call `webpilot_get_formatter_info({ platform, tab_id })` before any "Test" step above. Until you do, these tools block with a `platform_guide_required` error on a tab matching a loaded formatter's URL: `browser_get_accessibility_tree`, `browser_click`, `browser_type`, `browser_scroll`, `browser_execute_js`, `browser_inject_script`, `browser_request_chain`, `webpilot_run_workflow`. The unlock is per (agent, tab_id). It expires when the tab navigates to a different formatter's platform.
+
 ---
 
 ## File layout for a custom formatter
@@ -135,6 +137,7 @@ The dev loop matches formatters:
 2. Call `webpilot_reload_formatters` (this re-loads both the formatter and its
    workflows).
 3. Call `webpilot_run_workflow({ platform, workflow, params, tab_id, intent? })`.
+   `tab_id` must be an integer. Site policy constraints apply (see [SITE_POLICY.md](../docs/SITE_POLICY.md#checked-and-exempt-tools)).
 4. On error, `webpilot_dev_get_formatter_logs({ platform })` — workflow errors
    are recorded with `phase: 'workflow'` and include `workflow`, `params`, and
    `tabId` fields you can use to reproduce.

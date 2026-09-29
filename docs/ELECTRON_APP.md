@@ -70,7 +70,16 @@ The app is a thin Electron `33.4.11` shell (no Next.js / React bundle — the re
 | macOS    | `.dmg` |
 | Linux    | AppImage |
 
-The installer bundles the compiled MCP server binary, the unpacked extension, and the `assets/` directory via `extraResources` in `electron-builder.yml`. These land at `<resourcesPath>/server/`, `<resourcesPath>/chrome-extension/`, and `<resourcesPath>/assets/` respectively. No service registration occurs during installation; the server is launched by the Electron main process on each app start (see [Server lifecycle](#server-lifecycle)).
+The installer bundles four items into `<resourcesPath>/` via `extraResources` in `electron-builder.yml`:
+
+| Item | Destination |
+|------|-------------|
+| Compiled MCP server binary | `server/` |
+| Unpacked Chrome extension | `chrome-extension/` |
+| `assets/` directory | `assets/` |
+| `PUBKEY.pem` (trust anchor the daemon uses to verify signed formatter/blocklist manifests) | `server/PUBKEY.pem` |
+
+No service registration occurs during installation; the server is launched by the Electron main process on each app start (see [Server lifecycle](#server-lifecycle)).
 
 ### Assets / icons
 

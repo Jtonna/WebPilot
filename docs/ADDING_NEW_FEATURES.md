@@ -71,7 +71,14 @@ case 'browser_your_tool_name': {
 }
 ```
 
-Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js` alongside the other `_browser*` helpers. It owns the WebSocket round-trip to the extension via `extension-bridge.js`. Site policy is **not** enforced in the helper: the gate runs in the `tools/call` branch of `processMessage` (before `handleToolCall`) and again for each `browser_request_chain` step. It does not run inside `handleToolCall` or the `_browser*` helpers, so code that calls them directly (for example workflow primitives, #114) bypasses it. If your tool takes a `tab_id`, add it to `TAB_ID_TOOLS` at the top of `mcp-handler.js`, otherwise the gate skips it without any warning. Tools in `TAB_ID_TOOLS` must take an integer argument named `tab_id`; any other shape (missing, a numeric string, `tabId`) is refused by the gate with `invalid_tab_id`. If it opens a URL, extend checkpoint A in `_enforceSitePolicy` to cover it. See [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
+Define the `_browserYourToolName(args, apiKey)` helper higher up in `mcp-handler.js`, alongside the other `_browser*` helpers. It routes the WebSocket round-trip to the extension via `extension-bridge.js`.
+
+Site policy checks live outside the helper. Handle these cases if they apply:
+
+- **Tool takes `tab_id`:** add it to `TAB_ID_TOOLS` at the top of the file. The gate enforces `tab_id` as a mandatory integer. A missing or non-integer value fails with `invalid_tab_id`.
+- **Tool opens a URL:** extend checkpoint A in `_enforceSitePolicy`.
+
+Full list of checked and exempt tools: [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
 
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
@@ -398,8 +405,6 @@ Use this when adding a new tool:
 ```
 [ ] 1. mcp-handler.js - Add tool to `tools` array
 [ ] 2. mcp-handler.js - Add case to `handleToolCall`
-[ ] 2a. mcp-handler.js - If the tool takes a `tab_id`, add it to `TAB_ID_TOOLS` so the site-policy gate covers it (see SITE_POLICY.md#checked-and-exempt-tools)
-[ ] 2b. mcp-handler.js - If the tool opens a URL, extend checkpoint A in `_enforceSitePolicy`
 [ ] 3. manifest.json - Add permissions (if needed)
 [ ] 4. handlers/<file>.js - Create or update handler module
 [ ] 5. background.js - Import handler and add case to `handleServerCommand`
@@ -407,11 +412,16 @@ Use this when adding a new tool:
 [ ] 7. background.js - Add tab cleanup in onRemoved listener if storing per-tab state
 [ ] 8. MCP_SERVER.md - Update MCP Tools table
 [ ] 9. MCP_INTEGRATION.md - Add full documentation
-[ ] 9a. MCP_INTEGRATION.md - Add the tool to the Security: Site Policy section (checked/exempt) with both site-policy error bullets, and to SITE_POLICY.md's Checked and exempt tools list
 [ ] 10. Test the tool end-to-end
 ```
 
-Note: adding a tool to `TAB_ID_TOOLS` (step 2a) makes `tab_id` a mandatory argument for that tool — the gate refuses any call missing it, or with a non-integer value, with `invalid_tab_id`.
+Step 2 also covers site policy, when relevant:
+- If the tool takes `tab_id`, add it to `TAB_ID_TOOLS`. The gate enforces it as a mandatory integer (non-integer values fail with `invalid_tab_id`; see [SITE_POLICY.md#checked-and-exempt-tools](SITE_POLICY.md#checked-and-exempt-tools)).
+- If the tool opens a URL, extend checkpoint A in `_enforceSitePolicy`.
+
+Step 9 also covers site policy docs, when relevant:
+- MCP_INTEGRATION.md - add to the Security: Site Policy section (checked/exempt list, both error bullets).
+- SITE_POLICY.md - add to the Checked and exempt tools list.
 
 Use this when adding a site-specific formatter (GitHub / public):
 

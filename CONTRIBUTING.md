@@ -66,15 +66,15 @@ The workflow reads the current version from root `package.json`, runs `scripts/b
 
 ## Signing and updating the signed bundles
 
-WebPilot ships two independently-fetched signed bundles: `accessibility-tree-formatters/` and `global-site-blocklists/`. Both are signed with the same Ed25519 key, and a single script — `scripts/sign-formatters.js` — (re-)signs **both** bundles every time it runs, whether or not you touched one of them. Do not assume that running the script only affects the bundle you edited; review the diff before committing.
+WebPilot ships two signed bundles: `accessibility-tree-formatters/` and `global-site-blocklists/`. Both use the same Ed25519 key. Review the diff before committing: `scripts/sign-formatters.js` re-signs both bundles on every run, even if you only edited one.
 
 |  | Formatters | Global site blocklist |
 |---|---|---|
-| Fetched from | Channel-aware ref (`main` in dev, the release tag in a built binary) — see [`docs/RELEASE.md`](docs/RELEASE.md) | Always `main`, regardless of channel |
-| Refresh cadence | Boot + hourly | Boot + every 24h |
-| Needs a release to reach users | Yes — see [`docs/RELEASE.md`](docs/RELEASE.md) | No — merging the signed commit to `main` is enough |
+| Fetched from | Channel-aware ref (`main` in dev, the release tag in a built binary; see [`docs/RELEASE.md`](docs/RELEASE.md)) | Always `main`, regardless of channel |
+| Refresh cadence | Boot + hourly | 5s after boot, then every 24h |
+| Needs a release to reach users | Yes (see [`docs/RELEASE.md`](docs/RELEASE.md)) | No, merging the signed commit to `main` is enough |
 
-To stop a compromised maintainer GitHub account from pushing arbitrary JavaScript that gets executed inside every user's daemon process, both bundles are cryptographically signed and hash-verified before the daemon applies an update.
+Both bundles are signed and hash-verified before the daemon applies an update. This stops a compromised maintainer GitHub account from pushing arbitrary JavaScript into every user's daemon process.
 
 ### Threat model
 
@@ -84,11 +84,15 @@ The daemon refuses to apply a formatter / blocklist update unless:
 2. Its detached signature (`signed-manifest.json.sig`) verifies against the bundled `PUBKEY.pem` using Ed25519.
 3. The SHA-256 of every downloaded file matches the hash recorded in the signed manifest.
 
-The trust anchor (`PUBKEY.pem`) is committed to the repo AND bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never has to fetch the pubkey from the network. Only `PUBKEY.pem` is bundled into the binary this way — the signed manifests themselves are not; they're fetched at runtime.
+The trust anchor (`PUBKEY.pem`) is committed to the repo and bundled into the daemon binary via `pkg.assets` + Electron `extraResources`, so the verifier never fetches it over the network. Signed manifests are not bundled; they're fetched at runtime.
 
-Verification failure is logged and the update is skipped. For formatters, the previously-installed formatters keep running. For the global site blocklist, the updater falls back to its local on-disk cache (re-verified before use). A hash mismatch after a valid signature aborts the run and leaves the DB unchanged. If neither a verified remote nor a verified cache is available, nothing is written: existing rows and the stored version are kept, and the next check retries. See [Failure modes](docs/SITE_POLICY.md#failure-modes).
+Verification failure is logged and the update is skipped:
+- Formatters: existing ones keep running.
+- Global site blocklist: fallback to the cached copy (verified before use).
 
-CI's `check-signed-manifest.yml` guards against a stale-but-unsigned commit: on any PR or push to `main` touching either bundle, it recomputes the SHA-256 of every file listed in `signed-manifest.json` and compares it against the claimed hash. It does **not** verify the Ed25519 signature — only that the hashes are internally consistent with what's committed. Since `sign-formatters.js` re-signs both bundles on every run, commit the blocklist files you changed; include formatter signed-manifest changes only if the formatter sources changed too.
+A hash mismatch after a valid signature aborts and leaves the DB unchanged. If no verified remote or cache exists, nothing is written: existing data and version persist, and the next check retries. See [Failure modes](docs/SITE_POLICY.md#failure-modes).
+
+CI's `check-signed-manifest.yml` verifies hash consistency: on any PR or push to `main` touching either bundle, it recalculates SHA-256 for every file in `signed-manifest.json` and compares against the committed hash. It does **not** verify the Ed25519 signature, only that hashes match. Because `sign-formatters.js` re-signs both bundles on every run, commit changed blocklist files. Include formatter `signed-manifest.json` changes only when formatter sources changed.
 
 ### Generating a signing key for local testing
 
@@ -103,7 +107,7 @@ This produces:
 
 The script refuses to overwrite an existing private key — delete it explicitly if you really mean to rotate.
 
-**Warning:** generating a test key overwrites the production `accessibility-tree-formatters/PUBKEY.pem`, and `sign-formatters.js` then re-signs both bundles with the test key. CI only compares hashes, so committing those files would pass CI and make every installed daemon reject every future update. Never commit them; restore with `git checkout -- accessibility-tree-formatters/PUBKEY.pem accessibility-tree-formatters/signed-manifest.json accessibility-tree-formatters/signed-manifest.json.sig global-site-blocklists/signed-manifest.json global-site-blocklists/signed-manifest.json.sig`.
+**Warning:** do not commit after running this locally. Generating a test key overwrites `accessibility-tree-formatters/PUBKEY.pem` and re-signs both bundles with it. CI only compares hashes, so committing would pass CI but block all daemon updates. Restore with: `git checkout -- accessibility-tree-formatters/PUBKEY.pem accessibility-tree-formatters/signed-manifest.json accessibility-tree-formatters/signed-manifest.json.sig global-site-blocklists/signed-manifest.json global-site-blocklists/signed-manifest.json.sig`.
 
 To produce signed manifests locally:
 
@@ -115,22 +119,26 @@ That writes `signed-manifest.json` + `signed-manifest.json.sig` next to each top
 
 ### Production signing
 
-Production signing happens inside the release workflow. The signing key lives in the `WEBPILOT_SIGNING_KEY_BASE64` repo secret (Ed25519 PKCS#8 PEM, base64-encoded). `release-stable.yml` decodes it to a temp file with mode `0o600`, runs `scripts/sign-formatters.js`, and commits the regenerated `signed-manifest.json` + `.sig` files alongside the version bump before tagging and pushing. The signing step runs before the build leg so the signed manifest sources committed at the tagged ref match the formatter sources — only `PUBKEY.pem`, not the signed manifests themselves, is bundled into the binary.
+Production signing in the release workflow: the signing key lives in `WEBPILOT_SIGNING_KEY_BASE64` (Ed25519 PKCS#8 PEM, base64-encoded). `release-stable.yml` decodes it to a temp file (mode `0o600`), runs `scripts/sign-formatters.js`, and commits regenerated `signed-manifest.json` + `.sig` files alongside the version bump before tagging and pushing. Signing runs before the build so manifests at the tagged ref match formatter sources.
 
 ### Updating the global site blocklist
 
-Unlike formatters, updating the global site blocklist does not require cutting a release — the updater always fetches from `main`, so merging a properly-signed commit is enough for it to reach users on their next update tick. In short (Procedure A, sign locally):
+Unlike formatters, blocklist updates don't require a release: the updater always fetches from `main`. Merge a signed commit and it reaches users at the next update tick.
+
+**Procedure A (sign locally):**
 
 1. Edit `global-site-blocklists/financial-institutions.txt`.
-2. Bump `version` in `global-site-blocklists/manifest.json` — **mandatory**; the updater only applies a fetched bundle when its version differs from what's already stored.
+2. Bump `version` in `global-site-blocklists/manifest.json` (required; the updater applies bundles only when the version changes).
 3. Run `node scripts/sign-formatters.js` with `WEBPILOT_SIGNING_KEY` set to your local private key path.
-4. Commit all four files (`financial-institutions.txt`, `manifest.json`, `signed-manifest.json`, `signed-manifest.json.sig`) together.
+4. Commit all four files together: `financial-institutions.txt`, `manifest.json`, `signed-manifest.json`, `signed-manifest.json.sig`.
 
-Alternatively (Procedure B), merge the edits unsigned. `check-signed-manifest` then fails on the PR and on `main`, and daemons keep the last good list, until `release-stable.yml` re-signs and commits. The list goes live within 24 h of the next stable release. Nightly re-signs only inside the runner. See [Procedure B](docs/SITE_POLICY.md#procedure-b-merge-unsigned-and-let-release-stable-re-sign).
+**Procedure B (merge unsigned):**
+
+`check-signed-manifest` fails on the PR and `main`. Daemons keep the last good list until `release-stable.yml` re-signs and commits. The list goes live within 24h of the next stable release. Nightly signing runs only inside the runner. See [Procedure B](docs/SITE_POLICY.md#procedure-b-merge-unsigned-and-let-release-stable-re-sign).
 
 See [docs/SITE_POLICY.md#updating-the-blocklist](docs/SITE_POLICY.md#updating-the-blocklist) for the full procedure, including the two supported signing workflows.
 
-There is an open question about where the signing key may live; see [Maintainer decision pending](docs/SITE_POLICY.md#maintainer-decision-pending).
+An open question exists about where the signing key may live: see [Maintainer decision pending](docs/SITE_POLICY.md#maintainer-decision-pending).
 
 ### Key rotation
 
@@ -143,7 +151,7 @@ When the signing key needs to be rotated (founder turnover, suspected compromise
 
 Old released installers continue to verify against the *old* pubkey they shipped with — the rotation does not invalidate previously installed daemons until they receive a new installer that ships the new pubkey. Plan rotation to coincide with a normal release.
 
-Exception: the global blocklist is fetched from `main`, so installs that still have the old public key stop receiving blocklist updates (they keep their last verified list) until they install a release that ships the new key.
+Exception: the global blocklist is fetched from `main`, so older installs with the old key stop receiving updates (they keep the last verified list) until they install a release shipping the new key.
 
 ### Reporting a compromised signing key
 

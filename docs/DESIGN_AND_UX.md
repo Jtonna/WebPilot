@@ -130,7 +130,7 @@ Reduced motion: every transition/animation respects `@media (prefers-reduced-mot
 
 Two sidebar groups. Order matches `components/AppShell.js`.
 
-**Workspace** — Dashboard, Profiles, Agents, Site Policy, Formatters, Pairings.
+**Workspace**: Dashboard, Profiles, Agents, Site Policy, Formatters, Pairings.
 **System** — Settings.
 
 ```
@@ -144,7 +144,9 @@ Two sidebar groups. Order matches `components/AppShell.js`.
 /ui/settings               Settings
 ```
 
-Sidebar (desktop ≥900px): fixed 240px, no shadow. Active state = elevated fill + 3px `--wp-fg` left-edge bar + solid Heroicon variant + 600-weight label — **no accent tint**. Brand wordmark at top links to Dashboard. Footer is a small connection dot + label (`Connected` / `Disconnected` / `Connecting…`); polls every 15s after first success, 500ms before. The Pairings row shows a mono pending-count on its right edge — the single allowed nav-item count. Internal links (sidebar, brand wordmark, back links, in-page links like the Site Policy access log's agent link) use `next/link` with basePath-relative hrefs (omit `/ui`) for client-side navigation; nav `match` functions compare `usePathname()` output against paths without `/ui` since the basePath is stripped from it.
+Sidebar (desktop ≥900px): fixed 240px, no shadow. Active state = elevated fill + 3px `--wp-fg` left-edge bar + solid Heroicon variant + 600-weight label — **no accent tint**. Brand wordmark at top links to Dashboard. Footer is a small connection dot + label (`Connected` / `Disconnected` / `Connecting…`); polls every 15s after first success, 500ms before. The Pairings row shows a mono pending-count on its right edge — the single allowed nav-item count.
+
+Internal links (sidebar, brand wordmark, back links, in-page links like the Site Policy access log's agent link) use `next/link` with basePath-relative hrefs (omit `/ui`) for client-side navigation. Nav-match functions read `usePathname()` the same way: paths omit `/ui`, since the basePath is stripped from pathname output.
 
 Mobile (<900px): top bar 56px with hamburger (top-left) and connection dot (top-right, also opens the sheet). Sidebar slides in as a left sheet from `translateX(-12px)` over `dur-normal`. Backdrop scrim dismisses.
 
@@ -160,7 +162,28 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with rename / revoke kebab. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
-**Site Policy** — A compact strip of two small cards, then the Site access log below as the dominant element. **Global block list** card: header toggle for the whole global tier, one facts line (`N signed domains · N custom rules · updated <rel>`), an off-state note, and `Manage`. The card subtitle reads verbatim: `Applies to all agents, but can be overridden by custom agent rules.` **Per-agent rules** card: agent picker, a one-line summary, and `Manage`. Both `Manage` buttons open the same `RulesModal` (scope `global` or `agent`) — a single reusable modal whose list, add-rule and delete-confirm views replace each other in a fixed-height shell so only the list itself scrolls. The global-scope list groups your allows → your blocks → signed list, has `+ Add global rule` (inline form, `*` rejected), and Delete on your rows through the in-modal confirm view (Esc there returns to the list rather than closing the modal); signed rows are read-only and marked `Overridden by your allow` only when a global allow exists for that same domain. The agent-scope list has an inline add form that accepts `*` (shown as `All sites *`) and the same in-modal delete confirm. **Site access log**: table (Domain — with a source · matched-domain · hit-count sub-line, where source `default` shows as `No rule (allowed by default)` — / Agent, linking to `/ui/agents/?agent=<key>` / Status, colored: approved green, blocked red / Last seen / Action) with Agent and Decision filters and `Load more`, paginated at 50 rows per page. `Allow for this agent` requires typing a random 4-character confirmation code (`TypedConfirmModal`, case-insensitive, a fresh code generated on every open), because it can punch through a global block. `Revoke for this agent` is a plain `ConfirmModal`. IP / single-label hosts show `IP or local host · use a * rule`. Refetches on `site_policy_changed`, `site_policy_events_changed`, `agents_changed`, and the client-side `reconnected`. All modals (`RulesModal`, `TypedConfirmModal`, `ConfirmModal`) render in a portal over the whole page.
+**Site Policy**: two small cards (global and per-agent rules) in a compact strip, then the site access log below as the main element.
+
+- **Global block list** card: header toggle for the global tier, one facts line (`N signed domains · N custom rules · updated <rel>`), an off-state note, and `Manage`. Subtitle: `Applies to all agents, but can be overridden by custom agent rules.`
+- **Per-agent rules** card: agent picker, one-line summary (`N rules`, plus `* = Allow` or `* = Block` when a wildcard rule is set), and `Manage`.
+
+**Rules modal** (`RulesModal`, scope `global` or `agent`) opens from either card's `Manage` button. One modal swaps between list, add-rule, and delete-confirm views in a fixed container; only the list scrolls.
+
+- Global scope: list groups your allows, then blocks, then the signed (read-only) list. Signed rows show `Overridden by your allow` when a matching allow exists. `+ Add global rule` is an inline form that rejects `*`. Paginated at 25 rows.
+- Agent scope: inline add accepts `*`, shown as `All sites *`. No pagination.
+- Either scope: in-modal delete opens a confirm view; Esc returns to the list.
+
+**Site access log**: table columns, in order:
+
+- Domain: source · matched-domain · hit-count sub-line; default source shows `No rule (allowed by default)`.
+- Agent: links to `/agents/?agent=<key>` (basePath-relative, per the internal-links convention above).
+- Status: green approved, red blocked.
+- Last seen.
+- Action: `Allow for this agent` requires a 4-character typed confirmation code (`TypedConfirmModal`, case-insensitive, fresh code each open) because it overrides a global block. `Revoke for this agent` is a plain `ConfirmModal`.
+
+Filters by Agent and Decision. `Load more` button; paginated at 50 rows. IP/single-label hosts show `IP or local host · use a * rule`.
+
+Page updates live as rules, agents, or logs change, and on reconnect. All modals (`RulesModal`, `TypedConfirmModal`, `ConfirmModal`) render in a portal over the whole page.
 
 **Formatters** — `Loaded from remote` + `Custom` sections; row = name + `HealthPill` + last error time; row links to `/ui/formatters/logs/?name=…`. REST poll every 30s.
 
@@ -180,7 +203,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Confirmation modals** (`ConfirmModal`): title is a short declarative question (`Revoke API key?` / `Restart server?`). Body: one sentence effect, one sentence recovery. Default focus on Cancel; Esc closes; Enter does not auto-confirm. Use `wp-btn-danger` for destructive, primary for non-destructive (restart). Every destructive action gets a modal — even in fast-moving lists.
 
-`TypedConfirmModal` (random 4-character code confirms): focus starts in the input, the confirm button stays disabled until the code matches (case-insensitive), a fresh code is generated on every open, and Enter in the input then confirms.
+`TypedConfirmModal` (random 4-character code): Focus starts in the input. Confirm button disabled until code matches (case-insensitive). Fresh code on each open. Enter in the input confirms.
 
 **Toasts:** lower-right region (lower-center mobile), max 3 stacked. 4s auto-dismiss, manual close. `success` / `info` / `error` flavors; errors persist until dismissed. No action buttons in toasts.
 
@@ -196,7 +219,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 ## Boot & connection states
 
-**Connecting splash** (`components/AppShell.js` `ConnectingSplash`). Until the first successful `/api/ui/status`, AppShell renders a full-window splash — not the page with a "Disconnected" banner. Centered `WebPilot` wordmark (28px / weight 500) on `var(--wp-bg)`, single-line `Starting server…` / `Connecting…`, three pulsing dots. Mirrors `electron/splash.html` (do not redesign one without the other). Polled at 500ms during boot, 15s heartbeat after first success. Once cleared, splash never returns for that tab — transient drops surface only via the sidebar dot. The shell remembers the first successful connection for the browser session (`sessionStorage` key `webpilot.hasConnected`), so switching tabs via the client-side nav or reloading in the same tab skips the splash too; a new tab or window still shows it until the server responds.
+**Connecting splash** (`components/AppShell.js` `ConnectingSplash`). Until the first successful `/api/ui/status`, AppShell renders a full-window splash, not the page with a "Disconnected" banner. Centered `WebPilot` wordmark (28px / weight 500) on `var(--wp-bg)`, single-line `Starting server…` / `Connecting…`, three pulsing dots. Mirrors `electron/splash.html` (do not redesign one without the other). Polled at 500ms during boot, 15s heartbeat after first success. Once cleared, splash never returns for that tab; transient drops appear only as the sidebar dot. The shell stores the first successful connection for the browser session (`sessionStorage` key `webpilot.hasConnected`). Switching tabs via client-side nav, or reloading the same tab, skips the splash. A new tab or window still shows the splash until the server responds.
 
 **Dark-mode native-dropdown contract.** Native `<option>` popup chrome does not inherit theme colors. `globals.css` anchors `background-color` and `color` on `option` directly (under `.wp-select option, .wp-input option`) to `--wp-bg-card` / `--wp-fg`. Every dropdown surface — profile picker, agent picker, pairing-card profile select — **must** use `.wp-select` or `.wp-input`. Don't introduce a bespoke `<select>` without re-applying the option color anchors.
 

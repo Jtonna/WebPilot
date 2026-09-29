@@ -68,7 +68,8 @@ The workflow will:
 The workflow will:
 - Compute the nightly version string.
 - Bump version in-memory (not committed).
-- Re-signs inside the runner only (never committed or bundled); nightly users get the signed manifests already committed at the tagged SHA.
+- Re-sign manifests inside the runner only (never committed or bundled).
+- Nightly builds ship whatever signed manifests are already committed at the tagged SHA.
 - Write `release-info.json` in-memory (not committed).
 - Build the Windows installer.
 - Tag the unmodified source SHA and push.

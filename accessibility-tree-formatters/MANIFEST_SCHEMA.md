@@ -44,7 +44,7 @@ that points at each formatter's entry file and lists files to sync.
   "match": "discord.com",
   "source": "remote",
   "description": "Discord chat — exposes channels, messages, members, composer",
-  "notes": "Use the send_message workflow for compose+send in one call. The composer ref appears in tree as role=textbox with name starting 'Message #'.",
+  "notes": "Use the send_message workflow for compose+send in one call. The composer's accessible role is a textbox, and its name starts with 'Message '.",
   "errorHandling": {
     "fallbackToRawTree": true
   },
@@ -151,6 +151,13 @@ the manifest declaration.
    };
    ```
 
+   The example above is simplified for illustration. The real Discord
+   workflow (`discord/workflows.js`) calls
+   `findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' })`,
+   which matches the composer's accessible role of `textbox` and its
+   accessible name starting with `'Message '` (e.g. `'Message #general'`
+   or `'Message @user'`).
+
    The `run()` function receives:
 
    - `params` — the validated params object (type-checked against the
@@ -219,6 +226,32 @@ updater needs to download from GitHub — including each per-formatter
 
 The `platforms` block stays as the at-a-glance routing table; the
 per-formatter manifests carry the descriptive metadata.
+
+Per the note above, changing any formatter file means bumping this
+`version` (e.g. from `"2"` to `"3"`) and regenerating
+`signed-manifest.json` so the auto-updater picks up the change.
+
+### `signed-manifest.json`
+
+Run `node scripts/sign-formatters.js` to generate `signed-manifest.json`
+and its detached `.sig`, which live alongside the top-level
+`manifest.json`. Do not edit them by hand. The script reads
+`manifest.json`, hashes all referenced files (LF-normalized) and the
+manifest itself, then writes the signed manifest.
+
+```json
+{
+  "kind": "formatters",
+  "version": "3",
+  "algorithm": "sha256",
+  "files": { "manifest.json": "<sha256 hex>", "discord/manifest.json": "<sha256 hex>", "...": "..." }
+}
+```
+
+- `kind`: `"formatters"` or `"blocklists"`, depending on which bundle was signed.
+- `version`: mirrors the source manifest's `version`.
+- `files`: maps each path (relative to the manifest's directory) to its SHA-256 hex digest.
+- The signature is written to `signed-manifest.json.sig` (base64-encoded Ed25519).
 
 ---
 
