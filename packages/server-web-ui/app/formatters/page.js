@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import ErrorCard from '../../components/ErrorCard';
 import HealthPill from '../../components/HealthPill';
@@ -64,9 +65,9 @@ function FormatterRow({ f }) {
   const overridesRemote = f.source === 'custom' && f.shadowedRemote;
 
   return (
-    <a
+    <Link
       key={f.name}
-      href={`/ui/formatters/logs/?name=${encodeURIComponent(f.name)}`}
+      href={`/formatters/logs/?name=${encodeURIComponent(f.name)}`}
       className="wp-row wp-row-link"
     >
       <div className="wp-row-grow">
@@ -114,7 +115,7 @@ function FormatterRow({ f }) {
         ) : null}
         <HealthPill health={f.health} />
       </div>
-    </a>
+    </Link>
   );
 }
 

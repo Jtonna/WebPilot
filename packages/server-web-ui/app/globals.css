@@ -1965,3 +1965,325 @@ hr {
     transform: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Site Policy page — compact global/per-agent cards, site access log table,
+ * shared rules modal. Tokens only; no new motion.
+ * ------------------------------------------------------------------------- */
+
+.wp-site-policy-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-5);
+  align-items: start;
+}
+
+@media (max-width: 1099px) {
+  .wp-site-policy-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wp-site-policy-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.wp-site-policy-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.wp-site-policy-card-title {
+  margin: 0;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-subsection);
+  font-weight: 500;
+  color: var(--wp-fg);
+  letter-spacing: -0.005em;
+}
+
+.wp-site-policy-card-sub {
+  margin: var(--s-1) 0 0;
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  line-height: 1.5;
+}
+
+.wp-site-policy-facts {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg-secondary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.wp-site-policy-note {
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+  line-height: 1.5;
+}
+
+.wp-site-policy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.wp-site-policy-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.wp-site-policy-field-label {
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+}
+
+.wp-site-policy-field-hint {
+  font-size: var(--fs-small);
+  color: var(--wp-fg-secondary);
+}
+
+.wp-site-policy-field-error {
+  font-size: var(--fs-small);
+  color: var(--wp-danger);
+}
+
+.wp-site-policy-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.wp-site-policy-radios {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wp-site-policy-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: pointer;
+  font-size: var(--fs-body);
+  color: var(--wp-fg);
+}
+
+.wp-site-policy-rule-domain {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono);
+  color: var(--wp-fg);
+  overflow-wrap: anywhere;
+}
+
+/* Base data table — hairline rows, muted mono header, matches .wp-row-list. */
+.wp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  color: var(--wp-fg);
+  border-top: 1px solid var(--wp-separator);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-table th {
+  text-align: left;
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+  white-space: nowrap;
+}
+
+.wp-table td {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+  vertical-align: top;
+}
+
+.wp-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.wp-table tbody tr:hover {
+  background-color: var(--wp-bg-elevated);
+}
+
+/* Site access log columns. */
+.wp-site-events .wp-site-events-col-domain { width: 32%; }
+.wp-site-events .wp-site-events-col-agent  { width: 16%; }
+.wp-site-events .wp-site-events-col-status { width: 22%; }
+.wp-site-events .wp-site-events-col-seen   { width: 12%; }
+.wp-site-events .wp-site-events-col-action { width: 18%; text-align: right; }
+
+.wp-site-events td.wp-site-events-action {
+  text-align: right;
+}
+
+.wp-site-events-domain {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-mono-small);
+  color: var(--wp-fg);
+  overflow-wrap: anywhere;
+}
+
+.wp-site-events-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.wp-site-events-sub,
+.wp-site-events-hint {
+  margin-top: var(--s-1);
+  font-size: var(--fs-micro);
+  color: var(--wp-fg-secondary);
+}
+
+.wp-site-events-hint {
+  color: var(--wp-fg-muted);
+}
+
+.wp-site-events-seen {
+  white-space: nowrap;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-site-events-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--s-3);
+}
+
+@media (max-width: 599px) {
+  .wp-site-events thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .wp-site-events,
+  .wp-site-events tbody,
+  .wp-site-events tr,
+  .wp-site-events td {
+    display: block;
+    width: 100%;
+  }
+
+  .wp-site-events tr {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--wp-separator);
+  }
+
+  .wp-site-events tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  .wp-site-events td,
+  .wp-site-events td.wp-site-events-action {
+    padding: var(--s-1) 0;
+    border-bottom: none;
+    text-align: left;
+  }
+
+  .wp-site-events td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-family: var(--wp-font-mono);
+    font-size: var(--fs-nano);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--wp-fg-muted);
+  }
+
+  .wp-site-policy-cols .wp-btn,
+  .wp-site-events .wp-btn,
+  .wp-site-events-footer .wp-btn {
+    min-height: 44px;
+  }
+
+  .wp-modal .wp-btn,
+  .wp-modal .wp-link {
+    min-height: 44px;
+  }
+}
+
+/* Rules modal — shared global/agent modal shell. Fixed-height flex column:
+ * header and footer stay put, only the body scrolls, so switching to the
+ * add view never grows the modal or introduces an outer scrollbar. */
+.wp-rules-modal {
+  display: flex;
+  flex-direction: column;
+  height: min(600px, calc(100vh - var(--s-7)));
+  min-height: 0;
+}
+
+.wp-rules-modal-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-bottom: var(--s-3);
+}
+
+.wp-rules-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--wp-separator);
+  border-bottom: 1px solid var(--wp-separator);
+  padding: var(--s-3) 0;
+}
+
+.wp-rules-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  padding-top: var(--s-3);
+}
+
+.wp-rules-modal-group {
+  padding: var(--s-3) var(--s-4) var(--s-1);
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-muted);
+  border-bottom: 1px solid var(--wp-separator);
+  background-color: var(--wp-bg-elevated);
+}
+
+.wp-rules-modal-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.wp-rules-modal-pager .wp-link:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

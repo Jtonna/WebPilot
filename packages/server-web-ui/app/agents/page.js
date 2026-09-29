@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AgentRow from '../../components/AgentRow';
@@ -65,6 +66,7 @@ function AgentsSkeleton() {
 function AgentsPageInner() {
   const searchParams = useSearchParams();
   const profileFilter = searchParams.get('profile') || '';
+  const agentFilter = searchParams.get('agent') || '';
 
   const [agents, setAgents]   = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -166,13 +168,24 @@ function AgentsPageInner() {
     [profileFilter, profiles],
   );
 
-  const filteredAgents = profileFilter
+  // Resolve the agent filter's display name from the agents list. Returns null
+  // if the agent key is not found.
+  const agentFilterName = useMemo(
+    () => (agentFilter ? (agents.find((a) => a.key === agentFilter)?.name || null) : ''),
+    [agentFilter, agents],
+  );
+
+  let filteredAgents = profileFilter
     ? agents.filter((a) => a.profileId === profileFilter)
     : agents;
 
+  if (agentFilter) {
+    filteredAgents = filteredAgents.filter((a) => a.key === agentFilter);
+  }
+
   return (
     <>
-      {profileFilter ? <BackLink href="/ui/profiles/" label="Profiles" /> : null}
+      {agentFilter ? <BackLink href="/ui/site-policy/" label="Site Policy" /> : profileFilter ? <BackLink href="/ui/profiles/" label="Profiles" /> : null}
       <header className="wp-page-head">
         <h1 className="wp-page-title">Agents</h1>
         <p className="wp-page-sub">
@@ -232,7 +245,21 @@ function AgentsPageInner() {
             >
               Showing agents on profile <strong style={{ color: 'var(--wp-fg)' }}>{filterDisplayName}</strong>
               {' · '}
-              <a href="/ui/agents/" className="wp-link">Clear</a>
+              <Link href={agentFilter ? `/agents/?agent=${encodeURIComponent(agentFilter)}` : '/agents/'} className="wp-link">Clear</Link>
+            </div>
+          ) : null}
+          {agentFilter ? (
+            <div
+              className="wp-secondary"
+              style={{
+                padding: '0 var(--s-4)',
+                fontSize: 'var(--fs-small)',
+                lineHeight: 1.6,
+              }}
+            >
+              Showing agent <strong style={{ color: 'var(--wp-fg)' }}>{agentFilterName || 'not found'}</strong>
+              {' · '}
+              <Link href={profileFilter ? `/agents/?profile=${encodeURIComponent(profileFilter)}` : '/agents/'} className="wp-link">Clear</Link>
             </div>
           ) : null}
           {filteredAgents.length === 0 ? (

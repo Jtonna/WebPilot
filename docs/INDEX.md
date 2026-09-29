@@ -5,7 +5,8 @@ WebPilot documentation covering system architecture, development guides, and API
 ## Architecture
 
 - [BUILD_ARCHITECTURE.md](BUILD_ARCHITECTURE.md) -- Build pipeline, pkg compilation, Electron packaging, deployment paths, and CLI flags. For anyone working on the build system or understanding how the pieces ship together.
-- [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, and service registration. For developers working on the server layer.
+- [MCP_SERVER.md](MCP_SERVER.md) -- MCP server internals: entry points, SSE/WebSocket communication, configuration, background daemon, service registration, and the site-policy admin endpoints. For developers working on the server layer.
+- [SITE_POLICY.md](SITE_POLICY.md) -- Site-policy system: four-tier precedence (per-agent, global user, signed global blocklist, default allow), the global tier toggle, which MCP tools are gated, the event log, the signed blocklist updater, and how to update and sign the blocklist. For anyone changing site blocking or maintaining the blocklist.
 - [SCHEMA_MIGRATIONS.md](SCHEMA_MIGRATIONS.md) -- SQLite schema migration system: runner, ledger table, dual-layer idempotency, naming convention, and how to add a migration. For developers making database schema changes.
 - [CHROME_EXTENSION.md](CHROME_EXTENSION.md) -- Chrome extension architecture: service worker, command handlers, formatters, utilities, popup UI, and communication protocol. For developers working on browser automation.
 - [CHROME_WINDOWS.md](CHROME_WINDOWS.md) -- Chrome behaviors observed on Windows that WebPilot empirically depends on: `--profile-directory` tab auto-restore, session-file mtime activity detection, and Registry Run key auto-start.

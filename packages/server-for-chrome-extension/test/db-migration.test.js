@@ -122,6 +122,19 @@ function makeTmpDir() {
   return d;
 }
 
+// Run ONLY migration 001 (in isolation from later migrations such as 002,
+// which drops global_site_rules) by copying its file into a temp dir and
+// pointing the runner at it via the test-only `_migrationsDir` override.
+const MIGRATION_001_FILE = '001-rename-baseline-to-global-site-blocklist.js';
+function runOnly001(db, opts) {
+  const dir = makeTmpDir();
+  fs.copyFileSync(
+    path.join(__dirname, '..', 'src', 'db', 'schema-migrations', MIGRATION_001_FILE),
+    path.join(dir, MIGRATION_001_FILE)
+  );
+  return runSchemaMigrations(db, { ...opts, _migrationsDir: dir });
+}
+
 afterEach(() => {
   for (const d of tmpDirs) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch (_e) { /* ignore */ }
@@ -140,7 +153,7 @@ describe('runSchemaMigrations', () => {
     fs.mkdirSync(oldCache);
     fs.writeFileSync(path.join(oldCache, 'list.txt'), 'evil.example\n');
 
-    runSchemaMigrations(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     // Config key renamed.
     assert.equal(
@@ -194,14 +207,14 @@ describe('runSchemaMigrations', () => {
     fs.mkdirSync(path.join(dataDir, 'baseline-blocklists'));
     fs.writeFileSync(path.join(dataDir, 'baseline-blocklists', 'a.txt'), 'x');
 
-    runSchemaMigrations(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     const rulesBefore = db.prepare('SELECT * FROM global_site_rules ORDER BY domain').all();
     const metaBefore = db.prepare('SELECT * FROM global_site_blocklist_meta').all();
     const configBefore = db.prepare('SELECT * FROM config ORDER BY key').all();
 
     // Second run must not throw and must not change any data.
-    runSchemaMigrations(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     assert.deepEqual(db.prepare('SELECT * FROM global_site_rules ORDER BY domain').all(), rulesBefore);
     assert.deepEqual(db.prepare('SELECT * FROM global_site_blocklist_meta').all(), metaBefore);
@@ -221,7 +234,7 @@ describe('runSchemaMigrations', () => {
     const rulesBefore = db.prepare('SELECT * FROM global_site_rules').all();
     const configBefore = db.prepare('SELECT * FROM config').all();
 
-    runSchemaMigrations(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     assert.equal(
       db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='global_site_rules'").get().sql,
@@ -249,7 +262,7 @@ describe('runSchemaMigrations', () => {
     fs.mkdirSync(newCache);
     fs.writeFileSync(path.join(newCache, 'new.txt'), 'fresh');
 
-    runSchemaMigrations(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     assert.equal(fs.existsSync(oldCache), false, 'old cache dir should be removed');
     assert.equal(fs.existsSync(newCache), true, 'new cache dir should remain');
@@ -291,7 +304,7 @@ describe('runSchemaMigrations', () => {
        VALUES ('x.example', 'block', 'baseline', ?, ?)`
     ).run(nowIso(), nowIso());
 
-    runSchemaMigrations(db, { dataDir: makeTmpDir() });
+    runOnly001(db, { dataDir: makeTmpDir() });
 
     // Config key renamed, value preserved.
     const cfg = db.prepare("SELECT value FROM config WHERE key = 'global_site_blocklist_enabled'").get();
@@ -332,7 +345,7 @@ describe('runSchemaMigrations', () => {
     db.prepare(`INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?)`)
       .run('global_site_blocklist_enabled', 'true', ts);
 
-    runSchemaMigrations(db, { dataDir: makeTmpDir() });
+    runOnly001(db, { dataDir: makeTmpDir() });
 
     assert.equal(
       db.prepare("SELECT value FROM config WHERE key = 'global_site_blocklist_enabled'").get().value,
@@ -355,7 +368,7 @@ describe('runner ledger + validation', () => {
     seedVintage(db);
     const dataDir = makeTmpDir();
 
-    runAll(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     const row = db.prepare(
       "SELECT * FROM schema_migrations WHERE id = '001-rename-baseline-to-global-site-blocklist'"
@@ -375,12 +388,12 @@ describe('runner ledger + validation', () => {
     const dataDir = makeTmpDir();
     fs.mkdirSync(path.join(dataDir, 'baseline-blocklists'));
 
-    runAll(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     const rulesBefore = db.prepare('SELECT * FROM global_site_rules ORDER BY domain').all();
     const configBefore = db.prepare('SELECT * FROM config ORDER BY key').all();
 
-    runAll(db, { dataDir });
+    runOnly001(db, { dataDir });
 
     const count = db.prepare(
       "SELECT COUNT(*) AS c FROM schema_migrations WHERE id = '001-rename-baseline-to-global-site-blocklist'"
@@ -498,9 +511,11 @@ const LEDGER_DDL = `
 const EXPECTED_TABLES = [
   'agents',
   'pairings',
-  'global_site_rules',
-  'agent_site_overrides',
+  'global_user_site_rules',
+  'global_site_blocklist_rules',
+  'agent_site_rules',
   'global_site_blocklist_meta',
+  'site_policy_events',
   'formatter_incidents',
   'config',
   'extension_installs',
@@ -584,11 +599,8 @@ describe('fresh / pre-schema DB', () => {
     runAll(db, { dataDir });
     assert.doesNotThrow(() => db.exec(SCHEMA_SQL));
 
-    // All four renames from the migration's docstring happened.
-    assert.equal(
-      db.prepare("SELECT value FROM config WHERE key = 'global_site_blocklist_enabled'").get().value,
-      'true'
-    );
+    // All four renames from 001's docstring happened (the config key was then
+    // renamed again by 002 — asserted below).
     assert.equal(
       db.prepare("SELECT 1 FROM config WHERE key = 'baseline_blocklist_enabled'").get(),
       undefined
@@ -601,14 +613,43 @@ describe('fresh / pre-schema DB', () => {
       db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='baseline_blocklist_meta'").get(),
       undefined
     );
-    const rulesSql = db.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='global_site_rules'"
-    ).get().sql;
-    assert.ok(rulesSql.includes("'global_site_blocklist'"));
-    assert.ok(!rulesSql.includes("'baseline'"));
+    // 001's CHECK rewrite + row relabel is then consumed by 002's split: the
+    // old mixed table is gone and each row lives in its tier's table.
     assert.equal(
-      db.prepare("SELECT source FROM global_site_rules WHERE domain = 'evil.example'").get().source,
-      'global_site_blocklist'
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='global_site_rules'").get(),
+      undefined,
+      'global_site_rules should be dropped by 002'
+    );
+    assert.ok(
+      db.prepare("SELECT 1 FROM global_site_blocklist_rules WHERE domain = 'evil.example'").get(),
+      'former baseline row evil.example should be in the signed table'
+    );
+    assert.equal(
+      db.prepare("SELECT 1 FROM global_user_site_rules WHERE domain = 'evil.example'").get(),
+      undefined
+    );
+    assert.equal(
+      db.prepare("SELECT decision FROM global_user_site_rules WHERE domain = 'user-added.example'").get().decision,
+      'allow'
+    );
+    assert.equal(
+      db.prepare("SELECT 1 FROM global_site_blocklist_rules WHERE domain = 'user-added.example'").get(),
+      undefined
+    );
+    // Config key carried through both renames.
+    assert.equal(
+      db.prepare("SELECT value FROM config WHERE key = 'global_tier_enabled'").get().value,
+      'true'
+    );
+    // 001 rename happened before 002 renamed it again; neither older key remains.
+    assert.equal(
+      db.prepare("SELECT 1 FROM config WHERE key = 'global_site_blocklist_enabled'").get(),
+      undefined
+    );
+    // Meta row kept (user rows migrated → version marked for re-sync).
+    assert.equal(
+      db.prepare('SELECT version FROM global_site_blocklist_meta WHERE id = 1').get().version,
+      'pre-002:v1.0.0'
     );
 
     db.close();

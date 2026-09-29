@@ -1,7 +1,8 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import {
   HomeIcon as HomeOutline,
   KeyIcon as KeyOutline,
@@ -48,44 +49,44 @@ import { getStatus } from '../lib/api';
 
 const NAV_WORKSPACE = [
   {
-    href: '/ui/',
+    href: '/',
     label: 'Dashboard',
-    match: (p) => p === '/ui' || p === '/ui/',
+    match: (p) => p === '/',
     IconOutline: HomeOutline,
     IconSolid: HomeSolid,
   },
   {
-    href: '/ui/profiles/',
+    href: '/profiles/',
     label: 'Profiles',
-    match: (p) => p.startsWith('/ui/profiles'),
+    match: (p) => p.startsWith('/profiles'),
     IconOutline: UserCircleOutline,
     IconSolid: UserCircleSolid,
   },
   {
-    href: '/ui/agents/',
+    href: '/agents/',
     label: 'Agents',
-    match: (p) => p.startsWith('/ui/agents'),
+    match: (p) => p.startsWith('/agents'),
     IconOutline: CpuChipOutline,
     IconSolid: CpuChipSolid,
   },
   {
-    href: '/ui/sites/',
-    label: 'Sites',
-    match: (p) => p.startsWith('/ui/sites'),
+    href: '/site-policy/',
+    label: 'Site Policy',
+    match: (p) => p.startsWith('/site-policy'),
     IconOutline: GlobeAltOutline,
     IconSolid: GlobeAltSolid,
   },
   {
-    href: '/ui/formatters/',
+    href: '/formatters/',
     label: 'Formatters',
-    match: (p) => p.startsWith('/ui/formatters'),
+    match: (p) => p.startsWith('/formatters'),
     IconOutline: CommandLineOutline,
     IconSolid: CommandLineSolid,
   },
   {
-    href: '/ui/pairings/',
+    href: '/pairings/',
     label: 'Pairings',
-    match: (p) => p.startsWith('/ui/pairings'),
+    match: (p) => p.startsWith('/pairings'),
     IconOutline: KeyOutline,
     IconSolid: KeySolid,
     showCount: true,
@@ -94,18 +95,21 @@ const NAV_WORKSPACE = [
 
 const NAV_SYSTEM = [
   {
-    href: '/ui/settings/',
+    href: '/settings/',
     label: 'Settings',
-    match: (p) => p.startsWith('/ui/settings'),
+    match: (p) => p.startsWith('/settings'),
     IconOutline: Cog6ToothOutline,
     IconSolid: Cog6ToothSolid,
   },
 ];
 
 function normalizePath(p) {
-  if (!p) return '/ui/';
+  if (!p) return '/';
   return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
 }
+
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+const SESSION_KEY = 'webpilot.hasConnected';
 
 function useServerStatus() {
   const [serverOk, setServerOk] = useState(null);
@@ -116,6 +120,16 @@ function useServerStatus() {
   // page contents so a transient 500/network error during server boot
   // never flashes the dashboard with a "Disconnected" banner.
   const [hasEverConnected, setHasEverConnected] = useState(false);
+  useIsoLayoutEffect(() => {
+    try {
+      if (window.sessionStorage.getItem(SESSION_KEY) === '1') {
+        setHasEverConnected(true);
+      }
+    } catch (_) {
+      // sessionStorage unavailable (private mode, etc.) — fall back to the
+      // normal boot-time gate below.
+    }
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let timeoutId = null;
@@ -128,6 +142,11 @@ function useServerStatus() {
         success = true;
         setServerOk(true);
         setHasEverConnected(true);
+        try {
+          window.sessionStorage.setItem(SESSION_KEY, '1');
+        } catch (_) {
+          // ignore
+        }
         const n = (data && Array.isArray(data.pendingPairings))
           ? data.pendingPairings.length
           : 0;
@@ -161,8 +180,9 @@ function useServerStatus() {
  * Rendered by AppShell whenever the renderer has not yet had a successful
  * /api/ui/status response, regardless of the failure mode (network drop,
  * 500, server still booting). Once the first success lands, AppShell
- * swaps in the real shell + page content and never shows this splash
- * again for the rest of the session.
+ * swaps in the real shell + page content; a flag in sessionStorage
+ * remembers this across client-side navigations, so the splash shows at
+ * most once per browser session (tab) until the first successful status.
  */
 function ConnectingSplash({ message }) {
   return (
@@ -248,7 +268,7 @@ function SidebarGroup({ title, items, pathname, query, onItemClick, counts }) {
               ? counts[item.label]
               : null;
           return (
-            <a
+            <Link
               key={item.href}
               href={item.href}
               className={`wp-nav-item${active ? ' is-active' : ''}`}
@@ -264,7 +284,7 @@ function SidebarGroup({ title, items, pathname, query, onItemClick, counts }) {
                   {count}
                 </span>
               ) : null}
-            </a>
+            </Link>
           );
         })}
       </nav>
@@ -294,9 +314,9 @@ function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClic
     <>
       <div className="wp-sidebar-scroll">
         <div className="wp-sidebar-brand">
-          <a href="/ui/" className="wp-brand" onClick={onNavClick}>
+          <Link href="/" className="wp-brand" onClick={onNavClick}>
             WebPilot
-          </a>
+          </Link>
           <span className="wp-sidebar-brand-rule" aria-hidden="true" />
         </div>
 
@@ -323,7 +343,7 @@ function SidebarContents({ pathname, query, serverOk, pendingPairings, onNavClic
 }
 
 export default function AppShell({ children }) {
-  const rawPath = usePathname() || '/ui/';
+  const rawPath = usePathname() || '/';
   const pathname = normalizePath(rawPath);
   const { serverOk, pendingPairings, hasEverConnected } = useServerStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -382,7 +402,7 @@ export default function AppShell({ children }) {
   return (
     <div className="wp-shell">
       <header className="wp-topbar" role="banner">
-        <a href="/ui/" className="wp-topbar-brand">WebPilot</a>
+        <Link href="/" className="wp-topbar-brand">WebPilot</Link>
         <div className="wp-topbar-right">
           <span
             className="wp-topbar-dot"

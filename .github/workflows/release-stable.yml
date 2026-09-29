@@ -108,7 +108,7 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Formatter signing (idempotent — must run before build so the signed
-      # manifests bundled in the binary match the formatter sources at this tag)
+      # manifests committed at this tag match the formatter sources)
       # -----------------------------------------------------------------------
       - name: Sign formatter + blocklist manifests
         shell: bash
@@ -118,7 +118,7 @@ jobs:
           if [ -z "${WEBPILOT_SIGNING_KEY_BASE64:-}" ]; then
             echo "ERROR: WEBPILOT_SIGNING_KEY_BASE64 secret is not set."
             echo "Add the base64-encoded Ed25519 signing key to the repo secrets"
-            echo "before cutting a release. See CONTRIBUTING.md > Signing formatter releases."
+            echo "before cutting a release. See CONTRIBUTING.md > Signing and updating the signed bundles."
             exit 1
           fi
           set -euo pipefail

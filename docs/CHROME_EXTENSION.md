@@ -199,63 +199,87 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`.
+The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`. For how verdicts are computed and what the global tier toggle does, see [SITE_POLICY.md](SITE_POLICY.md#precedence) and [Global tier toggle](SITE_POLICY.md#global-tier-toggle).
 
 ### What the popup shows
 
 Four components, top to bottom:
 
-1. **Connection status** — colored dot + one-word label (`Connected` / `Reconnecting…` / `Disconnected`). Reveals the bound profile and server URL underneath.
-2. **Current tab** — domain + state pill (`Allowed` / `Blocked (global blocklist)` / `Blocked (user)` / `Override: Allowed` / `Override: Blocked`).
-3. **Block / Allow toggle** — single primary button that flips the **global** `global_site_rules` row for the current tab's domain (i.e. "I don't want any AI touching this site"). Per-agent fine-tuning happens at `/ui/sites/`.
-4. **Open dashboard** — opens `http://localhost:<port>/ui/` in a new tab.
+1. **Connection status** — colored dot + one-word label (`Connected` / `Disconnected`; `Connecting` while loading). Shows the bound profile directory (`profileId`, e.g. `Default`) underneath. The server URL is not shown; "Open dashboard" is the way to reach the server.
+2. **Current tab** — domain + state pill. Caption below the pill: "Global policy for this Chrome profile (per-agent rules aren't shown)." A "Rule on <matchedDomain>" line also appears when the matching rule is on a parent domain. Pill states:
+   - `Allowed (your rule)`: a global user rule allows it
+   - `Allowed`: no rule
+   - `Blocked (your rule)`
+   - `Blocked (global block list)`
+3. **Block / Allow toggle** — single primary button that writes a **global** user rule (a `global_user_site_rules` row) for the current tab's domain. Applies to all agents, unless overridden by a per-agent rule for that agent (including an agent's `*` default). If the global tier is off: the rule still saves but has no effect (see [Global tier toggle](SITE_POLICY.md#global-tier-toggle)), the toggle is disabled, and the popup shows "Global rules are off — this toggle won't apply until they're turned back on in the dashboard." Per-agent fine-tuning happens at `/ui/site-policy/`.
+4. **Open dashboard** — opens `<server>/ui/` in a new tab, where `<server>` is the `serverUrl` from `chrome.storage.local` converted to http(s) (default `http://localhost:3456`).
+5. **Skip / fallback messages** — the tab section is hidden and a plain-text skip surface is shown instead when the popup has nothing renderable:
+   - Non-http(s) pages, and loopback hosts (`localhost`, `127.0.0.1`, `::1`), are never sent to the server for a per-tab policy lookup: "Site policy doesn’t apply to this page." (This is a client-side skip only; server-side, an agent's `*` rule still matches loopback hosts.)
+   - No active tab resolved: "No active tab."
+   - The server responded but didn't return a usable `currentTab`: "No policy data for this page yet."
+   - No `webpilot.installId` in storage yet: "Extension has no installId. Reload the extension in chrome://extensions/."
+   - A fetch error or a 401 response shows the `Disconnected` connection state plus the error text (e.g. "Install ID not recognized by server." for a 401, or "Could not reach the WebPilot server." for a network failure).
 
 The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (written by the background auto-connect flow) and hits two server endpoints, authenticating with the `X-Install-Id` header:
 
-- `GET  /api/popup/state?tabUrl=<url>` — connection + current-tab pill.
-- `POST /api/popup/site-toggle` — flip the global rule.
+- `GET  /api/popup/state?tabUrl=<url>`: connection + current-tab pill.
+- `POST /api/popup/site-toggle`: set the global user rule (`global_user_site_rules`) for the domain.
 
 The legacy `X-API-Key` header (and the `apiKey` storage key) have been retired along with the shared server transport key. Auth is now installId-based end-to-end.
 
 ### Popup IPC
 
-The two popup endpoints live in `packages/server-for-chrome-extension/src/server.js` (the `_authPopup` helper plus the two route handlers). Both are localhost-only by virtue of the server bind; both are gated by an installId resolver and an Origin allowlist.
+The two popup endpoints live in `packages/server-for-chrome-extension/src/popup-routes.js` (`mountPopupRoutes`: the `_authPopup` helper plus the two route handlers), mounted from `server.js`. Both are gated by an installId resolver and an Origin denylist. They have **no loopback gate**: in the default localhost bind only local callers can reach them, but in network mode they are reachable from the LAN (tracked in #110).
 
 **Auth (`_authPopup`).** Every popup request must:
 
 1. Carry `X-Install-Id: <uuid>` (the same `webpilot.installId` the extension sent on its WS upgrade). A `?installId=<uuid>` query-string fallback is accepted to keep ad-hoc curl flows working. Missing or empty values → 401. Strings longer than 256 characters → 401 (defensive cap).
 2. Resolve via `extensionInstalls.getProfileForInstall(installId)`. An unknown installId → 401.
-3. Pass the **Origin gate (S3)**. The `Origin` header must either be absent (server-side caller, the popup itself, or a `chrome-extension://…` origin) or any non-`http(s)://` scheme. Any `http://` or `https://` origin is rejected outright — that pattern is a webpage running in some Chrome profile trying to ride the loopback bind to mutate site policy. This is the same hardening as the extension-WS `S1` gate and the UI-WS `S2` gate.
+3. Pass the **Origin gate (S3)**. The `Origin` header must be absent or use a non-`http(s)` scheme (for example `chrome-extension://…`); any `http://`/`https://` origin → 401. That pattern is a webpage running in some Chrome profile trying to ride the loopback bind to mutate site policy. This is the same hardening as the extension-WS `S1` gate and the UI-WS `S2` gate.
 
-A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context — only `global_site_rules` apply; `agent_site_overrides` are not consulted from here.
+A successful `_authPopup` call returns `{ installId, profileId }`. The popup operates in **profile context**, not agent context: it resolves policy with `sitePolicy.isAllowed(null, …)`, so `agent_site_rules` never apply. See [Precedence](SITE_POLICY.md#precedence) for tier order and matching, and [Global tier toggle](SITE_POLICY.md#global-tier-toggle) for what turning the tier off does.
 
 #### `GET /api/popup/state`
 
 | Aspect | Value |
 |---|---|
 | Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
-| Query | `tabUrl` (optional). Strings longer than 8192 bytes → 400 (`tabUrl too long`). |
-| Response | `{ connection, profileId, agent, serverUrl, currentTab? }` |
+| Query | `tabUrl` (optional). Strings longer than 8192 characters → 400 (`tabUrl too long`). |
+| Response | `{ connection, profileId, agent, serverUrl, globalTierEnabled, currentTab? }` |
 
 Response fields:
 
-- `connection` — `'connected'` or `'disconnected'`, based on `extensionBridge.isConnected(profileId)`.
-- `profileId` — the bound Chrome profile directoryName.
-- `agent` — always `null` (popup is profile-scoped).
-- `serverUrl` — `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers, used by the popup to build the "Open dashboard" link.
-- `currentTab` (present only when a valid `tabUrl` was supplied and normalized) — `{ url, domain, state, source, decision }`. `state` is one of `'allowed' | 'blocked_global_site_blocklist' | 'blocked_user' | 'allowed_override' | 'blocked_override'`, mapped from `(decision, source)` by `_statePillFromPolicy` for the popup pill.
+- `connection`: `'connected'` or `'disconnected'`, based on `extensionBridge.isConnected(profileId)`.
+- `profileId`: the bound Chrome profile directoryName.
+- `agent`: always `null` (popup is profile-scoped).
+- `serverUrl`: `${proto}://${host}` derived from `X-Forwarded-Proto` / `Host` headers (falling back to `localhost:<port>`). Informational; the popup does not use it (the "Open dashboard" link is built from the stored `serverUrl`).
+- `globalTierEnabled`: boolean from `sitePolicy.isGlobalTierEnabled()` (see [Global tier toggle](SITE_POLICY.md#global-tier-toggle) for what the key means and its default). When `false`, `currentTab` always resolves to `state: 'allowed'`, `source: 'default'`.
+- `currentTab` (present only when a valid `tabUrl` was supplied and normalized): `{ url, domain, state, source, decision, matchedDomain }`, mapped by `_statePillFromPolicy` (exported from `popup-routes.js`):
+  - `state`: `'allowed'` (any allow) | `'blocked_global_site_blocklist'` (block from `global_site_blocklist`) | `'blocked_user'` (any other block)
+  - `source`: `'global_user' | 'global_site_blocklist' | 'default'` (never `agent_rule`; no agent context here)
+  - `matchedDomain`: the matching rule's stored domain, which can be a parent of `domain` via public-suffix walk, or `null` when `source` is `'default'`
+  - The popup builds its pill label from `state` + `source` (see "What the popup shows"); it is not a fixed per-state string.
 
 #### `POST /api/popup/site-toggle`
 
 | Aspect | Value |
 |---|---|
 | Auth | `X-Install-Id` (header preferred, query-param fallback) + Origin gate |
-| Body | `{ domain, action: 'block' \| 'allow' }`. Raw `domain` strings longer than 512 chars → 400. |
-| Response | `{ ok, domain, decision, newState }` |
+| Body | `{ domain, action: 'block' \| 'allow' }`.<br>`decision` is accepted as an alias for `action`; `action` wins if both are present.<br>`domain` over 512 chars → 400 `{ error: 'domain too long' }`. |
+| Response | `{ ok, domain, decision, newState, globalTierEnabled, source, policyDecision }` |
+| Errors | 400 `{ error, reason }`:<br>• invalid domain → `error: 'invalid domain'`<br>• invalid decision → `error: 'invalid decision'`, `reason: "decision must be 'allow' or 'block'"`<br>• `*` (wildcard) → `error: 'invalid domain'`, `reason: "wildcard ('*') rules are per-agent only — add them under Per-agent rules on the Site Policy page"`<br>401 `{ error: 'unauthorized' }`<br>500 `{ error }` (exception message) |
 
-Writes a `source='user'` row to `global_site_rules` via `sitePolicy.setGlobalRule(normalized, action, 'user')`. Audit log line records the truncated installId and bound profileId (no agent identity — popup is not in agent context). Broadcasts a `sites_changed` event over `/api/ui/events` so the Sites admin page stays in sync. `newState` is the recomputed pill key (global-only, no agent override) so the popup can update its toggle without a follow-up `GET /api/popup/state`.
+Upserts a row in `global_user_site_rules` via `upsertGlobalUserRule` in `src/global-user-rules.js`, the same write path `POST /api/ui/site-policy/global-rules` uses, so validation, error strings and rule semantics are identical.
 
-It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state — it polls the server directly.
+- Audit log records the truncated installId and bound profileId (no agent identity; popup is not in agent context).
+- Broadcasts a `site_policy_changed` event over `/api/ui/events` so the Site Policy admin page stays in sync.
+- `decision` echoes the requested `action`.
+- `newState` is the recomputed pill key (global tier only, no agent rule), so the popup can update its toggle without a follow-up `GET /api/popup/state`.
+- `globalTierEnabled` lets the popup tell that a rule it just wrote isn't in effect: while the global tier is off, `newState` is `'allowed'` even after a `block`.
+- `source` and `policyDecision` are the recomputed global-only verdict's `source` and `decision` (`decision` itself just echoes the request).
+- On a non-2xx response, the popup shows the body's `reason` (falling back to `error`) inline under the toggle.
+
+It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state; it polls the server directly.
 
 ### Per-profile installation
 Each Chrome profile loads its own copy of the extension. The `webpilot_dev_reload_extension` MCP tool reloads the extension on the calling agent's paired profile; the server routes `reload_extension` to that one profile's WebSocket. Multi-profile installs need one tool call per profile, or a manual reload at `chrome://extensions/` in each profile (see `accessibility-tree-formatters/DEV_GUIDE.md`).

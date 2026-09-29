@@ -25,7 +25,9 @@ Defined in `packages/server-for-chrome-extension/package.json`:
       "src/**/*.js",
       "src/**/*.sql",
       "index.js",
-      "../server-web-ui/out/**/*"
+      "release-info.json",
+      "../server-web-ui/out/**/*",
+      "../../accessibility-tree-formatters/PUBKEY.pem"
     ]
   }
 }
@@ -108,6 +110,8 @@ extraResources:
     to: chrome-extension
   - from: assets                                 # → resources/assets/
     to: assets
+  - from: ../../accessibility-tree-formatters/PUBKEY.pem  # → resources/server/PUBKEY.pem
+    to: server/PUBKEY.pem
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: false
@@ -117,7 +121,7 @@ nsis:
 
 - **Target**: NSIS installer (Windows), `.dmg` (macOS), AppImage (Linux)
 - **Install location**: `%LOCALAPPDATA%\Programs\WebPilot\` (Windows default for per-user NSIS installs; `perMachine: false`)
-- **extraResources**: The server binary, the unpacked Chrome extension, and the icon assets ship inside the Electron app's `resources/` folder but are not part of the Asar archive.
+- **extraResources**: The server binary, unpacked Chrome extension, and icon assets bundle into the Electron app's `resources/` folder, outside the Asar archive. `PUBKEY.pem` bundles alongside them and verifies signed formatters and blocklists.
 - **NSIS hook**: `build/installer.nsh` plugs in `customCheckAppRunning` and `customUnInstall` macros — see below.
 
 ### `generate-icons.js`

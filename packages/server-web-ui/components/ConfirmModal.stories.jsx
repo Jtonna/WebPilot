@@ -9,7 +9,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Apple-style confirmation modal. Replaces window.confirm() usage. Backdrop / Esc cancels; Enter confirms.',
+          'Apple-style confirmation modal. Replaces window.confirm() usage. Backdrop / Esc cancels; Enter does not auto-confirm.',
       },
     },
   },

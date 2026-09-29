@@ -68,7 +68,8 @@ The workflow will:
 The workflow will:
 - Compute the nightly version string.
 - Bump version in-memory (not committed).
-- Re-sign manifests (soft-fail if secret absent — ships whatever is on HEAD).
+- Re-sign manifests inside the runner only (never committed or bundled).
+- Nightly builds ship whatever signed manifests are already committed at the tagged SHA.
 - Write `release-info.json` in-memory (not committed).
 - Build the Windows installer.
 - Tag the unmodified source SHA and push.
@@ -152,7 +153,7 @@ same behaviour as before. No user action is required on existing installs.
 
 | Secret | Required for | Description |
 |--------|-------------|-------------|
-| `WEBPILOT_SIGNING_KEY_BASE64` | Stable (hard-fail), Nightly (soft-skip) | Base64-encoded Ed25519 private key for signing formatter manifests. |
+| `WEBPILOT_SIGNING_KEY_BASE64` | Stable (hard-fail), Nightly (soft-skip) | Base64-encoded Ed25519 private key for signing the formatter and global-site-blocklist manifests. |
 | `GITHUB_TOKEN` | Both | Automatically provided by GitHub Actions. |
 
-See `CONTRIBUTING.md > Signing formatter releases` for key generation instructions.
+See `CONTRIBUTING.md > Signing and updating the signed bundles` for key generation instructions.

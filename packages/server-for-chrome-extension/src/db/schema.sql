@@ -32,23 +32,39 @@ CREATE INDEX IF NOT EXISTS idx_pairings_state ON pairings(state, requested_at DE
 
 -- ─── Site policy ──────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS global_site_rules (
-  domain TEXT PRIMARY KEY,                  -- normalized (lowercased, no scheme, no port)
+-- Site policy is tiered; each tier owns its own table so a row in one tier
+-- can never mask or overwrite a row in another:
+--   * agent_site_rules            per-agent rules tier. `domain` may be the
+--                                 literal '*' (agent-wide default decision).
+--   * global_user_site_rules      global tier, rules the user set by hand.
+--                                 Exact domains only (no '*').
+--   * global_site_blocklist_rules global tier, domains from the signed global
+--                                 site blocklist bundle. Block-only; rewritten
+--                                 wholesale by global-site-blocklist-updater.
+-- The config key `global_tier_enabled` switches the whole global tier (both
+-- global_* rule tables) on or off.
+-- All `domain` columns are normalized (lowercased, no scheme, no port).
+
+CREATE TABLE IF NOT EXISTS global_user_site_rules (
+  domain TEXT PRIMARY KEY CHECK(instr(domain, '*') = 0),
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
-  source TEXT NOT NULL CHECK(source IN ('user','global_site_blocklist')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS agent_site_overrides (
+CREATE TABLE IF NOT EXISTS global_site_blocklist_rules (
+  domain TEXT PRIMARY KEY CHECK(instr(domain, '*') = 0),
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_site_rules (
   id INTEGER PRIMARY KEY,
   agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  domain TEXT NOT NULL,                     -- normalized
+  domain TEXT NOT NULL,                     -- normalized, or the literal '*' (agent-wide default)
   decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
   created_at TEXT NOT NULL,
   UNIQUE(agent_id, domain)
 );
-CREATE INDEX IF NOT EXISTS idx_agent_overrides ON agent_site_overrides(agent_id, domain);
 
 CREATE TABLE IF NOT EXISTS global_site_blocklist_meta (
   id INTEGER PRIMARY KEY CHECK(id=1),       -- single row table
@@ -57,6 +73,27 @@ CREATE TABLE IF NOT EXISTS global_site_blocklist_meta (
   source_url TEXT NOT NULL,
   domain_count INTEGER NOT NULL
 );
+
+-- ─── Site policy event log ─────────────────────────────────────────────────
+-- One row per (agent, domain) the agent's browser_* calls were checked
+-- against. Deduplicated: repeat checks bump hit_count/last_seen_at and flip
+-- decision/source/matched_domain in place. No history rows. Default allows
+-- are logged too. Pruned by site-policy-events.cleanup() (age + row cap).
+CREATE TABLE IF NOT EXISTS site_policy_events (
+  id INTEGER PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,                       -- verdict.domain: normalized host, or raw IP/single-label host
+  decision TEXT NOT NULL CHECK(decision IN ('allow','block')),
+  source TEXT NOT NULL CHECK(source IN ('agent_rule','global_user','global_site_blocklist','default')),
+  matched_domain TEXT,                        -- stored domain of matching rule; '*' for agent wildcard; NULL for default
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  decision_changed_at TEXT NOT NULL,          -- = first_seen_at until the decision first flips
+  hit_count INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(agent_id, domain)
+);
+CREATE INDEX IF NOT EXISTS idx_site_policy_events_last_seen ON site_policy_events(last_seen_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_site_policy_events_agent_last_seen ON site_policy_events(agent_id, last_seen_at DESC);
 
 -- ─── Formatter incidents (audit trail for action items) ───────────────────
 
