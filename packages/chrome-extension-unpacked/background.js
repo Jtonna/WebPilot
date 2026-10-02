@@ -393,13 +393,11 @@ function connectWebSocket() {
         }
         if (message.type === 'pong') return;
 
-        // Handle non-command messages from server
-        if (message.type === 'paired_agents_list') {
-          // Pairing is now web-UI-only; the popup no longer renders this list,
-          // but we still stash it in storage in case future tooling consumes it.
-          chrome.storage.local.set({ pairedAgents: message.agents });
-          return;
-        }
+        // Handle non-command messages from server.
+        // NOTE: the server no longer pushes `paired_agents_list` to the
+        // extension (#129). Agent administration is a web-UI-only concern and
+        // the extension never needs the agent roster, so there is nothing to
+        // cache here.
 
         if (message.type === 'identify_required') {
           // Server cannot determine which profile this extension belongs to.

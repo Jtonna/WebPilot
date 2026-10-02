@@ -7,7 +7,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Single agent row on the /ui/agents page. Includes inline rename, profile rebind, copy-config, and revoke.',
+          'Single agent row on the /ui/agents page. Includes inline rename, profile rebind, regenerate key, and revoke.',
       },
     },
   },
@@ -15,6 +15,7 @@ const meta = {
     onRename: { action: 'rename' },
     onRevoke: { action: 'revoke' },
     onRebind: { action: 'rebind' },
+    onRegenerate: { action: 'regenerate' },
   },
 };
 
@@ -28,28 +29,28 @@ const PROFILES = [
 
 const AGENT_NAMED = {
   name: 'Claude Code — webpilot-marketing',
-  key: 'wp_live_abcdef0123456789xyz',
+  id: 1,
   lastActive: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
   profileId: 'Default',
 };
 
 const AGENT_FRESH = {
   name: 'Cursor — local',
-  key: 'wp_live_qweqweqweqweqweqweqwe',
+  id: 2,
   lastActive: new Date().toISOString(),
   profileId: 'Profile 2',
 };
 
 const AGENT_UNNAMED = {
   name: '',
-  key: 'wp_live_zzzyyyxxx000111222',
+  id: 3,
   lastActive: null,
   profileId: null,
 };
 
 const AGENT_STALE = {
   name: 'Dropped agent',
-  key: 'wp_live_aaa111bbb222ccc333',
+  id: 4,
   lastActive: new Date(Date.now() - 1000 * 60 * 60 * 24 * 12).toISOString(),
   profileId: 'Profile 2',
 };
@@ -74,16 +75,16 @@ export const StaleAndUnboundProfile = {
   },
 };
 
-export const NoPortKnown = {
+export const NoRebindHandler = {
   args: {
     agent: AGENT_NAMED,
     profiles: PROFILES,
-    port: undefined,
+    onRebind: undefined,
   },
   parameters: {
     docs: {
       description: {
-        story: 'Copy-config disables when port is unknown — surfaces the refresh hint.',
+        story: 'Profile rebind is disabled when no onRebind handler is supplied.',
       },
     },
   },

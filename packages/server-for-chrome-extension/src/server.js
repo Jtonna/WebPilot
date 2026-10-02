@@ -804,12 +804,12 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.post('/api/ui/agents/:key/rename', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/agents/:id/rename', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const key = req.params.key;
+      const id = req.params.id;
       const newName = req.body && req.body.newName;
       if (!newName) return res.status(400).json({ error: 'newName required' });
-      const ok = pairedKeys.renameKey(key, newName);
+      const ok = pairedKeys.renameKey(id, newName);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
@@ -818,27 +818,45 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // PATCH /api/ui/agents/:key
+  // POST /api/ui/agents/:id/regenerate
   //
-  // Re-bind an existing agent (API key) to a different Chrome profile. Tool
-  // calls from this agent will route to the new profile on the next call —
-  // no socket teardown needed because routing is a per-call lookup of the
-  // agent's profileId in mcp-handler.resolveTargetProfile.
+  // Mint a fresh API key for an existing agent (identified by its non-secret
+  // row id). The previously-issued key stops authenticating immediately. The
+  // new plaintext is returned exactly ONCE in the response body — it is never
+  // persisted and cannot be retrieved again. Loopback-gated mutating endpoint.
+  app.post('/api/ui/agents/:id/regenerate', auth, mutatingAuth, express.json(), (req, res) => {
+    try {
+      const id = req.params.id;
+      const apiKey = pairedKeys.regenerateKey(id);
+      if (!apiKey) return res.status(404).json({ error: 'agent not found' });
+      try {
+        broadcastUiEvent && broadcastUiEvent({
+          type: 'agents_changed',
+          agents: pairedKeys.listKeys(),
+        });
+      } catch (_e) { /* ignore */ }
+      res.json({ apiKey });
+    } catch (e) {
+      console.error('[ui-api] regenerate failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PATCH /api/ui/agents/:id
+  //
+  // Re-bind an existing agent (identified by its non-secret row id) to a
+  // different Chrome profile. Tool calls from this agent will route to the new
+  // profile on the next call — no socket teardown needed because routing is a
+  // per-call lookup of the agent's profileId in
+  // mcp-handler.resolveTargetProfile.
   //
   // Body: { profileId: "<directoryName>" } — must match a known profile.
-  app.patch('/api/ui/agents/:key', auth, mutatingAuth, express.json(), (req, res) => {
+  app.patch('/api/ui/agents/:id', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const key = req.params.key;
+      const id = req.params.id;
       const body = req.body || {};
       const profileIdRaw = body.profileId;
-      // Log the agent identity via agent-name lookup, NOT the api_key_hash
-      // prefix — avoids leaking key material into log streams.
-      let agentLabel = '(unknown)';
-      try {
-        const entry = pairedKeys.validateKey(key);
-        if (entry && entry.agentName) agentLabel = entry.agentName;
-      } catch (_e) { /* non-fatal — fall through with (unknown) */ }
-      console.log(`[ui-api] PATCH agent "${agentLabel}" profileId=${JSON.stringify(profileIdRaw)}`);
+      console.log(`[ui-api] PATCH agent id=${JSON.stringify(id)} profileId=${JSON.stringify(profileIdRaw)}`);
 
       if (typeof profileIdRaw !== 'string' || profileIdRaw.length === 0) {
         return res.status(400).json({
@@ -863,10 +881,10 @@ function mountWebUiRoutes(app, deps) {
         });
       }
 
-      const ok = pairedKeys.updateProfileBinding(key, match.directoryName);
+      const ok = pairedKeys.updateProfileBinding(id, match.directoryName);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
 
-      const updated = pairedKeys.listKeys().find((a) => a.key === key) || null;
+      const updated = pairedKeys.listKeys().find((a) => String(a.id) === String(id)) || null;
       // Broadcast so the Agents and Pairings tabs both refresh.
       try {
         broadcastUiEvent && broadcastUiEvent({
@@ -881,10 +899,10 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.delete('/api/ui/agents/:key', auth, mutatingAuth, (req, res) => {
+  app.delete('/api/ui/agents/:id', auth, mutatingAuth, (req, res) => {
     try {
-      const key = req.params.key;
-      const ok = pairedKeys.revokeKey(key);
+      const id = req.params.id;
+      const ok = pairedKeys.revokeKey(id);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
@@ -1213,19 +1231,19 @@ function mountWebUiRoutes(app, deps) {
   // refetches.
   const sitePolicy = require('./site-policy');
 
-  // Resolve the numeric agents.id row from the `key` parameter passed by the
-  // webapp (which is the api_key_hash, since that's what listKeys() exposes
-  // as `key`). Returns null when no active agent matches.
-  function _agentIdFromKey(key) {
-    if (typeof key !== 'string' || key.length === 0) return null;
+  // Resolve + validate the numeric agents.id passed by the webapp. The webapp
+  // now addresses agents by their non-secret row id directly (never the
+  // api_key_hash). Returns the id of a matching ACTIVE agent, or null.
+  function _resolveActiveAgentId(id) {
+    if (id === null || id === undefined || id === '') return null;
     try {
       const db = require('./db/connection').getDb();
       const row = db
-        .prepare("SELECT id FROM agents WHERE api_key_hash = ? AND state = 'active'")
-        .get(key);
+        .prepare("SELECT id FROM agents WHERE id = ? AND state = 'active'")
+        .get(id);
       return row ? row.id : null;
     } catch (e) {
-      console.log(`[ui-api:site-policy] _agentIdFromKey failed: ${e.message}`);
+      console.log(`[ui-api:site-policy] _resolveActiveAgentId failed: ${e.message}`);
       return null;
     }
   }
@@ -1291,11 +1309,11 @@ function mountWebUiRoutes(app, deps) {
   });
 
   // GET /api/ui/agents/:agentId/site-rules
-  // The :agentId param here is the api_key_hash exposed by listKeys() as
-  // `key`. We resolve it to the numeric agents.id for the lookup.
+  // The :agentId param here is the agent's non-secret row id; we validate it
+  // resolves to an active agent before the lookup.
   app.get('/api/ui/agents/:agentId/site-rules', auth, (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1322,7 +1340,7 @@ function mountWebUiRoutes(app, deps) {
   // Body: { domain, decision }
   app.post('/api/ui/agents/:agentId/site-rules', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1365,7 +1383,7 @@ function mountWebUiRoutes(app, deps) {
   // DELETE /api/ui/agents/:agentId/site-rules/:domain
   app.delete('/api/ui/agents/:agentId/site-rules/:domain', auth, mutatingAuth, (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1430,7 +1448,7 @@ function mountWebUiRoutes(app, deps) {
     auth,
     mutatingAuth,
     broadcastUiEvent,
-    agentIdFromKey: _agentIdFromKey,
+    agentIdFromKey: _resolveActiveAgentId,
   });
 }
 
@@ -1891,30 +1909,12 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           return;
         }
 
-        if (message.type === 'revoke_key') {
-          const { apiKey: keyToRevoke } = message;
-          const revoked = pairedKeys.revokeKey(keyToRevoke);
-          console.log(`[pairing] Revoke key ${keyToRevoke.slice(0, 8)}...: ${revoked ? 'removed' : 'not found'}`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
-          broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
-          return;
-        }
-
-        if (message.type === 'rename_agent') {
-          const { apiKey: keyToRename, newName } = message;
-          const renamed = pairedKeys.renameKey(keyToRename, newName);
-          console.log(`[pairing] Rename key ${keyToRename.slice(0, 8)}...: ${renamed ? 'renamed to ' + newName : 'not found'}`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
-          broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
-          return;
-        }
-
-        if (message.type === 'list_paired_agents') {
-          const agents = pairedKeys.listKeys();
-          console.log(`[pairing] Listed ${agents.length} paired agent(s)`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents }));
-          return;
-        }
+        // Agent administration (list / rename / revoke) is a web-UI-only,
+        // loopback-gated concern — the extension has no business performing it,
+        // and doing so over the extension socket previously leaked the agent
+        // list (api_key_hash included) to the extension. Those handlers and the
+        // `paired_agents_list` push were removed in #129. Admin now flows
+        // exclusively through /api/ui/agents/* (by non-secret row id).
 
         if (message.type === 'set_network_mode') {
           // DEPRECATED: this in-process rebind path was replaced by the
@@ -2168,18 +2168,14 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   }, 60 * 60 * 1000);
   if (hourlySiteEventsInterval.unref) hourlySiteEventsInterval.unref();
 
-  // Bridge async-pairing events back to the extension's WS so existing
-  // `paired_agents_list` listeners in background.js keep working even though
-  // approval now happens via the web UI rather than the extension popup.
+  // On approval, refresh any open web-UI dashboards. The agent list is NOT
+  // pushed to the extension any more (#129): agent administration is a
+  // web-UI-only concern and the extension never needs the agent roster.
   pairedKeys.onPairingEvent('approved', (entry) => {
     try {
-      console.log(
-        `[pairing] broadcasting paired_agents_list after approve of pairingId=${entry.pairingId}`
-      );
-      extensionBridge.notifyAll({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
       broadcastUiEvent({ type: 'pairing_approved', pairing: entry, agents: pairedKeys.listKeys() });
     } catch (e) {
-      console.log(`[pairing] failed to broadcast paired_agents_list: ${e.message}`);
+      console.log(`[pairing] failed to broadcast pairing_approved: ${e.message}`);
     }
   });
 
@@ -2329,8 +2325,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 module.exports = {
   createServer,
   // Exported for unit tests (loopback gating, hello resolution, connect URL,
-  // WS upgrade harness).
+  // WS upgrade harness, Web UI admin routes).
   resolveHelloProfile,
   makeExtensionUpgradeHandler,
   makeConnectHandler,
+  mountWebUiRoutes,
+  makeMutatingUiAuth,
 };

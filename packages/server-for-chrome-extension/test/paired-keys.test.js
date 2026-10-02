@@ -65,27 +65,33 @@ function storedHashFor(agentName) {
 
 describe('validateKey — plaintext auth', () => {
   test('a freshly created agent authenticates with its plaintext key', () => {
-    const plaintext = pairedKeys.addKey('agent-a', 'Default');
+    const { apiKey: plaintext, id } = pairedKeys.addKey('agent-a', 'Default');
     assert.equal(typeof plaintext, 'string');
     assert.ok(plaintext.length > 0);
+    assert.equal(typeof id, 'number');
 
     const entry = pairedKeys.validateKey(plaintext);
     assert.ok(entry, 'validateKey should return the agent entry for a valid plaintext key');
     assert.equal(entry.agentName, 'agent-a');
     assert.equal(entry.profileId, 'Default');
     assert.equal(entry.state, 'active');
-    // The entry's `.key` surfaces the hash, never the plaintext.
-    assert.equal(entry.key, storedHashFor('agent-a'));
+    // The entry exposes the non-secret row id, never a key/hash/plaintext.
+    assert.equal(entry.id, id);
+    assert.equal(entry.key, undefined);
+    assert.equal(entry.api_key_hash, undefined);
+    assert.equal(entry.apiKey, undefined);
   });
 
-  test('createPairedAgent mints a key that validateKey accepts', () => {
-    const { apiKey, agentName } = pairedKeys.createPairedAgent({
+  test('createPairedAgent mints a key that validateKey accepts and returns its id', () => {
+    const { apiKey, id, agentName } = pairedKeys.createPairedAgent({
       agentName: 'agent-paired',
       profileId: 'Profile 2',
     });
     assert.equal(typeof apiKey, 'string');
+    assert.equal(typeof id, 'number');
     const entry = pairedKeys.validateKey(apiKey);
     assert.ok(entry);
+    assert.equal(entry.id, id);
     assert.equal(entry.agentName, agentName);
     assert.equal(entry.profileId, 'Profile 2');
   });
@@ -105,7 +111,7 @@ describe('validateKey — BUG-2 regression', () => {
   });
 
   test('plaintext still works for the same agent (sanity against over-rejection)', () => {
-    const plaintext = pairedKeys.addKey('agent-b2');
+    const { apiKey: plaintext } = pairedKeys.addKey('agent-b2');
     const storedHash = storedHashFor('agent-b2');
     assert.equal(pairedKeys.validateKey(storedHash), null);
     assert.ok(pairedKeys.validateKey(plaintext));
@@ -125,38 +131,93 @@ describe('validateKey — invalid input', () => {
   });
 });
 
-// ── transitional UI lookup is preserved and separate from auth ────────────────
+// ── listKeys never leaks key material ─────────────────────────────────────────
 
-describe('findAgentRowByKeyHash — transitional UI lookup', () => {
-  test('still resolves an agent row from the stored hash', () => {
-    pairedKeys.addKey('agent-d', 'Default');
-    const storedHash = storedHashFor('agent-d');
+describe('listKeys — no key material', () => {
+  test('entries contain id + metadata but no key/hash/preview', () => {
+    const { id } = pairedKeys.addKey('agent-list', 'Default');
+    const list = pairedKeys.listKeys();
+    assert.equal(list.length, 1);
+    const entry = list[0];
+    assert.equal(entry.id, id);
+    assert.equal(entry.agentName, 'agent-list');
+    assert.equal(entry.profileId, 'Default');
+    // No key material of any flavour.
+    assert.equal(entry.key, undefined);
+    assert.equal(entry.api_key_hash, undefined);
+    assert.equal(entry.keyDisplay, undefined);
+    assert.equal(entry.apiKey, undefined);
+    // And definitely no value equal to the stored hash.
+    const storedHash = storedHashFor('agent-list');
+    for (const v of Object.values(entry)) {
+      assert.notEqual(v, storedHash);
+    }
+  });
+});
 
-    const row = pairedKeys.findAgentRowByKeyHash(storedHash);
-    assert.ok(row, 'UI hash lookup is intentionally preserved for group (b)');
-    assert.equal(row.name, 'agent-d');
-    assert.equal(row.api_key_hash, storedHash);
+// ── regenerateKey rotates the credential ──────────────────────────────────────
 
-    // Proof the two paths are separate: the same hash authenticates via the UI
-    // lookup but is rejected by the auth path.
-    assert.equal(pairedKeys.validateKey(storedHash), null);
+describe('regenerateKey', () => {
+  test('mints a new plaintext; the OLD key stops validating, the NEW one works', () => {
+    const { apiKey: oldKey, id } = pairedKeys.addKey('agent-regen', 'Default');
+    assert.ok(pairedKeys.validateKey(oldKey), 'precondition: old key validates');
+
+    const newKey = pairedKeys.regenerateKey(id);
+    assert.equal(typeof newKey, 'string');
+    assert.ok(newKey.length > 0);
+    assert.notEqual(newKey, oldKey);
+
+    // Old key is dead; new key authenticates to the SAME agent (same id).
+    assert.equal(pairedKeys.validateKey(oldKey), null, 'old key must stop authenticating');
+    const entry = pairedKeys.validateKey(newKey);
+    assert.ok(entry, 'new key must authenticate');
+    assert.equal(entry.id, id);
+    assert.equal(entry.agentName, 'agent-regen');
   });
 
-  test('returns null for empty / unknown hashes', () => {
-    assert.equal(pairedKeys.findAgentRowByKeyHash(''), null);
-    assert.equal(pairedKeys.findAgentRowByKeyHash('deadbeef'), null);
-    assert.equal(pairedKeys.findAgentRowByKeyHash(null), null);
+  test('returns null for an unknown or revoked agent id', () => {
+    assert.equal(pairedKeys.regenerateKey(999999), null);
+    const { id } = pairedKeys.addKey('agent-regen-revoked');
+    assert.equal(pairedKeys.revokeKey(id), true);
+    assert.equal(pairedKeys.regenerateKey(id), null, 'revoked agent cannot regenerate');
+  });
+});
+
+// ── admin ops resolve by row id (never by hash) ───────────────────────────────
+
+describe('rename / revoke / rebind by id', () => {
+  test('renameKey(id) updates the name', () => {
+    const { id } = pairedKeys.addKey('agent-d', 'Default');
+    assert.equal(pairedKeys.renameKey(id, 'agent-d-renamed'), true);
+    assert.equal(storedHashFor('agent-d'), null);
+    assert.ok(storedHashFor('agent-d-renamed'));
   });
 
-  test('renameKey/revokeKey still work via the hash (UI contract)', () => {
-    pairedKeys.addKey('agent-e');
-    const storedHash = storedHashFor('agent-e');
-    assert.equal(pairedKeys.renameKey(storedHash, 'agent-e-renamed'), true);
-    assert.equal(storedHashFor('agent-e'), null);
-    assert.ok(storedHashFor('agent-e-renamed'));
-    assert.equal(pairedKeys.revokeKey(storedHash), true);
-    // Revoked rows drop out of the active-only lookup.
-    assert.equal(pairedKeys.findAgentRowByKeyHash(storedHash), null);
+  test('updateProfileBinding(id) rebinds the profile', () => {
+    const { id } = pairedKeys.addKey('agent-rebind', 'Default');
+    assert.equal(pairedKeys.updateProfileBinding(id, 'Profile 2'), true);
+    assert.equal(pairedKeys.listKeys().find((a) => a.id === id).profileId, 'Profile 2');
+  });
+
+  test('revokeKey(id) soft-deletes the row', () => {
+    const { apiKey, id } = pairedKeys.addKey('agent-e');
+    assert.equal(pairedKeys.revokeKey(id), true);
+    assert.equal(pairedKeys.validateKey(apiKey), null);
+    assert.equal(pairedKeys.listKeys().some((a) => a.id === id), false);
+  });
+
+  test('the stored api_key_hash is NOT a valid identifier for admin ops', () => {
+    pairedKeys.addKey('agent-hash-id', 'Default');
+    const storedHash = storedHashFor('agent-hash-id');
+    // Passing the hash where an id is expected resolves nothing.
+    assert.equal(pairedKeys.renameKey(storedHash, 'nope'), false);
+    assert.equal(pairedKeys.revokeKey(storedHash), false);
+    assert.equal(pairedKeys.updateProfileBinding(storedHash, 'Profile 2'), false);
+    assert.ok(storedHashFor('agent-hash-id'), 'agent is untouched by hash-keyed ops');
+  });
+
+  test('findAgentRowByKeyHash has been removed', () => {
+    assert.equal(pairedKeys.findAgentRowByKeyHash, undefined);
   });
 });
 

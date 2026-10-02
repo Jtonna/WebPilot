@@ -237,19 +237,21 @@ function constantTimeEqual(a, b) {
 function rowToAgentEntry(row, plainKey) {
   if (!row) return null;
   const entry = {
-    // `key` is the plaintext API key for the most recent caller of
-    // approvePairing / addKey / createPairedAgent — those code paths attach
-    // `plainKey` explicitly. For lookup paths (validateKey, listKeys) we do
-    // NOT have access to the plain key — only to its hash. To preserve the
-    // legacy shape we expose the hash as `key` in those cases so callers
-    // can still use it as an opaque identifier (rename / revoke / touch all
-    // require either the plain key OR the hash — see resolveAgentRow).
-    key: plainKey || row.api_key_hash,
+    // The agent's DB row `id` is the non-secret, stable public identifier the
+    // UI uses to rename / revoke / rebind / regenerate. The `api_key_hash` is
+    // NEVER exposed here (see BUG in #129): a leaked hash must not be usable as
+    // an identifier or a credential. The plaintext key is likewise never put on
+    // lookup results — only mint paths (createPairedAgent / approvePairing)
+    // return the one-time plaintext, and they build their own result objects.
+    id: row.id,
     agentName: row.name,
     createdAt: row.created_at,
     lastAccessed: row.last_seen_at || null,
     profileId: row.profile_id || null,
   };
+  // `plainKey` is only ever passed at issuance time; lookup paths pass null and
+  // never surface key material.
+  if (plainKey) entry.apiKey = plainKey;
   // `state` exposed so callers can distinguish active vs revoked without
   // an extra query. listKeys filters revoked rows out so this defaults to
   // 'active' in practice; validateKey only returns active rows.
@@ -317,13 +319,15 @@ function resolveActiveAgentByKey(presentedKey) {
   return row;
 }
 
-// TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
-function findAgentRowByKeyHash(apiKeyHash) {
-  if (typeof apiKeyHash !== 'string' || apiKeyHash.length === 0) return null;
+// Resolve an ACTIVE agent row by its DB row id — the non-secret public
+// identifier used by the admin UI for rename / revoke / rebind / regenerate.
+// This is NOT an auth path: it resolves identity, never a credential.
+function findActiveAgentRowById(id) {
+  if (id === null || id === undefined || id === '') return null;
   const db = dbModule.getDb();
   const row = db
-    .prepare("SELECT * FROM agents WHERE api_key_hash = ? AND state = 'active'")
-    .get(apiKeyHash);
+    .prepare("SELECT * FROM agents WHERE id = ? AND state = 'active'")
+    .get(id);
   return row || null;
 }
 
@@ -367,14 +371,15 @@ function generateKey() {
  *   provenance in a future migration if it becomes important; for now the
  *   parameter is accepted (for caller compatibility) but only `web-ui-direct`
  *   provenance is informational and ignored in the DB.
- * @returns {string} the new plaintext API key
+ * @returns {{ apiKey: string, id: number }} the new plaintext API key (once)
+ *   plus the new agent's DB row id (the non-secret public identifier).
  */
 function addKey(agentName, profileId = null, source = null) {
   const db = dbModule.getDb();
   const key = generateKey();
   const hash = hashApiKey(key);
   const nowIso = new Date().toISOString();
-  db.prepare(
+  const info = db.prepare(
     `INSERT INTO agents (name, api_key_hash, profile_id, created_at, state)
      VALUES (?, ?, ?, ?, 'active')`
   ).run(agentName, hash, profileId || null, nowIso);
@@ -383,28 +388,55 @@ function addKey(agentName, profileId = null, source = null) {
     // adding one is a future micro-migration if we need to query by source.
     console.log(`[paired-keys] addKey: source="${source}" (informational)`);
   }
-  return key;
+  return { apiKey: key, id: Number(info.lastInsertRowid) };
 }
 
 /**
- * Direct UI pre-provision. Same contract as the JSON-backed version.
+ * Direct UI pre-provision. Returns the one-time plaintext apiKey plus the new
+ * agent's non-secret row id so the UI can address it for rename/revoke/rebind.
  */
 function createPairedAgent({ agentName, profileId }) {
-  const key = addKey(agentName, profileId || null, 'web-ui-direct');
+  const { apiKey, id } = addKey(agentName, profileId || null, 'web-ui-direct');
   const db = dbModule.getDb();
-  const row = db
-    .prepare('SELECT * FROM agents WHERE api_key_hash = ?')
-    .get(hashApiKey(key));
+  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
   console.log(
     `[pairing:createPairedAgent] minted direct key for agent "${agentName}" ` +
-      `(profileId="${profileId || ''}")`
+      `(id=${id}, profileId="${profileId || ''}")`
   );
   return {
-    apiKey: key,
+    apiKey,
+    id,
     agentName,
     profileId: profileId || null,
     createdAt: row ? row.created_at : new Date().toISOString(),
   };
+}
+
+/**
+ * Regenerate an active agent's API key. Mints a fresh plaintext, stores ONLY
+ * its hash on the existing row (replacing the old hash so the previously-issued
+ * key stops authenticating immediately), and refreshes the timestamps so the
+ * row behaves like a freshly-minted unused key (48h unused-key grace restarts).
+ * Returns the new plaintext ONCE; it is never persisted.
+ *
+ * @param {number|string} id agent row id
+ * @returns {string|null} the new plaintext API key, or null if no active row
+ */
+function regenerateKey(id) {
+  const row = findActiveAgentRowById(id);
+  if (!row) return null;
+  const db = dbModule.getDb();
+  const newKey = generateKey();
+  const newHash = hashApiKey(newKey);
+  const nowIso = new Date().toISOString();
+  // Refresh created_at + clear last_seen_at: the new credential is unused, so
+  // it gets a fresh unused-key grace window rather than inheriting the old
+  // row's age (which would make cleanupUnusedKeys revoke it prematurely).
+  db.prepare(
+    'UPDATE agents SET api_key_hash = ?, created_at = ?, last_seen_at = NULL WHERE id = ?'
+  ).run(newHash, nowIso, row.id);
+  console.log(`[paired-keys] regenerateKey: minted fresh key for agent id=${row.id}`);
+  return newKey;
 }
 
 /**
@@ -414,9 +446,8 @@ function createPairedAgent({ agentName, profileId }) {
  * (the index lookup gives O(log n) on hashed bytes regardless of which
  * agent matched).
  *
- * The returned entry's `.key` field is the api_key_hash, NOT the plaintext —
- * mirrors the JSON-backed implementation's contract that `validateKey`
- * returns "the entry" but the plaintext is no longer stored.
+ * The returned entry exposes the agent's non-secret row `id` (plus agentName,
+ * profileId, timestamps, state) — NEVER the api_key_hash or the plaintext.
  */
 function validateKey(apiKey) {
   // AUTH PATH: plaintext key only, resolved by hash. Never accepts a raw hash.
@@ -424,18 +455,18 @@ function validateKey(apiKey) {
   return rowToAgentEntry(row, null);
 }
 
-function renameKey(apiKey, newName) {
-  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
-  const row = findAgentRowByKeyHash(apiKey);
+function renameKey(id, newName) {
+  // UI identity path: look the agent up by its non-secret row id.
+  const row = findActiveAgentRowById(id);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare('UPDATE agents SET name = ? WHERE id = ?').run(newName, row.id);
   return true;
 }
 
-function updateProfileBinding(apiKey, profileId) {
-  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
-  const row = findAgentRowByKeyHash(apiKey);
+function updateProfileBinding(id, profileId) {
+  // UI identity path: look the agent up by its non-secret row id.
+  const row = findActiveAgentRowById(id);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare('UPDATE agents SET profile_id = ? WHERE id = ?').run(profileId || null, row.id);
@@ -458,9 +489,9 @@ function touchKey(apiKey) {
  * filter revoked rows out, so the agent is functionally gone but we keep
  * the row as a revocation audit trail.
  */
-function revokeKey(apiKey) {
-  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
-  const row = findAgentRowByKeyHash(apiKey);
+function revokeKey(id) {
+  // UI identity path: look the agent up by its non-secret row id.
+  const row = findActiveAgentRowById(id);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare("UPDATE agents SET state = 'revoked' WHERE id = ?").run(row.id);
@@ -468,8 +499,8 @@ function revokeKey(apiKey) {
 }
 
 /**
- * List all active agents in legacy-flavoured shape. `key` is the
- * api_key_hash (we never persist the plaintext).
+ * List all active agents. Each entry is keyed by the agent's non-secret row
+ * `id`; the api_key_hash and plaintext are NEVER included.
  */
 function listKeys() {
   const db = dbModule.getDb();
@@ -477,11 +508,10 @@ function listKeys() {
     .prepare("SELECT * FROM agents WHERE state = 'active' ORDER BY created_at ASC")
     .all();
   return rows.map((row) => ({
+    id: row.id,
     agentName: row.name,
     createdAt: row.created_at,
     lastAccessed: row.last_seen_at || null,
-    key: row.api_key_hash,
-    keyDisplay: row.api_key_hash.slice(0, 8) + '...',
     profileId: row.profile_id || null,
   }));
 }
@@ -648,17 +678,12 @@ function approvePairing(pairingId, options = {}) {
   }
 
   // Mint a real API key — this writes a new row to `agents` and returns the
-  // plaintext key. We persist it on the pairings row's metadata_json so the
-  // UI's "approved — here is the key" flow keeps working.
-  const key = addKey(row.agent_name, profileId);
+  // plaintext key plus the new row id. We persist the plaintext on the
+  // pairings row's metadata_json so the UI's "approved — here is the key"
+  // flow keeps working, and link approved_agent_id to the new row id.
+  const { apiKey: key, id: approvedAgentId } = addKey(row.agent_name, profileId);
   const nowIso = new Date().toISOString();
   const db = dbModule.getDb();
-
-  // Resolve the agent row we just created so we can link approved_agent_id.
-  const agentRow = db
-    .prepare('SELECT id FROM agents WHERE api_key_hash = ?')
-    .get(hashApiKey(key));
-  const approvedAgentId = agentRow ? agentRow.id : null;
 
   db.prepare(
     `UPDATE pairings
@@ -830,6 +855,7 @@ module.exports = {
   generateKey,
   addKey,
   createPairedAgent,
+  regenerateKey,
   validateKey,
   renameKey,
   updateProfileBinding,
@@ -849,9 +875,8 @@ module.exports = {
   onPairingEvent,
   // Helpers exposed for other auth paths and tests.
   constantTimeEqual,
-  // TRANSITIONAL: hash-as-identifier lookup for UI rename/revoke; removed in
-  // #129 group (b) when the UI switches to agent id. NOT an auth path.
-  findAgentRowByKeyHash,
+  // Identity (NOT auth) lookup by non-secret row id, used by the admin UI.
+  findActiveAgentRowById,
   hashApiKey,
   getOrCreateApiKeyPepper,
   _resetPepperCacheForTests,
