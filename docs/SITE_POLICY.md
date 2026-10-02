@@ -243,7 +243,6 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 | Gap | Tracking |
 |---|---|
 | First boot offline: until the first successful fetch the signed tier has no rows, because no signed snapshot ships with the installer | #116 |
-| Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
 | Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings) | #112 |
 | Workflow primitives bypass the gate; pending-navigation gap | #114 |
 | The verifier ignores the signed manifest's `kind`; CI checks hashes but not signatures | untracked |
