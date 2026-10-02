@@ -54,7 +54,12 @@ function eventRows() {
 // ---- stubs ----
 stubs['./db/connection'] = { getDb: () => db, init: () => db };
 const fakePairedKeys = {
-  validateKey: (key) => (key === 'k1' ? { key: 'h1', profileId: 'default', agentName: 'A' } : null),
+  // validateKey resolves the acting key to the seeded agent row (id=1).
+  // `id` satisfies #129's resolveAgentIdFromApiKey (which reads entry.id);
+  // `key` (the api_key_hash) keeps the pre-#129 hash-lookup path resolving
+  // too, so this fixture matches the agent on both contracts.
+  validateKey: (key) =>
+    key === 'k1' ? { id: 1, key: 'h1', profileId: 'default', agentName: 'A' } : null,
   touchKey: () => {},
 };
 stubs['./paired-keys'] = fakePairedKeys;
