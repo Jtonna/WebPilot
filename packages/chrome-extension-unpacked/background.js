@@ -320,6 +320,18 @@ function connectWebSocket() {
 
   try {
     const wsUrl = new URL(config.serverUrl);
+    // Always dial loopback. The server + Chrome + extension always run on the
+    // same machine, and the server loopback-gates the extension WS even in
+    // network mode (only the MCP surface is LAN-reachable). A stale LAN
+    // `serverUrl` from an older build (or a pre-fix /connect) must never be
+    // adopted as the dial target — coerce the host back to localhost, keeping
+    // the port. (Root cause of #110 / #125.)
+    if (wsUrl.hostname !== '127.0.0.1' && wsUrl.hostname !== 'localhost') {
+      console.log(
+        `[ws] coercing non-loopback dial host "${wsUrl.hostname}" -> localhost (same-machine only)`
+      );
+      wsUrl.hostname = 'localhost';
+    }
     // Identify this install to the server. The server records (installId ->
     // profileId) in `extension_installs` and uses it purely for routing. The
     // server's auth boundary is at the agent layer (paired keys); the
@@ -459,6 +471,25 @@ function connectWebSocket() {
         errorMsg = `Server not reachable at ${config.serverUrl}`;
         errorType = 'server_unreachable';
         shouldRetry = true;
+        // Self-heal a stale LAN `serverUrl`: the extension must always dial
+        // loopback. If the stored dial target is a non-loopback host, a
+        // 1006 (never reached / handshake failed) is exactly the symptom of
+        // having adopted a LAN IP that the server now loopback-rejects. Reset
+        // the dial target to the localhost default before the retry fires.
+        try {
+          const u = new URL(config.serverUrl);
+          if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') {
+            console.log(
+              `[ws] stale non-loopback serverUrl "${config.serverUrl}" — resetting dial target to ${DEFAULT_SERVER_URL}`
+            );
+            config.serverUrl = DEFAULT_SERVER_URL;
+            chrome.storage.local.set({ serverUrl: DEFAULT_SERVER_URL });
+          }
+        } catch (_e) {
+          // Unparseable stored URL — fall back to the localhost default.
+          config.serverUrl = DEFAULT_SERVER_URL;
+          chrome.storage.local.set({ serverUrl: DEFAULT_SERVER_URL });
+        }
       } else if (event.code === 1008 || event.reason === 'Unauthorized') {
         // Post-1.2.0 a 1008 from the extension WS endpoint means our installId
         // was missing or malformed on the upgrade URL — typically a stale
