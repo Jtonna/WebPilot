@@ -1280,17 +1280,59 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * }}
    */
   function buildBrowserPrimitives(apiKey) {
+    // Re-apply the site-policy gate for every browser primitive a workflow
+    // invokes. Without this, workflow code reaches the internal `_browser*`
+    // helpers directly — the gate in tools/call only fires for the OUTER
+    // webpilot_run_workflow call's tab_id, so a workflow could otherwise
+    // open arbitrary URLs or act on unchecked tabs and bypass site blocks.
+    // This mirrors the browser_request_chain re-check (each chained step is
+    // gated individually). A blocked primitive THROWS, so the enclosing
+    // workflow's try/catch (in webpilot_run_workflow) reports it as a
+    // failed step rather than silently receiving a blocked envelope.
+    const _gate = async (toolName, gateArgs) => {
+      const blocked = await _enforceSitePolicy(toolName, gateArgs, apiKey);
+      if (blocked) {
+        let detail = 'site policy blocked';
+        try {
+          const body = JSON.parse(blocked.content[0].text);
+          detail = [
+            body.error,
+            body.domain ? `domain=${body.domain}` : null,
+            body.reason ? `reason=${body.reason}` : null,
+          ]
+            .filter(Boolean)
+            .join(' ');
+        } catch (_e) { /* fall back to generic message */ }
+        const err = new Error(`workflow step blocked by site policy: ${detail}`);
+        err.__sitePolicyBlocked = blocked;
+        throw err;
+      }
+    };
+
     return {
-      getAccessibilityTree: ({ tab_id, usePlatformOptimizer } = {}) =>
-        _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey),
-      click: ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) =>
-        _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey),
-      type: ({ tab_id, text, ref, selector, delay, pressEnter } = {}) =>
-        _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey),
-      scroll: ({ tab_id, ref, selector, pixels, direction, amount } = {}) =>
-        _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey),
+      getAccessibilityTree: async ({ tab_id, usePlatformOptimizer } = {}) => {
+        await _gate('browser_get_accessibility_tree', { tab_id });
+        return _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey);
+      },
+      click: async ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) => {
+        await _gate('browser_click', { tab_id });
+        return _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey);
+      },
+      type: async ({ tab_id, text, ref, selector, delay, pressEnter } = {}) => {
+        await _gate('browser_type', { tab_id });
+        return _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey);
+      },
+      scroll: async ({ tab_id, ref, selector, pixels, direction, amount } = {}) => {
+        await _gate('browser_scroll', { tab_id });
+        return _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey);
+      },
+      // browser_get_tabs is site-agnostic and explicitly exempt in
+      // _enforceSitePolicy; mirror that here and do not over-block.
       getTabs: () => _browserGetTabs({}, apiKey),
-      createTab: ({ url } = {}) => _browserCreateTab({ url }, apiKey)
+      createTab: async ({ url } = {}) => {
+        await _gate('browser_create_tab', { url });
+        return _browserCreateTab({ url }, apiKey);
+      }
     };
   }
 
