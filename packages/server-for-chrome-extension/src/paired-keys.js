@@ -283,28 +283,47 @@ function rowToPairingEntry(row) {
 }
 
 /**
- * Resolve an agent row from either a plaintext API key or its hash.
+ * AUTHENTICATION resolver — hash-only. Resolve an active agent row from a
+ * PLAINTEXT API key ONLY.
  *
- * Callers like `renameKey`, `revokeKey`, `updateProfileBinding`,
- * `touchKey` may pass either form: the plaintext key (from a fresh
- * approve / add) OR the hash (round-tripped via `listKeys`, which exposes
- * the hash as `key` for lookup paths where the plaintext is unavailable).
- * Accept both — hash the input, and if no row matches, fall back to
- * treating the input as a hash directly.
+ * Hashes the presented key with the server pepper and does an indexed lookup
+ * against `agents.api_key_hash`. There is deliberately NO fallback that treats
+ * the input as a stored hash: a leaked `api_key_hash` must never authenticate
+ * (that was BUG-2). Presenting the raw stored hash hashes it a second time, so
+ * the lookup cannot match the stored value.
+ *
+ * Rejects empty / whitespace-only / non-string input. As defence-in-depth the
+ * computed hash is confirmed against the stored hash with a constant-time
+ * compare (equal-length Buffers, guarded) before the row is returned.
+ *
+ * @param {string} presentedKey plaintext API key
+ * @returns {object|null} the active `agents` row, or null
  */
-function resolveAgentRow(keyOrHash) {
-  if (typeof keyOrHash !== 'string' || keyOrHash.length === 0) return null;
+function resolveActiveAgentByKey(presentedKey) {
+  if (typeof presentedKey !== 'string' || presentedKey.trim().length === 0) {
+    return null;
+  }
   const db = dbModule.getDb();
-  const hashed = hashApiKey(keyOrHash);
-  let row = db
+  const hashed = hashApiKey(presentedKey);
+  const row = db
     .prepare("SELECT * FROM agents WHERE api_key_hash = ? AND state = 'active'")
     .get(hashed);
-  if (row) return row;
-  // Fallback: treat the input as the hash itself. listKeys() returns hash
-  // as `key`, so any UI round-trip that passes that back lands here.
-  row = db
+  if (!row) return null;
+  // Constant-time confirmation that the stored hash equals the computed hash.
+  // The indexed lookup already matched on bytes, but comparing the strings via
+  // timingSafeEqual (length-guarded inside constantTimeEqual) keeps the final
+  // credential check off any early-exit string comparison.
+  if (!constantTimeEqual(hashed, row.api_key_hash)) return null;
+  return row;
+}
+
+// TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
+function findAgentRowByKeyHash(apiKeyHash) {
+  if (typeof apiKeyHash !== 'string' || apiKeyHash.length === 0) return null;
+  const db = dbModule.getDb();
+  const row = db
     .prepare("SELECT * FROM agents WHERE api_key_hash = ? AND state = 'active'")
-    .get(keyOrHash);
+    .get(apiKeyHash);
   return row || null;
 }
 
@@ -400,13 +419,14 @@ function createPairedAgent({ agentName, profileId }) {
  * returns "the entry" but the plaintext is no longer stored.
  */
 function validateKey(apiKey) {
-  if (typeof apiKey !== 'string' || apiKey.length === 0) return null;
-  const row = resolveAgentRow(apiKey);
+  // AUTH PATH: plaintext key only, resolved by hash. Never accepts a raw hash.
+  const row = resolveActiveAgentByKey(apiKey);
   return rowToAgentEntry(row, null);
 }
 
 function renameKey(apiKey, newName) {
-  const row = resolveAgentRow(apiKey);
+  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
+  const row = findAgentRowByKeyHash(apiKey);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare('UPDATE agents SET name = ? WHERE id = ?').run(newName, row.id);
@@ -414,7 +434,8 @@ function renameKey(apiKey, newName) {
 }
 
 function updateProfileBinding(apiKey, profileId) {
-  const row = resolveAgentRow(apiKey);
+  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
+  const row = findAgentRowByKeyHash(apiKey);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare('UPDATE agents SET profile_id = ? WHERE id = ?').run(profileId || null, row.id);
@@ -422,7 +443,8 @@ function updateProfileBinding(apiKey, profileId) {
 }
 
 function touchKey(apiKey) {
-  const row = resolveAgentRow(apiKey);
+  // AUTH PATH: called on the authenticated MCP request with the plaintext key.
+  const row = resolveActiveAgentByKey(apiKey);
   if (!row) return;
   const db = dbModule.getDb();
   db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(
@@ -437,7 +459,8 @@ function touchKey(apiKey) {
  * the row as a revocation audit trail.
  */
 function revokeKey(apiKey) {
-  const row = resolveAgentRow(apiKey);
+  // TRANSITIONAL: hash-as-identifier for UI rename/revoke; removed in #129 group (b) when UI switches to agent id. NOT an auth path.
+  const row = findAgentRowByKeyHash(apiKey);
   if (!row) return false;
   const db = dbModule.getDb();
   db.prepare("UPDATE agents SET state = 'revoked' WHERE id = ?").run(row.id);
@@ -826,6 +849,9 @@ module.exports = {
   onPairingEvent,
   // Helpers exposed for other auth paths and tests.
   constantTimeEqual,
+  // TRANSITIONAL: hash-as-identifier lookup for UI rename/revoke; removed in
+  // #129 group (b) when the UI switches to agent id. NOT an auth path.
+  findAgentRowByKeyHash,
   hashApiKey,
   getOrCreateApiKeyPepper,
   _resetPepperCacheForTests,
