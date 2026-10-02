@@ -2,25 +2,16 @@
 
 import { useState } from 'react';
 import {
-  DocumentDuplicateIcon,
+  ArrowPathIcon,
   PencilSquareIcon,
   TrashIcon,
-  CheckIcon,
 } from '@heroicons/react/20/solid';
 import { formatRelativeTime, profileLabel } from '../lib/format';
-import { buildMcpConfigJson } from '../lib/mcpConfig';
-import { useCopyToClipboard } from '../lib/useCopyToClipboard';
 
-function shortKey(key) {
-  if (!key) return '';
-  return `${String(key).slice(0, 10)}…`;
-}
-
-export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onRebind, port }) {
+export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onRebind, onRegenerate }) {
   const [editing, setEditing] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
   const [name, setName] = useState(agent.name || '');
-  const [copyState, copy] = useCopyToClipboard();
 
   // Resolve the bound profile's display name from the profiles list. Falls
   // back to the raw directoryName so a stale or unknown binding is still
@@ -39,9 +30,8 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
     if (onRevoke) onRevoke(agent);
   };
 
-  const handleCopy = () => {
-    if (!port || !agent.key) return;
-    copy(buildMcpConfigJson({ port, apiKey: agent.key }));
+  const handleRegenerate = () => {
+    if (onRegenerate) onRegenerate(agent);
   };
 
   return (
@@ -70,7 +60,7 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
               {agent.name || <span className="wp-empty" style={{ fontSize: 'var(--fs-body)' }}>Unnamed agent</span>}
             </div>
             <div className="wp-row-sub">
-              <span className="wp-mono" title={agent.key}>{shortKey(agent.key)}</span>
+              <span className="wp-mono">ID {agent.id}</span>
               <span className="wp-row-sep">·</span>
               <span>Last active {formatRelativeTime(agent.lastActive)}</span>
             </div>
@@ -138,17 +128,11 @@ export default function AgentRow({ agent, profiles = [], onRename, onRevoke, onR
         <button
           type="button"
           className="wp-btn wp-btn-compact"
-          onClick={handleCopy}
-          disabled={!port || !agent.key}
-          title={port ? 'Copy a .mcp.json snippet for this agent' : 'Server port unknown — refresh the page'}
+          onClick={handleRegenerate}
+          disabled={!onRegenerate}
+          title="Mint a fresh API key — the old key stops working immediately"
         >
-          {copyState === 'copied' ? (
-            <><CheckIcon style={{ width: 16, height: 16 }} /> Copied</>
-          ) : copyState === 'error' ? (
-            <>Copy failed</>
-          ) : (
-            <><DocumentDuplicateIcon style={{ width: 16, height: 16 }} /> Copy config</>
-          )}
+          <ArrowPathIcon style={{ width: 16, height: 16 }} /> Regenerate key
         </button>
         <button
           type="button"

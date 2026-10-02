@@ -8,6 +8,7 @@ import BackLink from '../../components/BackLink';
 import ConfirmModal from '../../components/ConfirmModal';
 import ErrorCard from '../../components/ErrorCard';
 import PairAgentModal from '../../components/PairAgentModal';
+import RevealKeyModal from '../../components/RevealKeyModal';
 import { SkeletonRow } from '../../components/Skeleton';
 import { useToast } from '../../components/ToastRegion';
 import EmptyState from '../../components/EmptyState';
@@ -17,6 +18,7 @@ import {
   getStatus,
   renameAgent,
   revokeAgent,
+  regenerateAgent,
   updateAgentProfile,
 } from '../../lib/api';
 import { createUiEventsClient } from '../../lib/ws';
@@ -75,6 +77,9 @@ function AgentsPageInner() {
   const [error, setError]     = useState(null);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [pairOpen, setPairOpen] = useState(false);
+  // One-time reveal of a regenerated key: { agent, apiKey } while the modal is
+  // open; cleared on dismiss so the plaintext does not linger in memory.
+  const [revealKey, setRevealKey] = useState(null);
   const fetcherRef = useRef(null);
   if (fetcherRef.current === null) {
     fetcherRef.current = createSequencedFetcher();
@@ -86,7 +91,7 @@ function AgentsPageInner() {
       const { data, isStale } = await fetcherRef.current.fetch(() => getStatus());
       if (isStale) return;
       const normalized = (data.pairedAgents || []).map((a) => ({
-        key: a.key,
+        id: a.id,
         name: a.agentName,
         createdAt: a.createdAt,
         lastActive: a.lastAccessed,
@@ -118,7 +123,7 @@ function AgentsPageInner() {
 
   async function handleRename(agent, newName) {
     try {
-      await renameAgent(agent.key, newName);
+      await renameAgent(agent.id, newName);
       toast.success(`Renamed to ${newName}.`);
       await refresh();
     } catch (e) {
@@ -132,10 +137,10 @@ function AgentsPageInner() {
     // (agents_changed) will trigger a refresh that confirms or corrects it.
     const prev = agents;
     setAgents((list) => list.map((a) => (
-      a.key === agent.key ? { ...a, profileId: nextProfileId } : a
+      a.id === agent.id ? { ...a, profileId: nextProfileId } : a
     )));
     try {
-      await updateAgentProfile(agent.key, nextProfileId);
+      await updateAgentProfile(agent.id, nextProfileId);
       const label = profileLabel(profiles, nextProfileId);
       toast.success(`Bound ${agent.name || 'agent'} to ${label}.`);
       await refresh();
@@ -146,6 +151,18 @@ function AgentsPageInner() {
     }
   }
 
+  async function handleRegenerate(agent) {
+    try {
+      const { apiKey } = await regenerateAgent(agent.id);
+      // Reveal the new plaintext exactly once. The old key is already dead.
+      setRevealKey({ agent, apiKey });
+      toast.success(`New key for ${agent.name || 'agent'}.`);
+      await refresh();
+    } catch (e) {
+      toast.error(e.message || 'Couldn’t regenerate the key.');
+    }
+  }
+
   function handleRevoke(agent) { setRevokeTarget(agent); }
 
   async function confirmRevoke() {
@@ -153,7 +170,7 @@ function AgentsPageInner() {
     setRevokeTarget(null);
     if (!agent) return;
     try {
-      await revokeAgent(agent.key);
+      await revokeAgent(agent.id);
       toast.info(`Revoked ${agent.name || 'agent'}.`);
       await refresh();
     } catch (e) {
@@ -171,7 +188,7 @@ function AgentsPageInner() {
   // Resolve the agent filter's display name from the agents list. Returns null
   // if the agent key is not found.
   const agentFilterName = useMemo(
-    () => (agentFilter ? (agents.find((a) => a.key === agentFilter)?.name || null) : ''),
+    () => (agentFilter ? (agents.find((a) => String(a.id) === agentFilter)?.name || null) : ''),
     [agentFilter, agents],
   );
 
@@ -180,7 +197,7 @@ function AgentsPageInner() {
     : agents;
 
   if (agentFilter) {
-    filteredAgents = filteredAgents.filter((a) => a.key === agentFilter);
+    filteredAgents = filteredAgents.filter((a) => String(a.id) === agentFilter);
   }
 
   return (
@@ -272,13 +289,13 @@ function AgentsPageInner() {
             <div className="wp-row-list">
               {filteredAgents.map((a) => (
                 <AgentRow
-                  key={a.key}
+                  key={a.id}
                   agent={a}
                   profiles={profiles}
                   onRename={handleRename}
                   onRevoke={handleRevoke}
                   onRebind={handleRebind}
-                  port={port}
+                  onRegenerate={handleRegenerate}
                 />
               ))}
             </div>
@@ -305,6 +322,14 @@ function AgentsPageInner() {
         onClose={() => setPairOpen(false)}
         port={port}
         profiles={profiles}
+      />
+
+      <RevealKeyModal
+        open={!!revealKey}
+        onClose={() => setRevealKey(null)}
+        port={port}
+        agentName={revealKey ? revealKey.agent.name : ''}
+        apiKey={revealKey ? revealKey.apiKey : ''}
       />
     </>
   );

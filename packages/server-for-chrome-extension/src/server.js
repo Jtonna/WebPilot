@@ -18,6 +18,11 @@ const { mountPopupRoutes } = require('./popup-routes');
 const { upsertGlobalUserRule, clearGlobalUserRule } = require('./global-user-rules');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
+const {
+  isLoopbackRemote,
+  evaluateLoopbackAccess,
+  makeLoopbackGate,
+} = require('./loopback');
 
 const { getDataDir, getLogPath } = require('./service/paths');
 const { getReleaseInfo } = require('./release-info');
@@ -184,7 +189,12 @@ function _resolveWebUiFile(rootDir, urlPath) {
   return null;
 }
 
-function mountWebUiStatic(app) {
+function mountWebUiStatic(app, opts = {}) {
+  const hostBinding = opts.hostBinding;
+  // The /ui surface is loopback-only. Applied to the dev proxy, the 503
+  // fallback and the static file handler alike so no non-loopback caller can
+  // reach the dashboard in network mode. Honors the dev-mode bypass.
+  const uiGate = makeLoopbackGate(hostBinding, { label: '/ui' });
   // Dev mode: proxy /ui/* to the Next.js dev server so hot reload Just Works.
   // Activated by `npm run dev` at the repo root (which sets WEBPILOT_DEV=1 and
   // spawns `next dev` on port 3100 — see packages/server-web-ui/package.json).
@@ -205,6 +215,7 @@ function mountWebUiStatic(app) {
       console.log('[web-ui:dev] WEBPILOT_DEV=1 — proxying /ui/* to http://localhost:3100');
       app.use(
         '/ui',
+        uiGate,
         createProxyMiddleware({
           target: 'http://localhost:3100',
           changeOrigin: true,
@@ -218,7 +229,7 @@ function mountWebUiStatic(app) {
 
   const dir = resolveWebUiDir();
   if (!dir) {
-    app.get(/^\/ui($|\/)/, (req, res) => {
+    app.get(/^\/ui($|\/)/, uiGate, (req, res) => {
       res.status(503).type('text/plain').send(
         'WebPilot UI is not built. Run `npm run build:web-ui` in packages/server-web-ui.'
       );
@@ -228,7 +239,7 @@ function mountWebUiStatic(app) {
 
   // Manual file handler — replaces `express.static` so that pkg snapshot
   // reads go through `fs.readFileSync` (which pkg patches).
-  app.get(/^\/ui($|\/.*)/, (req, res) => {
+  app.get(/^\/ui($|\/.*)/, uiGate, (req, res) => {
     const filePath = _resolveWebUiFile(dir, req.path);
     if (!filePath) {
       console.log(`[web-ui] 404 for ${req.path}`);
@@ -373,6 +384,9 @@ if (IS_DEV_MODE) {
 // every dev-mode-bypass path must refuse to loosen its gate, because a
 // remote attacker could otherwise reach UI / mutating endpoints via the
 // network-mode listener simply because the operator left WEBPILOT_DEV set.
+// Delegates to the shared loopback helper so the dev-bypass policy has a
+// single source of truth across the UI auth, the WS upgrade, the popup routes
+// and the plain HTTP gates.
 function _isDevBypassSafe(hostBinding) {
   if (!IS_DEV_MODE) return false;
   return hostBinding === '127.0.0.1' || hostBinding === 'localhost';
@@ -381,11 +395,7 @@ function _isDevBypassSafe(hostBinding) {
 function makeUiAuth(hostBinding /* '127.0.0.1' | '0.0.0.0' */) {
   return function uiAuth(req, res, next) {
     const remote = req.socket && req.socket.remoteAddress;
-    const isLocal =
-      remote === '127.0.0.1' ||
-      remote === '::1' ||
-      remote === '::ffff:127.0.0.1';
-    if (isLocal) {
+    if (isLoopbackRemote(remote)) {
       return next();
     }
     // Dev-mode bypass is intentionally NEVER honored when the server is bound
@@ -420,11 +430,7 @@ function makeUiAuth(hostBinding /* '127.0.0.1' | '0.0.0.0' */) {
 function makeMutatingUiAuth(hostBinding) {
   return function mutatingUiAuth(req, res, next) {
     const remote = (req.socket && req.socket.remoteAddress) || '';
-    const isLocal =
-      remote === '127.0.0.1' ||
-      remote === '::1' ||
-      remote === '::ffff:127.0.0.1';
-    if (isLocal) return next();
+    if (isLoopbackRemote(remote)) return next();
     if (_isDevBypassSafe(hostBinding)) {
       console.log(`[ui-auth] DEV MODE (loopback bind) — allowing non-local MUTATING ${req.method} ${req.url} from ${remote}`);
       try { res.setHeader('X-WebPilot-Dev-Bypass', '1'); } catch (_e) { /* ignore */ }
@@ -798,12 +804,12 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.post('/api/ui/agents/:key/rename', auth, mutatingAuth, express.json(), (req, res) => {
+  app.post('/api/ui/agents/:id/rename', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const key = req.params.key;
+      const id = req.params.id;
       const newName = req.body && req.body.newName;
       if (!newName) return res.status(400).json({ error: 'newName required' });
-      const ok = pairedKeys.renameKey(key, newName);
+      const ok = pairedKeys.renameKey(id, newName);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
@@ -812,27 +818,45 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  // PATCH /api/ui/agents/:key
+  // POST /api/ui/agents/:id/regenerate
   //
-  // Re-bind an existing agent (API key) to a different Chrome profile. Tool
-  // calls from this agent will route to the new profile on the next call —
-  // no socket teardown needed because routing is a per-call lookup of the
-  // agent's profileId in mcp-handler.resolveTargetProfile.
+  // Mint a fresh API key for an existing agent (identified by its non-secret
+  // row id). The previously-issued key stops authenticating immediately. The
+  // new plaintext is returned exactly ONCE in the response body — it is never
+  // persisted and cannot be retrieved again. Loopback-gated mutating endpoint.
+  app.post('/api/ui/agents/:id/regenerate', auth, mutatingAuth, express.json(), (req, res) => {
+    try {
+      const id = req.params.id;
+      const apiKey = pairedKeys.regenerateKey(id);
+      if (!apiKey) return res.status(404).json({ error: 'agent not found' });
+      try {
+        broadcastUiEvent && broadcastUiEvent({
+          type: 'agents_changed',
+          agents: pairedKeys.listKeys(),
+        });
+      } catch (_e) { /* ignore */ }
+      res.json({ apiKey });
+    } catch (e) {
+      console.error('[ui-api] regenerate failed:', e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PATCH /api/ui/agents/:id
+  //
+  // Re-bind an existing agent (identified by its non-secret row id) to a
+  // different Chrome profile. Tool calls from this agent will route to the new
+  // profile on the next call — no socket teardown needed because routing is a
+  // per-call lookup of the agent's profileId in
+  // mcp-handler.resolveTargetProfile.
   //
   // Body: { profileId: "<directoryName>" } — must match a known profile.
-  app.patch('/api/ui/agents/:key', auth, mutatingAuth, express.json(), (req, res) => {
+  app.patch('/api/ui/agents/:id', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const key = req.params.key;
+      const id = req.params.id;
       const body = req.body || {};
       const profileIdRaw = body.profileId;
-      // Log the agent identity via agent-name lookup, NOT the api_key_hash
-      // prefix — avoids leaking key material into log streams.
-      let agentLabel = '(unknown)';
-      try {
-        const entry = pairedKeys.validateKey(key);
-        if (entry && entry.agentName) agentLabel = entry.agentName;
-      } catch (_e) { /* non-fatal — fall through with (unknown) */ }
-      console.log(`[ui-api] PATCH agent "${agentLabel}" profileId=${JSON.stringify(profileIdRaw)}`);
+      console.log(`[ui-api] PATCH agent id=${JSON.stringify(id)} profileId=${JSON.stringify(profileIdRaw)}`);
 
       if (typeof profileIdRaw !== 'string' || profileIdRaw.length === 0) {
         return res.status(400).json({
@@ -857,10 +881,10 @@ function mountWebUiRoutes(app, deps) {
         });
       }
 
-      const ok = pairedKeys.updateProfileBinding(key, match.directoryName);
+      const ok = pairedKeys.updateProfileBinding(id, match.directoryName);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
 
-      const updated = pairedKeys.listKeys().find((a) => a.key === key) || null;
+      const updated = pairedKeys.listKeys().find((a) => String(a.id) === String(id)) || null;
       // Broadcast so the Agents and Pairings tabs both refresh.
       try {
         broadcastUiEvent && broadcastUiEvent({
@@ -875,10 +899,10 @@ function mountWebUiRoutes(app, deps) {
     }
   });
 
-  app.delete('/api/ui/agents/:key', auth, mutatingAuth, (req, res) => {
+  app.delete('/api/ui/agents/:id', auth, mutatingAuth, (req, res) => {
     try {
-      const key = req.params.key;
-      const ok = pairedKeys.revokeKey(key);
+      const id = req.params.id;
+      const ok = pairedKeys.revokeKey(id);
       if (!ok) return res.status(404).json({ error: 'agent not found' });
       res.json({ ok: true, agents: pairedKeys.listKeys() });
     } catch (e) {
@@ -1207,19 +1231,19 @@ function mountWebUiRoutes(app, deps) {
   // refetches.
   const sitePolicy = require('./site-policy');
 
-  // Resolve the numeric agents.id row from the `key` parameter passed by the
-  // webapp (which is the api_key_hash, since that's what listKeys() exposes
-  // as `key`). Returns null when no active agent matches.
-  function _agentIdFromKey(key) {
-    if (typeof key !== 'string' || key.length === 0) return null;
+  // Resolve + validate the numeric agents.id passed by the webapp. The webapp
+  // now addresses agents by their non-secret row id directly (never the
+  // api_key_hash). Returns the id of a matching ACTIVE agent, or null.
+  function _resolveActiveAgentId(id) {
+    if (id === null || id === undefined || id === '') return null;
     try {
       const db = require('./db/connection').getDb();
       const row = db
-        .prepare("SELECT id FROM agents WHERE api_key_hash = ? AND state = 'active'")
-        .get(key);
+        .prepare("SELECT id FROM agents WHERE id = ? AND state = 'active'")
+        .get(id);
       return row ? row.id : null;
     } catch (e) {
-      console.log(`[ui-api:site-policy] _agentIdFromKey failed: ${e.message}`);
+      console.log(`[ui-api:site-policy] _resolveActiveAgentId failed: ${e.message}`);
       return null;
     }
   }
@@ -1285,11 +1309,11 @@ function mountWebUiRoutes(app, deps) {
   });
 
   // GET /api/ui/agents/:agentId/site-rules
-  // The :agentId param here is the api_key_hash exposed by listKeys() as
-  // `key`. We resolve it to the numeric agents.id for the lookup.
+  // The :agentId param here is the agent's non-secret row id; we validate it
+  // resolves to an active agent before the lookup.
   app.get('/api/ui/agents/:agentId/site-rules', auth, (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1316,7 +1340,7 @@ function mountWebUiRoutes(app, deps) {
   // Body: { domain, decision }
   app.post('/api/ui/agents/:agentId/site-rules', auth, mutatingAuth, express.json(), (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1359,7 +1383,7 @@ function mountWebUiRoutes(app, deps) {
   // DELETE /api/ui/agents/:agentId/site-rules/:domain
   app.delete('/api/ui/agents/:agentId/site-rules/:domain', auth, mutatingAuth, (req, res) => {
     try {
-      const agentId = _agentIdFromKey(req.params.agentId);
+      const agentId = _resolveActiveAgentId(req.params.agentId);
       if (!agentId) {
         return res.status(404).json({ error: 'agent not found' });
       }
@@ -1424,8 +1448,222 @@ function mountWebUiRoutes(app, deps) {
     auth,
     mutatingAuth,
     broadcastUiEvent,
-    agentIdFromKey: _agentIdFromKey,
+    agentIdFromKey: _resolveActiveAgentId,
   });
+}
+
+/**
+ * Resolve the Chrome profile for an incoming `hello` message, mirroring the
+ * installId path's "must correspond to a real local profile" rule for EVERY
+ * resolution source — including a client-supplied `profileId`. A bogus
+ * client-supplied profileId is never trusted; it falls through to the other
+ * steps.
+ *
+ * Resolution order:
+ *   1) client-supplied profileId — only if it matches a real local profile
+ *   2) installId -> profileId mapping (validated against local profiles)
+ *   3) gaiaEmail match against Local State
+ *   4) inference by exclusion
+ * Returns { profileId, via } on success or { profileId: null } to signal the
+ * caller should reply with identify_required.
+ *
+ * Pure w.r.t. the injected deps so it can be unit-tested with fabricated
+ * profile lists.
+ *
+ * @param {object} message the parsed hello frame
+ * @param {{ readProfiles: Function, userDataDir: string|null,
+ *           getConnectedProfiles: Function, getProfileForInstall: Function,
+ *           log?: Function }} deps
+ * @returns {{ profileId: string|null, via?: string }}
+ */
+function resolveHelloProfile(message, deps) {
+  const {
+    readProfiles: readProfilesFn,
+    userDataDir,
+    getConnectedProfiles,
+    getProfileForInstall,
+    log = console.log,
+  } = deps;
+
+  // 1) Client-supplied profileId — validate against local profiles. Do NOT
+  //    trust an arbitrary client-supplied value.
+  if (typeof message.profileId === 'string' && message.profileId.length > 0) {
+    try {
+      const profiles = readProfilesFn(userDataDir);
+      if (profiles.some((p) => p.directoryName === message.profileId)) {
+        log(`[extension-bridge] resolved profileId="${message.profileId}" from client-supplied value`);
+        return { profileId: message.profileId, via: 'client_profileId' };
+      }
+      log(
+        `[extension-bridge] hello supplied profileId="${message.profileId}" does not match a known ` +
+          `local profile — ignoring and falling through`
+      );
+    } catch (e) {
+      log(`[extension-bridge] client profileId validation failed: ${e.message}`);
+    }
+  }
+
+  // 2) installId -> profileId mapping (survives extension storage being cleared).
+  if (typeof message.installId === 'string' && message.installId.length > 0) {
+    try {
+      const candidate = getProfileForInstall(message.installId);
+      if (candidate) {
+        const profiles = readProfilesFn(userDataDir);
+        if (profiles.some((p) => p.directoryName === candidate)) {
+          log(
+            `[extension-bridge] resolved profileId="${candidate}" from ` +
+              `installId="${message.installId.slice(0, 8)}..."`
+          );
+          return { profileId: candidate, via: 'installId' };
+        }
+        log(
+          `[extension-bridge] installId="${message.installId.slice(0, 8)}..." mapped to ` +
+            `profileId="${candidate}" but that profile no longer exists; falling through`
+        );
+      }
+    } catch (e) {
+      log(`[extension-bridge] installId resolution failed: ${e.message}`);
+    }
+  }
+
+  // 3) gaiaEmail match against Local State.
+  if (message.gaiaEmail) {
+    try {
+      const profiles = readProfilesFn(userDataDir);
+      const match = profiles.find(
+        (p) => p.gaiaEmail && p.gaiaEmail.toLowerCase() === String(message.gaiaEmail).toLowerCase()
+      );
+      if (match) {
+        log(`[extension-bridge] resolved profileId="${match.directoryName}" from gaiaEmail`);
+        return { profileId: match.directoryName, via: 'gaiaEmail' };
+      }
+    } catch (e) {
+      log(`[extension-bridge] gaiaEmail resolution failed: ${e.message}`);
+    }
+  }
+
+  // 4) Inference by exclusion.
+  try {
+    const profiles = readProfilesFn(userDataDir);
+    const connectedProfileIds = new Set(getConnectedProfiles());
+    const candidates = profiles.filter(
+      (p) => !connectedProfileIds.has(p.directoryName) && !p.gaiaEmail
+    );
+    if (candidates.length === 1) {
+      log(
+        `[extension-bridge] inferred profileId="${candidates[0].directoryName}" by exclusion ` +
+          `(${profiles.length} total profile(s), ${connectedProfileIds.size} already connected)`
+      );
+      return { profileId: candidates[0].directoryName, via: 'inference' };
+    }
+    if (candidates.length === 0) {
+      log(
+        `[extension-bridge] inference-by-exclusion found 0 candidates ` +
+          `(${profiles.length} total profile(s), ${connectedProfileIds.size} already connected) — ` +
+          `falling through to identify_required`
+      );
+    } else {
+      log(
+        `[extension-bridge] inference-by-exclusion found ${candidates.length} candidates ` +
+          `(${candidates.map((c) => c.directoryName).join(', ')}) — ambiguous, ` +
+          `falling through to identify_required`
+      );
+    }
+  } catch (e) {
+    log(`[extension-bridge] inference-by-exclusion failed: ${e.message}`);
+  }
+
+  return { profileId: null };
+}
+
+/**
+ * Build the upgrade handler for the extension WebSocket (the non-`/api/ui/events`
+ * path). Loopback-gated FIRST, then the existing web-Origin and installId
+ * checks. Extracted so it can be unit-tested with a bare http.Server + a real
+ * `ws` client.
+ *
+ * @param {{ wss: import('ws').WebSocketServer, hostBinding: string,
+ *           log?: Function }} deps
+ * @returns {(request, socket, head) => void}
+ */
+function makeExtensionUpgradeHandler({ wss, hostBinding, log = console.log }) {
+  return function handleExtensionUpgrade(request, socket, head) {
+    // Loopback gate — the extension WS is same-machine only, even in network
+    // mode (only the MCP surface is meant to be LAN-reachable). Preserve the
+    // dev-bypass semantics: never bypass on a 0.0.0.0 bind.
+    const remoteAddr = (request.socket && request.socket.remoteAddress) || '';
+    const { allowed, devBypass } = evaluateLoopbackAccess(remoteAddr, hostBinding);
+    if (!allowed) {
+      if (IS_DEV_MODE && hostBinding === '0.0.0.0') {
+        log(`[extension-bridge] DEV MODE present but daemon is network-bound — refusing WS upgrade from ${remoteAddr}`);
+      }
+      log(`[extension-bridge] WS upgrade rejected — non-loopback remote ${remoteAddr}`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    if (devBypass) {
+      log(`[extension-bridge] DEV MODE (loopback bind) — allowing non-local WS upgrade from ${remoteAddr}`);
+    }
+
+    // Origin gate: browser tabs running arbitrary web pages can open
+    // WebSockets to 127.0.0.1:<port>. Their `Origin` is the page's http(s)
+    // origin. Legitimate WebPilot connections come from the extension's
+    // service worker (Origin: chrome-extension://<id>) or no Origin at all.
+    const originHeader = (request.headers && request.headers.origin) || '';
+    if (originHeader && /^https?:\/\//i.test(originHeader)) {
+      log(`[extension-bridge] WS upgrade rejected — disallowed web Origin "${originHeader}"`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    const installId = url.searchParams.get('installId');
+    if (typeof installId !== 'string' || installId.length === 0) {
+      log('[extension-bridge] WS upgrade rejected — missing installId');
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    // Cap installId length defensively — UUIDs are 36 chars; 256 is a sane
+    // upper bound that still allows future format changes without truncation.
+    if (installId.length > 256) {
+      log(`[extension-bridge] WS upgrade rejected — installId exceeds max length (${installId.length})`);
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      // Stamp the installId on the WS object so subsequent handlers (hello,
+      // command attribution) can read it without re-parsing the URL.
+      try { ws._installId = installId; } catch (_e) { /* ignore */ }
+      wss.emit('connection', ws, request);
+    });
+  };
+}
+
+/**
+ * Build the `/connect` handler. The extension's own `installId` is its
+ * identity, so there is no secret to hand out — only the addresses to dial.
+ *
+ * The WS `serverUrl` is ALWAYS loopback (ws://127.0.0.1:<port>) regardless of
+ * network mode, so the same-machine extension never adopts a LAN IP as its
+ * dial target (the shared root cause of #125 / the popup+dashboard link). The
+ * `sseUrl` may continue to reflect the public host — it is informational.
+ *
+ * @param {{ port: number, publicHost: string, host: string }} cfg
+ * @returns {(req, res) => void}
+ */
+function makeConnectHandler({ port, publicHost, host }) {
+  return function connectHandler(req, res) {
+    res.json({
+      serverUrl: `ws://127.0.0.1:${port}`,
+      sseUrl: `http://${publicHost}:${port}/sse`,
+      networkMode: host === '0.0.0.0',
+    });
+  };
 }
 
 function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initialPublicHost = 'localhost' }) {
@@ -1495,6 +1733,11 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   const extensionWss = new WebSocketServer({ noServer: true });
   const uiWss = new WebSocketServer({ noServer: true });
 
+  const handleExtensionUpgrade = makeExtensionUpgradeHandler({
+    wss: extensionWss,
+    hostBinding: host,
+  });
+
   server.on('upgrade', (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
@@ -1502,10 +1745,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // The web UI dashboard is unauthenticated by design and bound to loopback.
     if (url.pathname === '/api/ui/events') {
       const remoteAddr = request.socket.remoteAddress || '';
-      const isLocal =
-        remoteAddr === '127.0.0.1' ||
-        remoteAddr === '::1' ||
-        remoteAddr === '::ffff:127.0.0.1';
+      const isLocal = isLoopbackRemote(remoteAddr);
       // Origin gate. The web UI is served at /ui from this same daemon,
       // so legitimate UI WS upgrades carry
       // Origin: http://localhost:<port> or http://127.0.0.1:<port>.
@@ -1547,50 +1787,15 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     // key has been retired. The extension is now an *identity*, not a
     // credential bearer: it self-identifies via `installId` on the URL.
     // Claiming any installId grants zero agent power — agent-layer auth
-    // (paired keys, see
-    // `mcp-handler.js`) is the security boundary for tool calls. The
-    // extension_installs row binds (installId -> profileId), which the
-    // bridge uses for routing only.
+    // (paired keys, see `mcp-handler.js`) is the security boundary for tool
+    // calls. The extension_installs row binds (installId -> profileId), which
+    // the bridge uses for routing only.
     //
-    // Origin gate: browser tabs running arbitrary web pages can open
-    // WebSockets to 127.0.0.1:3456. Their `Origin` is the
-    // page's http(s) origin. Legitimate WebPilot connections come from the
-    // extension's service worker, which sends `Origin: chrome-extension://<id>`
-    // or no Origin at all (Node ws clients, curl, etc.). Reject anything
-    // that smells like a webpage origin — even though installId-only
-    // upgrades grant zero agent power, gating early shrinks the attack
-    // surface (no socket allocation, no per-frame parse, no possible
-    // confused-deputy attack via routing).
-    const originHeader = (request.headers && request.headers.origin) || '';
-    if (originHeader && /^https?:\/\//i.test(originHeader)) {
-      console.log(`[extension-bridge] WS upgrade rejected — disallowed web Origin "${originHeader}"`);
-      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-
-    const installId = url.searchParams.get('installId');
-    if (typeof installId !== 'string' || installId.length === 0) {
-      console.log('[extension-bridge] WS upgrade rejected — missing installId');
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    // Cap installId length defensively — UUIDs are 36 chars; 256 is a sane
-    // upper bound that still allows future format changes without truncation.
-    if (installId.length > 256) {
-      console.log(`[extension-bridge] WS upgrade rejected — installId exceeds max length (${installId.length})`);
-      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-
-    extensionWss.handleUpgrade(request, socket, head, (ws) => {
-      // Stamp the installId on the WS object so subsequent handlers (hello,
-      // command attribution) can read it without re-parsing the URL.
-      try { ws._installId = installId; } catch (_e) { /* ignore */ }
-      extensionWss.emit('connection', ws, request);
-    });
+    // The handler is loopback-gated FIRST (the extension WS is same-machine
+    // only — only the MCP surface is LAN-reachable in network mode), then
+    // applies the existing web-Origin and installId checks. See
+    // makeExtensionUpgradeHandler().
+    handleExtensionUpgrade(request, socket, head);
   });
 
   uiWss.on('connection', (ws) => {
@@ -1643,98 +1848,21 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
         if (message.type === 'hello') {
           clearTimeout(helloDeadline);
-          // Resolution order:
-          //   1) direct profileId echoed from extension storage
-          //   2) installId -> profileId mapping from extension-installs store
-          //      (survives extension storage being cleared)
+          // Resolution order (see resolveHelloProfile):
+          //   1) client-supplied profileId — only if it matches a real local
+          //      profile (never trust an arbitrary client-supplied value)
+          //   2) installId -> profileId mapping (validated against local
+          //      profiles; survives extension storage being cleared)
           //   3) gaiaEmail match against Local State
           //   4) inference by exclusion
           //   5) identify_required (picker fallback)
-          let resolvedProfileId = message.profileId || null;
-          if (
-            !resolvedProfileId &&
-            typeof message.installId === 'string' &&
-            message.installId.length > 0
-          ) {
-            try {
-              const candidate = extensionInstalls.getProfileForInstall(message.installId);
-              if (candidate) {
-                // Validate it still corresponds to a real profile — a stale
-                // mapping for a deleted profile would mis-route everything.
-                const profiles = readProfiles(chromeManager.userDataDir);
-                const stillExists = profiles.some((p) => p.directoryName === candidate);
-                if (stillExists) {
-                  resolvedProfileId = candidate;
-                  console.log(
-                    `[extension-bridge] resolved profileId="${resolvedProfileId}" from ` +
-                      `installId="${message.installId.slice(0, 8)}..."`
-                  );
-                } else {
-                  console.log(
-                    `[extension-bridge] installId="${message.installId.slice(0, 8)}..." ` +
-                      `mapped to profileId="${candidate}" but that profile no longer exists; ` +
-                      `falling through`
-                  );
-                }
-              }
-            } catch (e) {
-              console.log(`[extension-bridge] installId resolution failed: ${e.message}`);
-            }
-          }
-          if (!resolvedProfileId && message.gaiaEmail) {
-            try {
-              const profiles = readProfiles(chromeManager.userDataDir);
-              const match = profiles.find(
-                (p) => p.gaiaEmail && p.gaiaEmail.toLowerCase() === String(message.gaiaEmail).toLowerCase()
-              );
-              if (match) {
-                resolvedProfileId = match.directoryName;
-                console.log(
-                  `[extension-bridge] resolved profileId="${resolvedProfileId}" from gaiaEmail`
-                );
-              }
-            } catch (e) {
-              console.log(`[extension-bridge] gaiaEmail resolution failed: ${e.message}`);
-            }
-          }
-
-          if (!resolvedProfileId) {
-            // Inference-by-exclusion: if every other known profile is either
-            // already connected or has a gaiaEmail (i.e. would have resolved
-            // via the gaiaEmail path), then the connecting extension must be
-            // the single remaining profile without those traits.
-            try {
-              const profiles = readProfiles(chromeManager.userDataDir);
-              const connectedProfileIds = new Set(extensionBridge.getConnectedProfiles());
-              const candidates = profiles.filter(
-                (p) => !connectedProfileIds.has(p.directoryName) && !p.gaiaEmail
-              );
-              if (candidates.length === 1) {
-                resolvedProfileId = candidates[0].directoryName;
-                console.log(
-                  `[extension-bridge] inferred profileId="${resolvedProfileId}" by exclusion ` +
-                    `(displayName="${candidates[0].displayName || ''}"; ` +
-                    `${profiles.length} total profile(s), ` +
-                    `${connectedProfileIds.size} already connected)`
-                );
-              } else if (candidates.length === 0) {
-                console.log(
-                  `[extension-bridge] inference-by-exclusion found 0 candidates ` +
-                    `(${profiles.length} total profile(s), ` +
-                    `${connectedProfileIds.size} already connected) — unexpected state, ` +
-                    `falling through to identify_required`
-                );
-              } else {
-                console.log(
-                  `[extension-bridge] inference-by-exclusion found ${candidates.length} candidates ` +
-                    `(${candidates.map((c) => c.directoryName).join(', ')}) — ambiguous, ` +
-                    `falling through to identify_required`
-                );
-              }
-            } catch (e) {
-              console.log(`[extension-bridge] inference-by-exclusion failed: ${e.message}`);
-            }
-          }
+          const resolution = resolveHelloProfile(message, {
+            readProfiles,
+            userDataDir: chromeManager.userDataDir,
+            getConnectedProfiles: () => extensionBridge.getConnectedProfiles(),
+            getProfileForInstall: (id) => extensionInstalls.getProfileForInstall(id),
+          });
+          let resolvedProfileId = resolution.profileId;
 
           if (!resolvedProfileId) {
             // Can't determine profile — tell the extension to show its picker
@@ -1781,30 +1909,12 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           return;
         }
 
-        if (message.type === 'revoke_key') {
-          const { apiKey: keyToRevoke } = message;
-          const revoked = pairedKeys.revokeKey(keyToRevoke);
-          console.log(`[pairing] Revoke key ${keyToRevoke.slice(0, 8)}...: ${revoked ? 'removed' : 'not found'}`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
-          broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
-          return;
-        }
-
-        if (message.type === 'rename_agent') {
-          const { apiKey: keyToRename, newName } = message;
-          const renamed = pairedKeys.renameKey(keyToRename, newName);
-          console.log(`[pairing] Rename key ${keyToRename.slice(0, 8)}...: ${renamed ? 'renamed to ' + newName : 'not found'}`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents: pairedKeys.listKeys() }));
-          broadcastUiEvent({ type: 'agents_changed', agents: pairedKeys.listKeys() });
-          return;
-        }
-
-        if (message.type === 'list_paired_agents') {
-          const agents = pairedKeys.listKeys();
-          console.log(`[pairing] Listed ${agents.length} paired agent(s)`);
-          ws.send(JSON.stringify({ type: 'paired_agents_list', agents }));
-          return;
-        }
+        // Agent administration (list / rename / revoke) is a web-UI-only,
+        // loopback-gated concern — the extension has no business performing it,
+        // and doing so over the extension socket previously leaked the agent
+        // list (api_key_hash included) to the extension. Those handlers and the
+        // `paired_agents_list` push were removed in #129. Admin now flows
+        // exclusively through /api/ui/agents/* (by non-secret row id).
 
         if (message.type === 'set_network_mode') {
           // DEPRECATED: this in-process rebind path was replaced by the
@@ -1833,7 +1943,10 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           return;
         }
 
-        extensionBridge.handleResponse(message);
+        // Bind the response to the socket it arrived on so a response that
+        // shows up on a different socket than the command was sent on is
+        // ignored (connection-displacement safety).
+        extensionBridge.handleResponse(message, ws);
       } catch (e) {
         console.error('Invalid message from extension:', e);
       }
@@ -2055,18 +2168,14 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   }, 60 * 60 * 1000);
   if (hourlySiteEventsInterval.unref) hourlySiteEventsInterval.unref();
 
-  // Bridge async-pairing events back to the extension's WS so existing
-  // `paired_agents_list` listeners in background.js keep working even though
-  // approval now happens via the web UI rather than the extension popup.
+  // On approval, refresh any open web-UI dashboards. The agent list is NOT
+  // pushed to the extension any more (#129): agent administration is a
+  // web-UI-only concern and the extension never needs the agent roster.
   pairedKeys.onPairingEvent('approved', (entry) => {
     try {
-      console.log(
-        `[pairing] broadcasting paired_agents_list after approve of pairingId=${entry.pairingId}`
-      );
-      extensionBridge.notifyAll({ type: 'paired_agents_list', agents: pairedKeys.listKeys() });
       broadcastUiEvent({ type: 'pairing_approved', pairing: entry, agents: pairedKeys.listKeys() });
     } catch (e) {
-      console.log(`[pairing] failed to broadcast paired_agents_list: ${e.message}`);
+      console.log(`[pairing] failed to broadcast pairing_approved: ${e.message}`);
     }
   });
 
@@ -2094,10 +2203,13 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   app.post('/message', mcpHandler.handleMessage);
 
   // --- Extension popup routes (see popup-routes.js) ---
-  mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUiEvent, port });
+  // Loopback-gated: the popup is same-machine only (threaded via hostBinding).
+  mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUiEvent, port, hostBinding: host });
 
   // ---- Web UI static mount + REST ----
-  mountWebUiStatic(app);
+  // The /ui static surface is loopback-only (only the MCP surface is
+  // LAN-reachable in network mode).
+  mountWebUiStatic(app, { hostBinding: host });
   mountWebUiRoutes(app, {
     // NOTE: apiKey intentionally omitted — web UI is localhost-only (no key).
     chromeManager,
@@ -2139,7 +2251,11 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     },
   });
 
-  app.get('/health', (req, res) => {
+  // Loopback-only HTTP gates for /health and /connect — same-machine surfaces.
+  const healthGate = makeLoopbackGate(host, { label: '/health' });
+  const connectGate = makeLoopbackGate(host, { label: '/connect' });
+
+  app.get('/health', healthGate, (req, res) => {
     res.json({
       status: 'ok',
       extensionConnected: extensionBridge.isAnyConnected(),
@@ -2148,17 +2264,11 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     });
   });
 
-  app.get('/connect', (req, res) => {
-    // The transport key has been retired. The extension's own `installId`
-    // (minted in extension storage on first install) is its identity. The
-    // server has nothing to hand out here — just the addresses the
-    // extension needs to dial.
-    res.json({
-      serverUrl: `ws://${publicHost}:${port}`,
-      sseUrl: `http://${publicHost}:${port}/sse`,
-      networkMode: host === '0.0.0.0'
-    });
-  });
+  // The transport key has been retired. The extension's own `installId` is its
+  // identity, so /connect only hands out dial addresses. serverUrl is ALWAYS
+  // loopback (see makeConnectHandler) so the same-machine extension never
+  // adopts a LAN IP — the shared root cause of #125.
+  app.get('/connect', connectGate, makeConnectHandler({ port, publicHost, host }));
 
   server.listen(port, host, () => {
     // Write PID and port files for service management
@@ -2212,4 +2322,13 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
   return { app, server, wss: extensionWss, uiWss, chromeManager, extensionBridge, broadcastUiEvent };
 }
 
-module.exports = { createServer };
+module.exports = {
+  createServer,
+  // Exported for unit tests (loopback gating, hello resolution, connect URL,
+  // WS upgrade harness, Web UI admin routes).
+  resolveHelloProfile,
+  makeExtensionUpgradeHandler,
+  makeConnectHandler,
+  mountWebUiRoutes,
+  makeMutatingUiAuth,
+};

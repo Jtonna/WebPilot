@@ -243,14 +243,16 @@ export default function SitePolicyPage() {
       const data = await getStatus();
       if (unmountedRef.current) return;
       const list = ((data && data.pairedAgents) || []).map((a) => ({
-        key: a.key,
+        // Normalize the non-secret agent id to a string so dropdown values
+        // (always strings) and Set membership checks compare cleanly.
+        id: String(a.id),
         name: a.agentName || 'Unnamed agent',
       }));
       setAgents(list);
-      const keys = new Set(list.map((a) => a.key));
+      const keys = new Set(list.map((a) => a.id));
       const current = selectedAgentKeyRef.current;
       if (!current || !keys.has(current)) {
-        selectAgent(list[0] ? list[0].key : '');
+        selectAgent(list[0] ? list[0].id : '');
       }
       if (agentFilterRef.current && !keys.has(agentFilterRef.current)) {
         changeFilters({ agent: '' });
@@ -405,11 +407,11 @@ export default function SitePolicyPage() {
     const key = eventKey(entry);
     setEventBusyKey(key);
     try {
-      await action(entry.agentKey, entry.domain);
+      await action(entry.agentId, entry.domain);
       toast.success(successText);
       await refreshEvents({ preserveSize: true });
-      if (selectedAgentKeyRef.current === entry.agentKey) {
-        refreshAgentRules(entry.agentKey);
+      if (String(selectedAgentKeyRef.current) === String(entry.agentId)) {
+        refreshAgentRules(entry.agentId);
       }
     } catch (err) {
       toast.error(apiErrorMessage(err, 'Couldn’t update this agent’s rule.'));
@@ -438,7 +440,7 @@ export default function SitePolicyPage() {
   );
   const signedCount = (globalSiteBlocklist && globalSiteBlocklist.domainCount) || 0;
   const hasGlobalData = !!globalSiteBlocklist || globalData.globalRules.length > 0;
-  const selectedAgent = agents.find((a) => a.key === selectedAgentKey) || null;
+  const selectedAgent = agents.find((a) => String(a.id) === String(selectedAgentKey)) || null;
   const selectedAgentName = selectedAgent ? selectedAgent.name : 'This agent';
 
   return (

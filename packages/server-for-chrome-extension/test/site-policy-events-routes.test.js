@@ -153,7 +153,7 @@ describe('GET /api/ui/site-policy/events', () => {
     assert.equal(body.hasMore, false);
     assert.equal(body.nextCursor, null);
     assert.deepEqual(body.entries.map((e) => e.domain), ['b.com', 'a.com']);
-    assert.equal(body.entries[0].agentKey, 'hash_2');
+    assert.equal(body.entries[0].agentId, 2);
     assert.equal(body.entries[0].agentRuleDecision, null);
     assert.equal(body.entries[1].actionable, true);
   });
@@ -239,7 +239,7 @@ describe('POST /api/ui/agents/:agentId/site-events/allow', () => {
     const res = await post('hash_1', 'allow', { domain: 'evil.com' });
     assert.equal(res.status, 201);
     const body = await res.json();
-    assert.equal(body.agentKey, 'hash_1');
+    assert.equal(body.agentId, 'hash_1');
     assert.equal(body.domain, 'evil.com');
     assert.equal(body.decision, 'allow');
     assert.equal(typeof body.createdAt, 'string');
@@ -267,8 +267,8 @@ describe('POST /api/ui/agents/:agentId/site-events/revoke', () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.deepEqual(
-      { agentKey: body.agentKey, domain: body.domain, decision: body.decision },
-      { agentKey: 'hash_1', domain: 'x.com', decision: 'block' }
+      { agentId: body.agentId, domain: body.domain, decision: body.decision },
+      { agentId: 'hash_1', domain: 'x.com', decision: 'block' }
     );
     assert.equal(typeof body.createdAt, 'string');
     const rows = agentRules(1, 'x.com');
