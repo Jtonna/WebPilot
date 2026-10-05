@@ -160,7 +160,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Profiles** — `Known profiles` (sort: active → ready → needs_setup, then last-active desc; `needs_setup` rows show a `Set up` button opening the four-step Profile setup walkthrough modal) and a prominent **+ New sandbox profile** panel (inline form, not a modal).
 
-**Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with rename / revoke kebab. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
+**Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with Regenerate key / rename / revoke row actions. Regenerate key opens a one-time key-reveal modal (`RevealKeyModal`) showing the new plaintext key in a copyable `.mcp.json` snippet — the key is not stored in plaintext, so it can't be re-copied afterward; regenerating is the only way to get a working key again. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
 **Site Policy**: two small cards (global and per-agent rules) in a compact strip, then the site access log below as the main element.
 
@@ -176,7 +176,7 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 **Site access log**: table columns, in order:
 
 - Domain: source · matched-domain · hit-count sub-line; default source shows `No rule (allowed by default)`.
-- Agent: links to `/agents/?agent=<key>` (basePath-relative, per the internal-links convention above).
+- Agent: links to `/agents/?agent=<id>` (basePath-relative, per the internal-links convention above).
 - Status: green approved, red blocked.
 - Last seen.
 - Action: `Allow for this agent` requires a 4-character typed confirmation code (`TypedConfirmModal`, case-insensitive, fresh code each open) because it overrides a global block. `Revoke for this agent` is a plain `ConfirmModal`.

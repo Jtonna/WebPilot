@@ -236,7 +236,7 @@ function list({ agentId = null, decision = null, limit = DEFAULT_LIST_LIMIT, cur
   const sql = `
     SELECT e.id, e.domain, e.decision, e.source, e.matched_domain,
            e.first_seen_at, e.last_seen_at, e.decision_changed_at, e.hit_count,
-           a.api_key_hash AS agent_key, a.name AS agent_name,
+           e.agent_id AS agent_id, a.name AS agent_name,
            r.decision AS agent_rule_decision
       FROM site_policy_events e
       JOIN agents a ON a.id = e.agent_id AND a.state = 'active'
@@ -252,7 +252,7 @@ function list({ agentId = null, decision = null, limit = DEFAULT_LIST_LIMIT, cur
   const last = page[page.length - 1];
 
   const entries = page.map((r) => ({
-    agentKey: r.agent_key,
+    agentId: r.agent_id,
     agentName: r.agent_name,
     domain: r.domain,
     decision: r.decision,

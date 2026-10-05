@@ -48,7 +48,7 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. It uses HTTP(S) derived from the current `serverUrl`, so it works for both local and network-mode setups. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The WebSocket `serverUrl` returned by `/connect` is **always** loopback (`ws://127.0.0.1:<port>`) regardless of network mode, so the extension — which always runs on the same machine as the server — always connects to localhost; the extension WS upgrade is itself loopback-gated server-side. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay; on a 1006 close it also self-heals a stale non-loopback `serverUrl` left over in `chrome.storage.local` (e.g. a previously-stored LAN address), resetting the dial target to the `localhost:3456` default before the retry fires. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
 
 ### Hello handshake
 
@@ -58,10 +58,10 @@ Once the WebSocket is open the extension sends a `hello` message **before any ot
 - `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
 - `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (the `extension_installs` SQLite table) survives config wipes.
 
-The server resolves the binding in five ordered steps (see `server.js` around lines 980-1090):
+The server resolves the binding in five ordered steps (see `resolveHelloProfile()` in `server.js` around lines 1479-1577):
 
-1. **Direct `profileId`** — if the extension already has a previously-resolved profile in `chrome.storage.local`, the hello message carries it and the server uses it as-is.
-2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile if it still corresponds to a real directory under Chrome's user-data-dir.
+1. **Direct `profileId`** — if the hello message carries a client-supplied `profileId`, the server validates it against the real local Chrome profiles (`readProfiles(userDataDir)`) before trusting it; an unrecognized value is ignored and resolution falls through to the next step.
+2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile only if it still corresponds to a real directory under Chrome's user-data-dir.
 3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
 4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
 5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; the actual profile picker is rendered by the webapp's `/pairings` flow (see `background.js` around lines 400-401). Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
@@ -212,7 +212,7 @@ Four components, top to bottom:
    - `Blocked (your rule)`
    - `Blocked (global block list)`
 3. **Block / Allow toggle** — single primary button that writes a **global** user rule (a `global_user_site_rules` row) for the current tab's domain. Applies to all agents, unless overridden by a per-agent rule for that agent (including an agent's `*` default). If the global tier is off: the rule still saves but has no effect (see [Global tier toggle](SITE_POLICY.md#global-tier-toggle)), the toggle is disabled, and the popup shows "Global rules are off — this toggle won't apply until they're turned back on in the dashboard." Per-agent fine-tuning happens at `/ui/site-policy/`.
-4. **Open dashboard** — opens `<server>/ui/` in a new tab, where `<server>` is the `serverUrl` from `chrome.storage.local` converted to http(s) (default `http://localhost:3456`).
+4. **Open dashboard** — opens `<server>/ui/` in a new tab, where `<server>` is the `serverUrl` from `chrome.storage.local` converted to http(s) (default `http://localhost:3456`). Because `/connect` now always returns a loopback `serverUrl` (`ws://127.0.0.1:<port>`), this link always resolves to localhost — which is correct, since `/ui` is loopback-only and the dashboard runs on the same machine.
 5. **Skip / fallback messages** — the tab section is hidden and a plain-text skip surface is shown instead when the popup has nothing renderable:
    - Non-http(s) pages, and loopback hosts (`localhost`, `127.0.0.1`, `::1`), are never sent to the server for a per-tab policy lookup: "Site policy doesn’t apply to this page." (This is a client-side skip only; server-side, an agent's `*` rule still matches loopback hosts.)
    - No active tab resolved: "No active tab."
@@ -229,7 +229,7 @@ The legacy `X-API-Key` header (and the `apiKey` storage key) have been retired a
 
 ### Popup IPC
 
-The two popup endpoints live in `packages/server-for-chrome-extension/src/popup-routes.js` (`mountPopupRoutes`: the `_authPopup` helper plus the two route handlers), mounted from `server.js`. Both are gated by an installId resolver and an Origin denylist. They have **no loopback gate**: in the default localhost bind only local callers can reach them, but in network mode they are reachable from the LAN (tracked in #110).
+The two popup endpoints live in `packages/server-for-chrome-extension/src/popup-routes.js` (`mountPopupRoutes`: the `_authPopup` helper plus the two route handlers), mounted from `server.js`. They are **loopback-gated** (via the shared `src/loopback.js` helper, threaded the daemon's host binding), then additionally gated by an installId resolver and an Origin denylist. The loopback gate means they are same-machine only even when network mode is enabled — only the API-key-gated MCP surface (`/sse`, `/message`) is LAN-reachable in network mode.
 
 **Auth (`_authPopup`).** Every popup request must:
 
@@ -292,7 +292,7 @@ The following capabilities that previously lived in the extension popup are now 
 - Pick the Chrome profile a new agent binds to during approval
 - Pre-provision an API key (skip `request_pairing` entirely; mints via `POST /api/ui/agents`)
 - Re-bind an existing agent to a different profile (`PATCH /api/ui/agents/:key`)
-- List / rename / revoke paired agents (still available via `REVOKE_KEY` / `RENAME_AGENT` runtime messages too, but the UI is the canonical surface)
+- List / rename / revoke paired agents
 - View pairing history (terminal-state pairings persisted with `profileId`)
 - Toggle network mode, manage notification preferences, restart server / Chrome
 
@@ -308,7 +308,6 @@ Settings and state are stored in `chrome.storage.local`:
 | `sseUrl` | string | null | SSE endpoint URL |
 | `networkMode` | boolean | false | Cached network mode flag (UI hint only) |
 | `enabled` | boolean | false | Whether the extension is enabled |
-| `pairedAgents` | array | `[]` | Cached list of paired agents (server is source of truth) |
 | `pendingPairingRequests` | array | `[]` | (legacy) Cached pending requests; no longer surfaced in the popup |
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 | `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
@@ -336,8 +335,9 @@ Standard command envelope:
 |------|----------|-----------------|-------------|
 | `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. |
 | `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; extension caches the list and the webapp's `/pairings` flow surfaces the picker. |
-| `paired_agents_list` | Push (no `id`) | `agents` (array of `{ agentName, createdAt, lastAccessed, key, keyDisplay, profileId }`) | Server pushes the current list of paired agents (e.g. after an approve in the web UI). Includes the bound `profileId` per entry. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
+
+> The server no longer pushes `paired_agents_list` (removed in #129). Agent administration is a web-UI-only concern; the extension never caches the agent roster.
 
 ### Extension to Server (WebSocket)
 
@@ -364,11 +364,12 @@ Error:
 | Type | Params | Description |
 |------|--------|-------------|
 | `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile via the webapp). |
-| `revoke_key` | `apiKey` (string) | Invalidate a paired API key. (Still wired; canonical surface is now the web UI.) |
-| `rename_agent` | `apiKey` (string), `newName` (string) | Rename the agent associated with the given key. (Still wired; canonical surface is now the web UI.) |
-| `list_paired_agents` | _(none)_ | Request the current list. Server responds with a `paired_agents_list` push. |
 
+> **Removed (#129):** `revoke_key`, `rename_agent`, and `list_paired_agents` are no longer sent by the extension or handled by the server; agent administration (list/rename/revoke) is web-UI-only.
+>
 > **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. Network mode and pairing config are owned by the web UI.
+
+The server binds each pending command to the WebSocket connection it was sent on; a response arriving on a different socket for the same `id` is rejected rather than resolved against the original caller.
 
 Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
 

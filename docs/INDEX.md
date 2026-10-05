@@ -13,6 +13,7 @@ WebPilot documentation covering system architecture, development guides, and API
 - [CHROME_MAC.md](CHROME_MAC.md) -- macOS-side Chrome integration notes (first-boot smoke checks for the detector/launcher/closer/notifications path).
 - [CHROME_LINUX.md](CHROME_LINUX.md) -- Linux-side Chrome integration notes (same scope as the macOS doc).
 - [ELECTRON_APP.md](ELECTRON_APP.md) -- Electron app structure: splash window, server lifecycle, tray, window swap to the server-hosted `/ui/`, and build scripts. For developers working on the installer and management UI.
+- [security/agent-key-and-connection-trust.md](security/agent-key-and-connection-trust.md) -- Security findings and fix plan for the paired-agent API key and connection-trust model: the hash-as-credential flaw, the unauthenticated extension WebSocket, the exploit chain, and the loopback-gating/public-id fixes. For anyone reviewing agent-key handling or the trust boundary between the extension, server, and MCP agents.
 
 ## Guides
 

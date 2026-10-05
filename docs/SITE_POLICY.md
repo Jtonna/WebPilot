@@ -14,7 +14,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 | 4. Default | none | allow | Nothing above matched | `default` |
 
 - The first match wins. Tier beats specificity, so a higher-tier rule wins over a more specific rule in a lower tier. Within the agent tier, a named rule beats that agent's `*` row whatever its decision.
-- A caller without a valid key gets no agent tier. The popup always calls `isAllowed(null, …)` (`popup-routes.js:103`, `:158`).
+- A caller without a valid key gets no agent tier. The popup always calls `isAllowed(null, …)` (`popup-routes.js:108`, `:163`).
 - Return contract (`site-policy.js:47-52`): `{ allowed, decision, source, domain, matchedDomain }`. `matchedDomain` is the stored domain of the matching rule: `'*'` for a wildcard match and `null` for default.
 
 ## Domain matching
@@ -67,13 +67,15 @@ The gate `_enforceSitePolicy` (`mcp-handler.js:1482-1590`) runs after auth and b
   - A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`).
   - A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues.
   - A blocked step that takes a `tab_id` still triggers the auto-close.
+- **Workflows**: the outer `webpilot_run_workflow` call is gated at Checkpoint B on its own `tab_id`, but a workflow's code calls the browser primitives (`createTab`, `click`, `type`, `scroll`, `getAccessibilityTree`) handed to it by `buildBrowserPrimitives` (`mcp-handler.js:1282-1337`) directly, server-side, bypassing `tools/call`. Each of those primitives re-runs `_enforceSitePolicy` before dispatch: `createTab` at Checkpoint A on its `url`, the tab-scoped primitives at Checkpoint B on their `tab_id`. `getTabs` is unguarded, mirroring the `browser_get_tabs` exemption. A blocked primitive **throws**, which `webpilot_run_workflow`'s try/catch reports as a failed step, rather than returning the blocked envelope.
 
 ### Checked and exempt tools
 
 | Tool | Checked? | How |
 |---|---|---|
 | `browser_create_tab` | yes | Checkpoint A |
-| `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow` | yes | Checkpoint B |
+| `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js` | yes | Checkpoint B |
+| `webpilot_run_workflow` | yes | Checkpoint B on its own `tab_id`, **and** each internal browser primitive the workflow calls is gated again (`buildBrowserPrimitives`, `mcp-handler.js:1282-1337`) |
 | Each step inside `browser_request_chain` | yes | Gated again as its own tool |
 | `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (`mcp-handler.js:1493-1500`) |
 | `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (`mcp-handler.js:1587-1589`) |
@@ -243,7 +245,6 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 | Gap | Tracking |
 |---|---|
 | First boot offline: until the first successful fetch the signed tier has no rows, because no signed snapshot ships with the installer | #116 |
-| Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
 | Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings) | #112 |
-| Workflow primitives bypass the gate; pending-navigation gap | #114 |
+| Pending-navigation gap (Checkpoint B allows a tab whose URL hasn't navigated yet, see [Fail-closed cases](#fail-closed-cases)) | untracked |
 | The verifier ignores the signed manifest's `kind`; CI checks hashes but not signatures | untracked |

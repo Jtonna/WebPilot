@@ -21,6 +21,7 @@
 const express = require('express');
 const sitePolicy = require('./site-policy');
 const { upsertGlobalUserRule } = require('./global-user-rules');
+const { makeLoopbackGate } = require('./loopback');
 
 // Map a global-only policy verdict into the single state-pill key consumed
 // by the popup UI: 'allowed' | 'blocked_global_site_blocklist' |
@@ -32,7 +33,11 @@ function _statePillFromPolicy(policy) {
   return 'blocked_user';
 }
 
-function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUiEvent, port }) {
+function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUiEvent, port, hostBinding }) {
+  // The popup endpoints are same-machine only — threaded hostBinding lets the
+  // gate honor the dev-mode bypass just like the other loopback surfaces. The
+  // existing installId + web-Origin checks in _authPopup still apply on top.
+  const loopbackGate = makeLoopbackGate(hostBinding, { label: '/api/popup' });
   // Extract installId from the request and resolve it to a profileId.
   // Returns { installId, profileId } on success, or null on failure.
   // Supports X-Install-Id header (preferred) or `installId` query param.
@@ -79,7 +84,7 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
   // GET /api/popup/state?tabUrl=<url>
   // The popup operates in profile-context (no agent identity) — global
   // site rules apply; per-agent rules do not. `agent` is always null.
-  app.get('/api/popup/state', (req, res) => {
+  app.get('/api/popup/state', loopbackGate, (req, res) => {
     const auth = _authPopup(req);
     if (!auth) return res.status(401).json({ error: 'unauthorized' });
     const { profileId } = auth;
@@ -131,7 +136,7 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
   // Sets a GLOBAL user rule for the domain (per the locked design decision —
   // the popup's toggle is the "no AI touches this site" fast button; per-
   // agent rules live on the webapp Site Policy page).
-  app.post('/api/popup/site-toggle', express.json(), (req, res) => {
+  app.post('/api/popup/site-toggle', loopbackGate, express.json(), (req, res) => {
     try {
       const auth = _authPopup(req);
       if (!auth) return res.status(401).json({ error: 'unauthorized' });

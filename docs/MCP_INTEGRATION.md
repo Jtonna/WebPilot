@@ -44,7 +44,7 @@ The web UI's pair-agent modal supports an "Include API key" toggle. When enabled
 
 ### Re-binding agents to a different profile
 
-The web UI's Agents page exposes a profile dropdown per row. Selecting a different profile issues `PATCH /api/ui/agents/:key` with `{ profileId }`. This is a field-flip on the paired-keys entry — no WebSocket teardown is needed because tool calls re-resolve the target profile per call via `resolveTargetProfile`.
+The web UI's Agents page exposes a profile dropdown per row. Selecting a different profile issues `PATCH /api/ui/agents/:id` (the agent's non-secret DB row id) with `{ profileId }`. This is a field-flip on the paired-keys entry — no WebSocket teardown is needed because tool calls re-resolve the target profile per call via `resolveTargetProfile`.
 
 ### Auth Error
 

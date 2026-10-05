@@ -419,12 +419,11 @@ function removeAgentRule(agentId, domain) {
 }
 
 /**
- * Resolve agent_id from an API key. Wraps paired-keys.validateKey + a row
- * lookup by api_key_hash. Returns null if the key is invalid or revoked.
+ * Resolve agent_id from a plaintext API key via paired-keys.validateKey.
+ * Returns null if the key is invalid or revoked.
  *
- * Kept here (rather than in paired-keys.js) so mcp-handler.js can fetch the
- * numeric agent_id without paired-keys.js needing a new public field on its
- * entry shape.
+ * validateKey returns the agent's non-secret row `id` directly (since #129),
+ * so no secondary hash lookup is needed.
  */
 function resolveAgentIdFromApiKey(apiKey) {
   if (typeof apiKey !== 'string' || apiKey.length === 0) return null;
@@ -435,13 +434,7 @@ function resolveAgentIdFromApiKey(apiKey) {
     return null;
   }
   const entry = pairedKeys.validateKey(apiKey);
-  if (!entry) return null;
-  // validateKey's `entry.key` is the api_key_hash.
-  const row = dbModule
-    .getDb()
-    .prepare("SELECT id FROM agents WHERE api_key_hash = ? AND state = 'active'")
-    .get(entry.key);
-  return row ? row.id : null;
+  return entry && entry.id !== undefined && entry.id !== null ? entry.id : null;
 }
 
 module.exports = {
