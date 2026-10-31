@@ -2137,15 +2137,46 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
       console.log(`[mcp:workflow] running ${platform}/${workflow} tabId=${workflowTabId}`);
 
+      // Fresh per request: records the first site-policy outcome any
+      // workflow primitive hit during this run (see buildBrowserPrimitives).
+      const policyTracker = { envelope: null, kind: null };
+
       try {
         const result = await wf.run({
           params: workflowParams,
-          browser: buildBrowserPrimitives(apiKey),
+          browser: buildBrowserPrimitives(apiKey, policyTracker),
           tabId: workflowTabId,
           findInTree
         });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(result && typeof result === 'object' ? result : { result }) }) }] };
+        const body = { ok: true, ...(result && typeof result === 'object' ? result : { result }) };
+        // The workflow caught a policy block and carried on: still succeed,
+        // but tell the caller a step was refused.
+        if (policyTracker.envelope) {
+          try {
+            body.policyBlocked = JSON.parse(policyTracker.envelope.content[0].text);
+          } catch (_e) { /* envelope bodies are always JSON; ignore if not */ }
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(body) }] };
       } catch (err) {
+        // A site-policy outcome is not a formatter failure: return the
+        // standard policy envelope (same shape as a direct tool call or a
+        // blocked chain step) and do not record a formatter error. Look for
+        // the envelope along the `cause` chain in case the workflow wrapped
+        // it; if it was re-thrown without `cause`, fall back to the run's
+        // tracked outcome.
+        let policyEnvelope = null;
+        for (let e = err, depth = 0; e && depth < 5; e = e.cause, depth++) {
+          if (e.__sitePolicyEnvelope) {
+            policyEnvelope = e.__sitePolicyEnvelope;
+            break;
+          }
+        }
+        if (!policyEnvelope) policyEnvelope = policyTracker.envelope;
+        if (policyEnvelope) {
+          console.warn(`[mcp:workflow] ${platform}/${workflow} stopped by site policy: ${err.message}`);
+          return policyEnvelope;
+        }
+
         let incident;
         if (err.__formatterIncident) {
           incident = err.__formatterIncident;
