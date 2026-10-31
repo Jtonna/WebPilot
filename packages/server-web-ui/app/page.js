@@ -66,6 +66,8 @@ export default function HomePage() {
       client.subscribe('agents_changed', () => !cancelled && refresh()),
       client.subscribe('extension_connected', () => !cancelled && refresh()),
       client.subscribe('extension_disconnected', () => !cancelled && refresh()),
+      // An extension is waiting to be matched to a profile (count changed).
+      client.subscribe('identification_pending_changed', () => !cancelled && refresh()),
       // Formatter health flips — surface new errors and clear dismissed rows
       // in realtime.
       client.subscribe('formatter_status_changed', () => !cancelled && refresh()),
@@ -187,6 +189,7 @@ export default function HomePage() {
   const port = status?.port ?? null;
   const networkMode = !!status?.networkMode;
   const pairedAgents = status?.pairedAgents ?? [];
+  const pendingIdentification = status?.pendingIdentification?.count ?? 0;
 
   // Per-profile agent count, keyed by directoryName. pairedAgents carries a
   // `profileId` field (see paired-keys.listKeys) — when the field is
@@ -333,6 +336,16 @@ export default function HomePage() {
           {sortedProfiles.length === 0 ? (
             <EmptyState body="No Chrome profiles found yet. Launch Chrome once on this machine." />
           ) : (
+            <>
+            {pendingIdentification > 0 ? (
+              <p className="wp-secondary" style={{ marginTop: 0, marginBottom: 'var(--s-3)' }}>
+                {pendingIdentification === 1
+                  ? '1 extension is waiting to be matched'
+                  : `${pendingIdentification} extensions are waiting to be matched`}
+                {' · '}
+                <Link href="/profiles/" className="wp-link">Go to Profiles</Link>
+              </p>
+            ) : null}
             <div className="wp-row-list">
               {sortedProfiles.map((p) => {
                 const count = agentCountByProfile[p.directoryName] || 0;
@@ -371,6 +384,7 @@ export default function HomePage() {
                 );
               })}
             </div>
+            </>
           )}
         </section>
       ) : null}
