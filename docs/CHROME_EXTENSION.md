@@ -48,7 +48,20 @@ The service worker is the entry point and command router. It:
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The WebSocket `serverUrl` returned by `/connect` is **always** loopback (`ws://127.0.0.1:<port>`) regardless of network mode, so the extension — which always runs on the same machine as the server — always connects to localhost; the extension WS upgrade is itself loopback-gated server-side. The extension auto-reconnects on transient connection failures (code 1006, server unreachable) with a 5-second delay; on a 1006 close it also self-heals a stale non-loopback `serverUrl` left over in `chrome.storage.local` (e.g. a previously-stored LAN address), resetting the dial target to the `localhost:3456` default before the retry fires. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The WebSocket `serverUrl` returned by `/connect` is **always** loopback (`ws://127.0.0.1:<port>`) regardless of network mode, so the extension — which always runs on the same machine as the server — always connects to localhost; the extension WS upgrade is itself loopback-gated server-side. The extension auto-reconnects after a close, with the delay and popup status depending on the close code (see [Reconnect and close codes](#reconnect-and-close-codes)). On a 1006 close it also self-heals a stale non-loopback `serverUrl` left over in `chrome.storage.local` (e.g. a previously-stored LAN address), resetting the dial target to the `localhost:3456` default before the retry fires. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+
+### Reconnect and close codes
+When the WebSocket closes, `ws.onclose` picks the popup status and retry delay from the close code. Retries only run while the extension is enabled, not `manuallyDisconnected`, and has a `serverUrl`.
+
+| Code | Meaning | Popup status | Retry |
+|---|---|---|---|
+| 1000, 1001 | Clean close | `disconnected` (no error) | 5 s |
+| 1006 | Server unreachable | `server_unreachable` | 5 s |
+| 1008 / `Unauthorized` | Missing or malformed `installId` | `auth_failed` | None. Clears stored `serverUrl`, `enabled` and `apiKey`, then re-runs auto-connect; `installId` is kept |
+| 1011 | Server error | `server_error` | 5 s |
+| 4000 | Server replaced this socket (same install reconnecting, or stale previous socket) | `connection_lost` | 5 s |
+| 4409 | Server refused a takeover: a live connection from a different install holds this profile (`connection_in_use`) | `connection_in_use`, "Another WebPilot connection is active for this browser profile" | 30 s (`CONNECTION_IN_USE_RETRY_MS`); config kept |
+| Other | Unexpected close | `connection_lost` | 5 s |
 
 ### Hello handshake
 
@@ -66,7 +79,7 @@ The server resolves the binding in five ordered steps (see `resolveHelloProfile(
 4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
 5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; the actual profile picker is rendered by the webapp's `/pairings` flow (see `background.js` around lines 400-401). Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
 
-The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list and the webapp's `/pairings` flow surfaces the picker). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list and the webapp's `/pairings` flow surfaces the picker). It can also refuse the connection by closing the socket with code `4409` (`connection_in_use`) instead of sending `hello_ack`, because another install already holds the profile. See [Reconnect and close codes](#reconnect-and-close-codes). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
 
 ### Message handlers
 
@@ -333,7 +346,7 @@ Standard command envelope:
 
 | Type | Envelope | Params / Fields | Description |
 |------|----------|-----------------|-------------|
-| `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. |
+| `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. Not sent if the server refuses the claim; it closes with `4409` instead. |
 | `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; extension caches the list and the webapp's `/pairings` flow surfaces the picker. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
 
@@ -363,7 +376,7 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile via the webapp). |
+| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile via the webapp, or closes the socket with `4409` `connection_in_use` if a different install already holds the profile). |
 
 > **Removed (#129):** `revoke_key`, `rename_agent`, and `list_paired_agents` are no longer sent by the extension or handled by the server; agent administration (list/rename/revoke) is web-UI-only.
 >
