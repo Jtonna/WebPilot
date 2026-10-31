@@ -359,6 +359,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
+    case 'reidentify':
+      // User picked a Chrome profile in the popup. This handler is the ONLY
+      // writer of `webpilot.profileId`; the popup stays read-only on storage.
+      handleReidentify(message.profileId).then(
+        (res) => sendResponse(res),
+        (e) => sendResponse({ success: false, error: (e && e.message) || 'reidentify failed' })
+      );
+      break;
+
     case 'FORGET_CONFIG':
       manuallyDisconnected = false;
       disconnectWebSocket();
@@ -388,6 +397,63 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return true;
 });
+
+/**
+ * Apply a profile the user picked in the popup (identify_required picker):
+ * persist it, restart the identify cycle, and re-send hello (or reconnect).
+ * Resolves { success: true } or { success: false, error }.
+ */
+async function handleReidentify(profileId) {
+  if (typeof profileId !== 'string' || profileId.length === 0) {
+    return { success: false, error: 'No profile selected' };
+  }
+
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(
+      ['webpilot.knownProfiles', 'enabled', 'serverUrl', 'manuallyDisconnected', 'webpilot.installId'],
+      (r) => resolve(r || {})
+    );
+  });
+
+  const known = stored['webpilot.knownProfiles'];
+  if (Array.isArray(known)) {
+    if (!known.some((p) => p && p.directoryName === profileId)) {
+      return { success: false, error: 'Unknown profile' };
+    }
+  } else {
+    console.log('[reidentify] no stored knownProfiles; accepting profileId without validation');
+  }
+
+  // A worker woken by the popup message has default in-memory state: refresh it.
+  isEnabled = stored.enabled || false;
+  manuallyDisconnected = stored.manuallyDisconnected === true;
+  config.installId = stored['webpilot.installId'] || config.installId;
+  config.serverUrl = stored.serverUrl || config.serverUrl;
+
+  const socketOpen = !!wsConnection && wsConnection.readyState === WebSocket.OPEN;
+  if (!socketOpen && (!isEnabled || manuallyDisconnected)) {
+    return { success: false, error: 'WebPilot is disconnected. Reconnect from the popup first.' };
+  }
+
+  // Reset BEFORE the write so a stale identify_required arriving during the
+  // await restarts the 3s/10s/30s cycle instead of tripping failIdentification
+  // (which would clear the profileId we are about to store).
+  resetIdentifyState();
+  await chrome.storage.local.set({ 'webpilot.profileId': profileId });
+  resetIdentifyState();
+  console.log('[reidentify] profile selected: ' + profileId);
+
+  if (socketOpen && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+    await sendHelloHandshake();
+  } else if (!isSocketLive()) {
+    // User-initiated: clearReconnectSchedule also zeroes nextRetryAt, which
+    // bypasses any 4409 backoff.
+    clearReconnectSchedule();
+    connectWebSocket();
+  }
+  // else CONNECTING: ws.onopen reads the stored profileId when it sends hello.
+  return { success: true };
+}
 
 function handleServiceStatusChange(enabled) {
   isEnabled = enabled;
@@ -550,8 +616,8 @@ function connectWebSocket() {
           // cleared when the retries are exhausted.
           const knownProfiles = message.knownProfiles || [];
           chrome.storage.local.set({ 'webpilot.knownProfiles': knownProfiles });
-          // The profile picker lives in the webapp's /pairings flow; the
-          // extension just stashes the list and logs.
+          // The popup renders the profile picker from this list (shown when
+          // /api/popup/state is 401) and answers with a `reidentify` message.
           console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
           scheduleIdentifyRetry(ws);
           return;
@@ -708,7 +774,8 @@ function connectWebSocket() {
  * profile directory name. We prefer a previously-stored profileId; otherwise
  * we try chrome.identity.getProfileUserInfo() to surface an email the server
  * can match against `Local State`. If neither is available, the server will
- * reply with `identify_required` and the user picks via popup.
+ * reply with `identify_required`, the popup shows a profile picker, and the
+ * user's choice arrives via the `reidentify` message.
  */
 async function sendHelloHandshake() {
   if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) return;
@@ -745,6 +812,8 @@ async function sendHelloHandshake() {
     profileId,
     gaiaEmail,
     installId,
+    // Lets the server locate this install's storage on disk to infer the profile.
+    extensionId: chrome.runtime.id,
   };
   console.log('[hello] sending handshake', helloMsg);
   try {
@@ -854,8 +923,18 @@ function updateConnectionStatus(status, error = null, errorType = null) {
   connectionStatus = status;
   connectionError = error;
   connectionErrorType = errorType;
-  // No broadcast: the popup polls the server for connection state and does
-  // not subscribe to chrome.runtime messages from the service worker.
+  // No broadcast: the popup polls the server for connection state. It reads
+  // this session-storage mirror only to explain a failed profile pick
+  // (e.g. connection_in_use), which the server cannot report over HTTP.
+  try {
+    chrome.storage.session
+      .set({
+        'webpilot.connectionState': { status, error, errorType, updatedAt: Date.now() }
+      })
+      .catch((e) => console.log('[status] session mirror failed: ' + (e && e.message)));
+  } catch (e) {
+    console.log('[status] session mirror unavailable: ' + (e && e.message));
+  }
 }
 
 // Command routing
