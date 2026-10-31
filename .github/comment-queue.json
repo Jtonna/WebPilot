@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 132,
-    "body": "Sub-tasks (approved plan):\nA. Chrome detectors report 'unknown' (not 'not running') when the PowerShell/process scan fails; update every caller (getStatus, /api/ui/status, restart route, closeAll, web UI page.js action handling).\nB. Chrome manager: re-verify the cached hasFlag when the extension is disconnected (rate-limited ~5s); prefer the flagged parent when several match.\nC. One coordinated connect wait owned by ensureReady: ~10s when Chrome is already running, ~15s when it must launch/restart (configurable). Short wait first, then launch with the target URL (snapshot-diff tab matching, no double open). Restart-to-add-flag stays automatic but relaunches with session restore. Clear 'Chrome is starting, retry' error instead of 'call browser_create_tab'. UI restart route doesn't block.\nD. Extension: chrome.alarms reconnect heartbeat (30s) with CONNECTING guard; honor manual disconnect and 4409 backoff; ignore onclose from a stale socket (fixes same-install socket ping-pong). Manifest: alarms permission + version bump.\nE. Extension: retry hello on identify_required/identify_timeout with 3s/10s/30s backoff, keep the stored profileId during retries, clear it after the cap.\nF. Per-line ISO timestamps in the daemon log file.\nG. Unit tests for detector, manager, create_tab (Chrome always stubbed).\nH. Investigate + fix the blank-window case the user sees while the extension reports connected (extension create_tab window path / partial failure)."
-  }
-]
+[]
