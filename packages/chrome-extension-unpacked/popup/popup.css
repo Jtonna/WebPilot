@@ -103,6 +103,11 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute must win over the `display: flex` / `inline-flex`
+   rules below (.wp-popup-tab, .wp-popup-picker, .wp-btn-primary); the UA
+   `[hidden] { display: none }` rule loses to any author display rule. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
