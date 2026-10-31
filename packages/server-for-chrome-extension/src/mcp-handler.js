@@ -1270,6 +1270,10 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * manifest schema.
    *
    * @param {string|null} apiKey  Resolved API key for the calling agent
+   * @param {{ envelope: object|null, kind: string|null }} [policyTracker]
+   *   Per-run record of the FIRST site-policy outcome a primitive hit.
+   *   webpilot_run_workflow creates a fresh one per request and reads it
+   *   after `run()` settles; see _gate below.
    * @returns {{
    *   getAccessibilityTree: Function,
    *   click: Function,
@@ -1279,34 +1283,58 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    *   createTab: Function
    * }}
    */
-  function buildBrowserPrimitives(apiKey) {
+  function buildBrowserPrimitives(apiKey, policyTracker = { envelope: null, kind: null }) {
     // Re-apply the site-policy gate for every browser primitive a workflow
     // invokes. Without this, workflow code reaches the internal `_browser*`
     // helpers directly — the gate in tools/call only fires for the OUTER
     // webpilot_run_workflow call's tab_id, so a workflow could otherwise
     // open arbitrary URLs or act on unchecked tabs and bypass site blocks.
     // This mirrors the browser_request_chain re-check (each chained step is
-    // gated individually). A blocked primitive THROWS, so the enclosing
-    // workflow's try/catch (in webpilot_run_workflow) reports it as a
-    // failed step rather than silently receiving a blocked envelope.
+    // gated individually).
+    //
+    // A blocked primitive THROWS so workflow code stops at that step. The
+    // thrown error carries the standard policy envelope (the same MCP result
+    // a direct tool call would get) on `err.__sitePolicyEnvelope`, tagged by
+    // `err.__sitePolicyKind`: 'blocked' ('site blocked by policy') or
+    // 'unavailable' ('site policy check failed', incl. a policy evaluation
+    // that threw — fail CLOSED as in tools/call). The first outcome of the
+    // run is also kept in `policyTracker`, so webpilot_run_workflow can
+    // still return the envelope when the workflow re-wraps the error without
+    // `cause`, or report it as `policyBlocked` when the workflow swallows it.
+    // Policy outcomes are never recorded as formatter errors.
     const _gate = async (toolName, gateArgs) => {
-      const blocked = await _enforceSitePolicy(toolName, gateArgs, apiKey);
-      if (blocked) {
-        let detail = 'site policy blocked';
-        try {
-          const body = JSON.parse(blocked.content[0].text);
-          detail = [
-            body.error,
-            body.domain ? `domain=${body.domain}` : null,
-            body.reason ? `reason=${body.reason}` : null,
-          ]
-            .filter(Boolean)
-            .join(' ');
-        } catch (_e) { /* fall back to generic message */ }
-        const err = new Error(`workflow step blocked by site policy: ${detail}`);
-        err.__sitePolicyBlocked = blocked;
-        throw err;
+      let blocked;
+      let kind;
+      try {
+        blocked = await _enforceSitePolicy(toolName, gateArgs, apiKey);
+      } catch (e) {
+        console.error('[policy] workflow-step enforcement threw — blocking step:', e);
+        blocked = _buildPolicyUnavailableResponse({
+          reason: POLICY_FAILURE_REASONS.POLICY_ERROR,
+          message: `Site policy could not be evaluated: ${e.message}. Step blocked.`,
+        });
       }
+      if (!blocked) return;
+      let detail = 'site policy blocked';
+      try {
+        const body = JSON.parse(blocked.content[0].text);
+        kind = body.error === 'site blocked by policy' ? 'blocked' : 'unavailable';
+        detail = [
+          body.error,
+          body.domain ? `domain=${body.domain}` : null,
+          body.reason ? `reason=${body.reason}` : null,
+        ]
+          .filter(Boolean)
+          .join(' ');
+      } catch (_e) { kind = 'unavailable'; /* fall back to generic message */ }
+      if (!policyTracker.envelope) {
+        policyTracker.envelope = blocked;
+        policyTracker.kind = kind;
+      }
+      const err = new Error(`workflow step blocked by site policy: ${detail}`);
+      err.__sitePolicyEnvelope = blocked;
+      err.__sitePolicyKind = kind;
+      throw err;
     };
 
     return {
