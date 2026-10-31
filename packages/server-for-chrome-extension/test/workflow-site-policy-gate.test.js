@@ -115,6 +115,7 @@ const fakeBridge = {
     sentCommands.push({ cmd, args });
     if (cmd === 'get_tabs') return getTabsImpl();
     if (cmd === 'create_tab') return { tab_id: 99 };
+    if (cmd === 'get_accessibility_tree') return { nodes: [], url: 'https://www.example.com/x', tabId: args && args.tab_id };
     return {};
   },
 };
@@ -418,6 +419,62 @@ test('workflow that throws a plain error -> recorded as a formatter error', asyn
   assert.ok('diagnostics' in body, 'expected formatter diagnostics');
   assert.equal(formatterLogCalls.recordError.length, 1, 'plain failure must be recorded');
   assert.equal(formatterLogCalls.buildDiagnostics.length, 1);
+});
+
+// #133: a workflow that swallows a block, runs further extension commands, and
+// then fails for an unrelated reason must NOT have that failure masked as a
+// policy block. It takes the formatter-error path and still reports the earlier
+// refusal as policyBlocked.
+for (const [label, between] of [
+  ['getAccessibilityTree', (browser) => browser.getAccessibilityTree({ tab_id: 7 })],
+  ['getTabs', (browser) => browser.getTabs()],
+]) {
+  test(`swallowed block then ${label} then plain error -> formatter error with policyBlocked`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    seedAgentBlock('blocked.com');
+    currentWorkflow = {
+      parameters: {},
+      run: async ({ browser }) => {
+        try {
+          await browser.click({ tab_id: 8, x: 1, y: 1 });
+        } catch (_e) { /* swallow the block */ }
+        await between(browser);
+        throw new Error('selector not found');
+      },
+    };
+    const res = await runWorkflow();
+    const body = bodyOf(res);
+    assert.equal(res.result.isError, true);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, 'selector not found');
+    assert.ok('diagnostics' in body, 'expected formatter diagnostics');
+    assert.equal(formatterLogCalls.recordError.length, 1, 'real failure must be recorded');
+    assert.equal(formatterLogCalls.buildDiagnostics.length, 1);
+    assert.ok(body.policyBlocked, 'expected policyBlocked alongside the error');
+    assert.equal(body.policyBlocked.domain, 'blocked.com');
+    t.mock.timers.tick(5000);
+  });
+}
+
+// A re-thrown error whose message still says the step was blocked is a policy
+// outcome even though commands ran between the block and the throw.
+test('workflow that rethrows the block message after later commands -> blocked envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (e) {
+        await browser.getTabs();
+        throw new Error('failed: ' + e.message);
+      }
+      return { done: true };
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  t.mock.timers.tick(5000);
 });
 
 // Helper: returns a handler (named for readability at call sites).
