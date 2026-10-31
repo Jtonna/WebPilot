@@ -1817,19 +1817,20 @@ function makeExtensionUpgradeHandler({ wss, hostBinding, log = console.log }) {
  * Build the `/connect` handler. The extension's own `installId` is its
  * identity, so there is no secret to hand out — only the addresses to dial.
  *
- * The WS `serverUrl` is ALWAYS loopback (ws://127.0.0.1:<port>) regardless of
- * network mode, so the same-machine extension never adopts a LAN IP as its
- * dial target (the shared root cause of #125 / the popup+dashboard link). The
- * `sseUrl` may continue to reflect the public host — it is informational.
+ * Both the WS `serverUrl` (ws://127.0.0.1:<port>) and the `sseUrl`
+ * (http://127.0.0.1:<port>/sse) are ALWAYS loopback regardless of network
+ * mode, so the same-machine extension never adopts a LAN IP as a dial target
+ * or stored address (the shared root cause of #125 / the popup+dashboard link,
+ * and #136).
  *
- * @param {{ port: number, publicHost: string, host: string }} cfg
+ * @param {{ port: number, host: string }} cfg
  * @returns {(req, res) => void}
  */
-function makeConnectHandler({ port, publicHost, host }) {
+function makeConnectHandler({ port, host }) {
   return function connectHandler(req, res) {
     res.json({
       serverUrl: `ws://127.0.0.1:${port}`,
-      sseUrl: `http://${publicHost}:${port}/sse`,
+      sseUrl: `http://127.0.0.1:${port}/sse`,
       networkMode: host === '0.0.0.0',
     });
   };
@@ -2484,9 +2485,9 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
 
   // The transport key has been retired. The extension's own `installId` is its
   // identity, so /connect only hands out dial addresses. serverUrl is ALWAYS
-  // loopback (see makeConnectHandler) so the same-machine extension never
-  // adopts a LAN IP — the shared root cause of #125.
-  app.get('/connect', connectGate, makeConnectHandler({ port, publicHost, host }));
+  // loopback, and so is sseUrl (see makeConnectHandler), so the same-machine
+  // extension never adopts a LAN IP — the shared root cause of #125 / #136.
+  app.get('/connect', connectGate, makeConnectHandler({ port, host }));
 
   server.listen(port, host, () => {
     // Write PID and port files for service management

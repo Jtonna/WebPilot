@@ -15,6 +15,27 @@ import { type as typeText } from './handlers/keyboard.js';
 
 // Auto-connect defaults
 const DEFAULT_SERVER_URL = 'ws://localhost:3456';
+
+/**
+ * Return `urlString` with a non-loopback host replaced by `localhost`, keeping
+ * protocol, port and path and dropping any query string (e.g. a stale
+ * `?installId=`). A loopback or unparseable URL is returned unchanged. The
+ * server, Chrome and this extension always run on the same machine, so a LAN
+ * address is never a valid dial or HTTP target (#110 / #125 / #136).
+ */
+function toLoopbackWsUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') return urlString;
+    u.hostname = 'localhost';
+    u.search = '';
+    u.hash = '';
+    const out = u.toString();
+    return u.pathname === '/' ? out.replace(/\/$/, '') : out;
+  } catch (_e) {
+    return urlString;
+  }
+}
 const DEFAULT_HTTP_URL = 'http://localhost:3456';
 const AUTO_CONNECT_INTERVAL_MS = 5000;
 // Slower retry when the server refuses us because another connection holds this profile.
@@ -504,19 +525,25 @@ function connectWebSocket() {
   updateConnectionStatus('connecting', null, null);
 
   try {
-    const wsUrl = new URL(config.serverUrl);
     // Always dial loopback. The server + Chrome + extension always run on the
     // same machine, and the server loopback-gates the extension WS even in
     // network mode (only the MCP surface is LAN-reachable). A stale LAN
     // `serverUrl` from an older build (or a pre-fix /connect) must never be
     // adopted as the dial target — coerce the host back to localhost, keeping
-    // the port. (Root cause of #110 / #125.)
-    if (wsUrl.hostname !== '127.0.0.1' && wsUrl.hostname !== 'localhost') {
+    // the port. (Root cause of #110 / #125.) When the host actually changes,
+    // also write the clean URL back to storage (#136): otherwise the stale LAN
+    // address stays persisted, and the /connect refresh + the popup's
+    // /api/popup/* calls keep targeting it (and get refused by the server's
+    // loopback gate).
+    const loopbackServerUrl = toLoopbackWsUrl(config.serverUrl);
+    if (loopbackServerUrl !== config.serverUrl) {
       console.log(
-        `[ws] coercing non-loopback dial host "${wsUrl.hostname}" -> localhost (same-machine only)`
+        `[ws] coercing non-loopback serverUrl "${config.serverUrl}" -> ${loopbackServerUrl} (same-machine only)`
       );
-      wsUrl.hostname = 'localhost';
+      config.serverUrl = loopbackServerUrl;
+      chrome.storage.local.set({ serverUrl: loopbackServerUrl });
     }
+    const wsUrl = new URL(config.serverUrl);
     // Identify this install to the server. The server records (installId ->
     // profileId) in `extension_installs` and uses it purely for routing. The
     // server's auth boundary is at the agent layer (paired keys); the
@@ -903,7 +930,9 @@ function stopKeepalive() {
 async function refreshConnectionMetadata() {
   try {
     // Derive HTTP URL from stored WS URL (ws://host:port -> http://host:port)
-    const wsUrl = config.serverUrl;
+    // Loopback-coerce first: a stale LAN host would be refused by the server's
+    // /connect loopback gate (#136).
+    const wsUrl = config.serverUrl && toLoopbackWsUrl(config.serverUrl);
     if (!wsUrl) return;
     const httpUrl = wsUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
     const response = await fetch(`${httpUrl}/connect`);
