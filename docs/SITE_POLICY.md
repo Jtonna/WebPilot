@@ -118,7 +118,7 @@ Since #100, the gate fails closed: when a checked tool's verdict cannot be reach
 | `policy_error` | Any exception thrown by the gate for a workflow primitive. It is treated as blocked, and `webpilot_run_workflow` returns the envelope (or `policyBlocked` if the workflow swallowed it). Message ends `Step blocked.` | `buildBrowserPrimitives` (`_gate`) |
 | `invalid_url` | Checkpoint A with a non-string `url` (`url must be a string`) | `_enforceSitePolicy` (Checkpoint A branch) |
 | `invalid_tab_id` | Checkpoint B with a missing `tab_id` (`tab_id is required`) or a non-integer one, including numeric strings (`tab_id must be an integer (got <type>: <value>)`) | `_enforceSitePolicy` (Checkpoint B branch) |
-| `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.`) | `_enforceSitePolicy` (Checkpoint B branch) |
+| `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Open Chrome on that profile, or call browser_create_tab to launch it.`) | `_enforceSitePolicy` (Checkpoint B branch) |
 | `tab_url_unavailable` | Checkpoint B when `get_tabs` fails (`could not read tab URL: <err>`), the tab is not listed (`tab <id> not found`), or its URL is not a string (`tab <id> has no readable URL`) | `_enforceSitePolicy` (Checkpoint B branch) |
 
 These cases still proceed without a check:
@@ -126,6 +126,7 @@ These cases still proceed without a check:
 - Checkpoint A with a missing, `null` or empty `url` (`_enforceSitePolicy`, Checkpoint A branch).
   - The extension raises its own "URL is required".
   - Checkpoint A has no connectivity check, because `browser_create_tab` may launch Chrome itself.
+  - A scheme the extension cannot open (`chrome://settings`, `file:///...`, `javascript:...`) has no network host to match, so it passes the gate on default allow. `browser_create_tab` then rejects it before any launch.
 - Checkpoint B on a found tab whose URL is `''` (not yet navigated). This evaluates to default allow with a null domain, so no event is recorded.
 
 Fail-closed refusals are not recorded in the event log, and the tab is not auto-closed.
