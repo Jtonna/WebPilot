@@ -1838,6 +1838,8 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }, 5000);
 
     ws.on('message', (data) => {
+      // Any inbound traffic (pings included) counts as liveness for takeover checks.
+      ws._lastActivity = Date.now();
       try {
         const message = JSON.parse(data.toString());
 
@@ -1882,19 +1884,35 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
             return;
           }
 
+          ws._installId =
+            typeof message.installId === 'string' && message.installId.length > 0
+              ? message.installId
+              : null;
+          // Claim the profile first: a live connection from another install
+          // is never displaced (see extension-bridge setConnection).
+          const claim = extensionBridge.setConnection(resolvedProfileId, ws);
+          if (!claim.ok) {
+            console.log(
+              `[extension-bridge] hello refused profileId="${resolvedProfileId}" ` +
+                `installId="${ws._installId || ''}" reason=${claim.reason}`
+            );
+            try {
+              ws.close(4409, 'connection_in_use');
+            } catch (e) { /* ignore */ }
+            return;
+          }
           registeredProfileId = resolvedProfileId;
           // Persist the installId -> profileId mapping regardless of which
           // resolution path got us here. This is the moment the server
           // "learns" the binding for this install; future connects can use
           // the installId path even if extension storage gets wiped.
-          if (typeof message.installId === 'string' && message.installId.length > 0) {
+          if (ws._installId) {
             try {
-              extensionInstalls.setProfileForInstall(message.installId, resolvedProfileId);
+              extensionInstalls.setProfileForInstall(ws._installId, resolvedProfileId);
             } catch (e) {
               console.log(`[extension-bridge] persist installId mapping failed: ${e.message}`);
             }
           }
-          extensionBridge.setConnection(resolvedProfileId, ws);
           console.log(
             `[extension-bridge] hello accepted profileId="${resolvedProfileId}"`
           );
