@@ -316,6 +316,10 @@ export async function getTabs() {
   return tabs.map(tab => ({
     id: tab.id,
     url: tab.url,
+    // URL the tab is navigating to before it commits (undefined once loaded).
+    // Lets the server match a tab Chrome opened from its command line while
+    // it is still loading.
+    pendingUrl: tab.pendingUrl,
     title: tab.title,
     active: tab.active,
     windowId: tab.windowId,
