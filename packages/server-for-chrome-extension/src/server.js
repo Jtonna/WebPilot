@@ -1884,10 +1884,14 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
             return;
           }
 
-          ws._installId =
-            typeof message.installId === 'string' && message.installId.length > 0
-              ? message.installId
-              : null;
+          // The upgrade handler already stamped the installId validated from
+          // the URL. Never let hello override it; fall back only when absent.
+          if (typeof ws._installId !== 'string' || ws._installId.length === 0) {
+            ws._installId =
+              typeof message.installId === 'string' && message.installId.length > 0
+                ? message.installId
+                : null;
+          }
           // Claim the profile first: a live connection from another install
           // is never displaced (see extension-bridge setConnection).
           const claim = extensionBridge.setConnection(resolvedProfileId, ws);
