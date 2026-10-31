@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "issue": 133,
+    "body": "Approved plan: track commandsSinceBlock in the per-run policy tracker; use the tracker fallback in the run_workflow catch only when the error has no envelope on its cause chain AND (no extension command was sent after the block OR the message says 'workflow step blocked by site policy'); otherwise take the normal formatter-error path (recordError + diagnostics) and attach policyBlocked. Tests for the masking cases. Ships with #134 and #136 on BUG/133-epic-leftovers-134-136."
+  },
+  {
+    "issue": 134,
+    "body": "Approved plan: extension-bridge rejects pending commands bound to a replaced socket (live or already-dead prev) with 'Extension connection replaced' at setConnection time, after the refusal check; defense-in-depth in clearConnection's no-match branch (socket identity only). Tests in extension-bridge-takeover.test.js. Ships with #133 and #136."
+  },
+  {
+    "issue": 136,
+    "body": "Approved plan: popup serverUrl and /connect sseUrl built from 127.0.0.1 + bound port (publicHost kept only for the startup log); background.js writes the coerced loopback serverUrl back to storage at the coercion point and in refreshConnectionMetadata via one helper. Tests in popup-routes.test.js and connect-url.test.js; extension change verified manually. Ships with #133 and #134."
+  }
+]
