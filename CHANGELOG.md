@@ -102,6 +102,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A workflow error raised after a swallowed site-policy block is no longer masked by the policy envelope. The real error is returned with `policyBlocked` attached and recorded as a formatter error. (#133)
 - Commands in flight on a replaced extension socket are rejected immediately with "Extension connection replaced" instead of waiting out the 30s timeout. (#134)
 - `/connect` `sseUrl` and `/api/popup/state` `serverUrl` are always loopback, and the extension rewrites a stale non-loopback stored `serverUrl` to `ws://localhost:<port>`. (#136)
+- Extension reconnect race: a late close of a replaced socket after `identify_timeout` no longer leaves `identifyReconnectPending` set (which made the next socket's close skip its retry), and auto-connect keeps exactly one retry interval. (#141)
 
 ## [1.1.8]
 
