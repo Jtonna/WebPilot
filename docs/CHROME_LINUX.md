@@ -164,6 +164,10 @@ Tick each of these by hand on first run.
 - [ ] Verify `--user-data-dir=` and `--profile-directory=` are
       correctly extracted from `cmdline`. The NUL-separated format
       should preserve spaces correctly.
+- [ ] If `/proc` is unreadable, the detector throws
+      `ChromeDetectionError` and the restart route returns
+      `unknown:true` and `success:false` without closing Chrome. This
+      is expected, not an empty result.
 
 ### Notification system
 
@@ -185,8 +189,10 @@ Tick each of these by hand on first run.
       `cat /proc/<chrome-pid>/cmdline | tr '\\0' ' '; echo` and
       confirm both `--profile-directory=<name>` and
       `--silent-debugger-extension-api` are present.
-- [ ] Verify Chrome auto-restores the previous session's tabs (this
-      is Chrome's behavior, not WebPilot's — see `CHROME_WINDOWS.md`).
+- [ ] Verify the previous session's tabs come back. WebPilot passes
+      `--restore-last-session` on restart (see `CHROME_WINDOWS.md`,
+      "Restart restores the previous session"). Confirm the flag
+      appears in `/proc/<pid>/cmdline` and the tabs reopen.
 
 ### Distro / packaging concerns
 

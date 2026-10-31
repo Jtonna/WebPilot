@@ -138,6 +138,10 @@ Tick each of these by hand on first run.
       that `launcher.js` deliberately omits `--user-data-dir` when it
       equals the default (see `getDefaultUserDataDir()`), so the
       default-path case won't have the flag on the cmdline at all.
+- [ ] `macos-detector.js` treats a `pgrep` failure as "no Chrome" and
+      never reports `unknown`. If the restart route reports
+      `unknown:true` or `success:false`, the scan failed. It does not
+      mean Chrome is closed.
 
 ### Notification system
 
@@ -157,10 +161,11 @@ Tick each of these by hand on first run.
       `ps -ww -o command= -p <chrome-pid>` and confirm the launched
       Chrome command line contains both `--profile-directory=<name>`
       and `--silent-debugger-extension-api`.
-- [ ] Verify Chrome auto-restores the previous session's tabs — same
-      behavior as Windows, see `CHROME_WINDOWS.md` "auto-restores tabs"
-      section. This is Chrome's built-in behavior and should work
-      identically on macOS, but worth confirming.
+- [ ] Verify the previous session's tabs come back. WebPilot passes
+      `--restore-last-session` on restart (see `CHROME_WINDOWS.md`,
+      "Restart restores the previous session"). Confirm the flag
+      appears in the `ps -ww -o command=` output above and the tabs
+      reopen.
 
 ### File permissions / sandbox interactions specific to macOS
 

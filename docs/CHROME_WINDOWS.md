@@ -8,24 +8,60 @@ may differ — see [`CHROME_MAC.md`](CHROME_MAC.md) and
 
 ---
 
-## `--profile-directory=<name>` auto-restores tabs
+## Restart restores the previous session with `--restore-last-session`
 
-When Chrome is launched with `--profile-directory=<name>`, it automatically
-restores the previous session's tabs for that profile, regardless of the
-profile's `restore_on_startup` Preferences value. WebPilot relies on this
-in `ChromeManager.ensureReady`: when a kill+relaunch is necessary (e.g.
-to add the `--silent-debugger-extension-api` flag), no explicit
-tab-restoration logic is needed on the server side — Chrome's own
-session-restore handles it.
+`--profile-directory=<name>` alone does not bring a closed session's
+windows back. When `ChromeManager.ensureReady` finds Chrome running
+without `--silent-debugger-extension-api`, it closes Chrome and
+relaunches it, and every relaunched profile gets
+`--restore-last-session` (`RESTORE_SESSION_FLAG`). That flag is what
+makes the user's previous windows and tabs reappear, so no
+tab-restoration logic is needed on the server side.
+
+The close is graceful. `closer.js` posts `WM_CLOSE` to every visible
+Chrome window, so Chrome runs its normal shutdown and saves the session
+before it exits. A hard kill would skip that save.
+
+The relaunch covers the active profiles plus the required profiles
+(active ∪ required). Only the required profiles get the target URL.
+
+Flag order on the Chrome command line:
+
+1. `--user-data-dir` (only when non-default)
+2. `--profile-directory`
+3. `--silent-debugger-extension-api`
+4. `extraArgs`: `--restore-last-session`, then the URL
 
 This is what makes the "we may need to relaunch Chrome to attach the
 debugger flag" UX tolerable: the user notices a brief Chrome flicker,
 but their open tabs come back on their own.
 
 See: `packages/server-for-chrome-extension/src/chrome/launcher.js`
-(builds the `--profile-directory=` arg) and
+(`extraArgs`, appended last),
 `packages/server-for-chrome-extension/src/chrome/manager.js`
-(`ensureReady` decides when a relaunch is necessary).
+(`ensureReady`, `RESTORE_SESSION_FLAG`), and
+`packages/server-for-chrome-extension/src/chrome/closer.js`
+(`WM_CLOSE`).
+
+## What `ensureReady` does in each case
+
+- **Running with the flag, extension not connected.** Wait 3 s
+  (`EXTENSION_GRACE_MS`) for a sleeping extension service worker to
+  reconnect on its own. If it hasn't, spawn the missing profiles with
+  the URL. There is one coordinated wait, with a 10 s budget.
+- **Running without the flag.** Close and relaunch as described above.
+  15 s budget.
+- **Not running.** Launch the required profiles with the URL. 15 s
+  budget.
+- **Process scan failed (state unknown).** Abort with
+  `reason: 'chrome_state_unknown'`. It never closes Chrome or spawns
+  anything, because "could not check" is not "not running". Windows and
+  Linux raise `ChromeDetectionError` on a failed scan. macOS still
+  reports an empty list when `pgrep` fails, so it cannot report this
+  state.
+
+See: `packages/server-for-chrome-extension/src/chrome/manager.js`
+(`ensureReady`).
 
 ## Per-profile activity detection via session-file mtimes
 
@@ -39,7 +75,8 @@ recent window (default 30 seconds). The file list — see `HOT_FILES` in
 profile directory's own mtime is also consulted as a cheap fallback.
 
 This drives `getActiveProfiles()`, which decides which profiles to
-re-launch after a `ChromeManager.ensureReady` kill+relaunch cycle.
+re-launch, alongside the required ones, after an `ensureReady`
+close-and-relaunch.
 The 30-second window is a tradeoff: long enough to survive idle
 pauses between user interactions, short enough that a long-abandoned
 tab isn't treated as live work. Active Chrome profiles write to
