@@ -65,7 +65,7 @@ Site-policy enforcement is **server-side**. The extension does not enforce site 
 - **Checked**, against the tab's current URL (or, for `browser_create_tab`, the URL being opened): `browser_create_tab`, `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow`, and each step of a `browser_request_chain`.
 - **Exempt** (no site involved): `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call, `request_pairing`, `check_pairing_status`, and the `webpilot_get_formatter_info` / `webpilot_reload_formatters` / `webpilot_dev_*` tools.
 
-**Chains:** each `browser_request_chain` step is re-checked independently, and a block or failed check does not stop the chain (see [Per-step site-policy behavior](#browser_request_chain)).
+**Chains:** each `browser_request_chain` step is re-checked independently, and a block or failed check does not stop the chain (see [Per-step site-policy behavior](#browser_request_chain)). Each browser primitive a workflow invokes is re-checked individually, as with chain steps.
 
 **Agent-relevant notes:**
 - Only an authenticated call gets the per-agent tier; the popup's own lookups run without an agent identity.
@@ -301,7 +301,26 @@ Each formatter declares its workflows in `manifest.json` under `workflows[]` and
 | `intent` | string | No | Optional debug trace. |
 
 **Returns:**
-On success, an object of shape `{ ok: true, ...result }` where `result` is whatever the workflow's `run()` function returned. On failure, `{ ok: false, error: "<message>", diagnostics: {...} }` with `isError: true` set on the MCP response. The `diagnostics` object includes `phase`, `workflow`, `platform`, `tabId`, and error context.
+- **Success:** `{ ok: true, ...result }`, where `result` is whatever the workflow's `run()` function returned.
+- **Runtime failure:** `{ ok: false, error: "<message>", diagnostics: {...} }` with `isError: true` set on the MCP response. The `diagnostics` object includes `phase`, `workflow`, `platform`, `tabId`, and error context.
+- **Refused by site policy:** if a browser primitive the workflow calls is refused, the workflow stops and the response is the standard site-policy envelope ([Blocked by Site Policy](#blocked-by-site-policy) or [site policy check failed](#site-policy-check-failed)) with `isError: true` and no `diagnostics`.
+- **Refusal handled by the workflow:** if the workflow catches the block and finishes, the response is the normal `ok: true` result (no `isError`) plus a `policyBlocked` field holding the first refused step's envelope body:
+```json
+{
+  "ok": true,
+  "sent": false,
+  "policyBlocked": {
+    "ok": false,
+    "error": "site blocked by policy",
+    "domain": "example.com",
+    "policySource": "agent_rule",
+    "tabId": 123,
+    "tabWillCloseAt": "2026-09-27T12:00:05.000Z",
+    "tabCloseInSeconds": 5
+  }
+}
+```
+Check `policyBlocked` before trusting an `ok: true` result.
 
 **Example (Discord — `send_message`):**
 ```
@@ -318,14 +337,14 @@ Internally this workflow fetches the formatted accessibility tree, locates the c
 
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
-- Site policy blocked → [Blocked by Site Policy](#blocked-by-site-policy)
-- Site policy check failed → [site policy check failed](#site-policy-check-failed) (`invalid_tab_id`, `extension_disconnected`, `tab_url_unavailable`, `policy_error`)
+- Site policy blocked → [Blocked by Site Policy](#blocked-by-site-policy). Returned when the outer `tab_id` is blocked, or when any primitive the workflow calls (including `browser_create_tab` to a new URL) is blocked. If the workflow swallows the block, the result is `ok: true` with `policyBlocked` instead.
+- Site policy check failed → [site policy check failed](#site-policy-check-failed) (`invalid_tab_id`, `extension_disconnected`, `tab_url_unavailable`, `policy_error`, `invalid_url`). A policy evaluation that throws inside a workflow step fails closed with `policy_error`.
 - `Workflow not found: <workflow>` — Workflow does not exist or is not implemented (`implemented: false` in manifest).
 - `Invalid workflow parameters: ...` — Parameter types do not match the workflow declaration.
 
 **Notes:**
-- Workflow runtime errors include inline `diagnostics` in the error response (phase, workflow, platform, tabId), so you can see what failed without calling `webpilot_dev_get_formatter_logs`.
-- Errors are also recorded to per-formatter logs so the Web UI Formatters tab can surface recent errors for pattern analysis.
+- Workflow runtime errors include inline `diagnostics` in the error response (phase, workflow, platform, tabId), so you can see what failed without calling `webpilot_dev_get_formatter_logs`. Site-policy outcomes are the exception: they return the policy envelope with no `diagnostics`.
+- Runtime errors are also recorded to per-formatter logs so the Web UI Formatters tab can surface recent errors for pattern analysis. Site-policy blocks and check failures are not recorded, because they are policy decisions, not formatter faults.
 - Workflow parameters are type-checked against the manifest declaration (string/number/boolean/object/array). All parameters are treated as optional unless explicitly required by the workflow's `run()` implementation.
 - Workflows execute server-side using the same internal browser primitives as the MCP tool dispatch — so per-agent profile routing, visual cursor, auth, and refs all keep working transparently.
 
@@ -1225,7 +1244,7 @@ If a tool call resolves to a domain that site policy blocks (checkpoint A, `brow
 }
 ```
 
-If the block happens on an existing tab (checkpoint B, any `TAB_ID_TOOLS` call, or a chained step targeting a `tab_id`), the envelope adds the tab's auto-close deadline:
+If the block happens on an existing tab (checkpoint B, any `TAB_ID_TOOLS` call, a chained step targeting a `tab_id`, or a workflow primitive acting on a tab), the envelope adds the tab's auto-close deadline:
 ```json
 {
   "ok": false,
@@ -1241,6 +1260,8 @@ If the block happens on an existing tab (checkpoint B, any `TAB_ID_TOOLS` call, 
 **Cause:** The URL's domain is blocked at whichever policy tier matched first. See [Security: Site Policy](#security-site-policy) and [`docs/SITE_POLICY.md`](./SITE_POLICY.md#precedence) for precedence.
 
 **Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds`; no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/site-policy/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
+
+**In workflows:** a refused primitive inside `webpilot_run_workflow` returns this envelope directly, or as the `policyBlocked` field of an `ok: true` result if the workflow handled the error. See [webpilot_run_workflow](#webpilot_run_workflow).
 
 ### Site policy check failed
 

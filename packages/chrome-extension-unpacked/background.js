@@ -17,6 +17,8 @@ import { type as typeText } from './handlers/keyboard.js';
 const DEFAULT_SERVER_URL = 'ws://localhost:3456';
 const DEFAULT_HTTP_URL = 'http://localhost:3456';
 const AUTO_CONNECT_INTERVAL_MS = 5000;
+// Slower retry when the server refuses us because another connection holds this profile.
+const CONNECTION_IN_USE_RETRY_MS = 30000;
 
 // WebSocket connection state
 let wsConnection = null;
@@ -464,8 +466,16 @@ function connectWebSocket() {
       let errorMsg = null;
       let errorType = null;
       let shouldRetry = true;
+      let retryDelayMs = 5000;
 
-      if (event.code === 1006) {
+      if (event.code === 4409) {
+        // Server refused: another live connection (different install) already
+        // holds this profile. Keep config intact and back off.
+        errorMsg = 'Another WebPilot connection is active for this browser profile';
+        errorType = 'connection_in_use';
+        shouldRetry = true;
+        retryDelayMs = CONNECTION_IN_USE_RETRY_MS;
+      } else if (event.code === 1006) {
         errorMsg = `Server not reachable at ${config.serverUrl}`;
         errorType = 'server_unreachable';
         shouldRetry = true;
@@ -523,7 +533,7 @@ function connectWebSocket() {
           if (isEnabled && !manuallyDisconnected) {
             connectWebSocket();
           }
-        }, 5000);
+        }, retryDelayMs);
       }
     };
   } catch (e) {

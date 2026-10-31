@@ -4,8 +4,9 @@
 // code via buildBrowserPrimitives(apiKey). Those primitives must re-apply the
 // site-policy gate (mirroring browser_request_chain's per-step re-check) so a
 // workflow cannot open arbitrary URLs or act on unchecked tabs and bypass site
-// blocks. A blocked primitive throws, and webpilot_run_workflow's try/catch
-// surfaces it as a failed step (ok:false, isError:true).
+// blocks. A blocked primitive throws; webpilot_run_workflow returns the
+// standard policy envelope (as a direct tool call would) and never records the
+// block as a formatter error (#131).
 //
 // Uses the REAL site-policy / site-policy-events modules against an in-memory
 // SQLite DB; everything else is stubbed via the same Module._load harness as
@@ -65,12 +66,22 @@ const fakePairedKeys = {
 stubs['./paired-keys'] = fakePairedKeys;
 stubs['./lib/mcp-config-template'] = { buildMcpConfigJson: () => '{}' };
 stubs['./lib/tree-query'] = { findInTree: () => null };
+// recordError / buildDiagnostics are spies (reset in beforeEach): a policy
+// outcome must never reach them, since any recorded error lowers formatter
+// health.
+const formatterLogCalls = { recordError: [], buildDiagnostics: [] };
 stubs['./formatter-logs'] = {
   recordSuccess: () => {},
-  recordError: () => ({ id: 'incident-1' }),
+  recordError: (...a) => {
+    formatterLogCalls.recordError.push(a);
+    return { id: 'incident-1' };
+  },
   getStatus: () => ({}),
   getLogs: () => [],
-  buildDiagnostics: () => ({}),
+  buildDiagnostics: (...a) => {
+    formatterLogCalls.buildDiagnostics.push(a);
+    return {};
+  },
 };
 stubs['./service/paths'] = {
   getFormatterDir: () => '/fake',
@@ -131,6 +142,31 @@ function bodyOf(res) {
   assert.ok(res && res.result, `expected result envelope, got ${JSON.stringify(res)}`);
   return JSON.parse(res.result.content[0].text);
 }
+function runWorkflow(outerTabId = 7) {
+  return callTool(prime(), 'webpilot_run_workflow', {
+    platform: 'p',
+    workflow: 'w',
+    tab_id: outerTabId,
+    params: {},
+  });
+}
+function assertNotFormatterError() {
+  assert.equal(formatterLogCalls.recordError.length, 0, 'policy outcome must not be recorded as a formatter error');
+  assert.equal(formatterLogCalls.buildDiagnostics.length, 0, 'policy outcome must not build formatter diagnostics');
+}
+// Standard checkpoint-B blocked envelope for tab 8 (blocked.com).
+function assertBlockedAtB(res) {
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'site blocked by policy');
+  assert.equal(body.domain, 'blocked.com');
+  assert.equal(body.tabId, 8);
+  assert.ok(body.tabWillCloseAt, 'expected tabWillCloseAt');
+  assert.equal(body.tabCloseInSeconds, 5);
+  assertNotFormatterError();
+  return body;
+}
 
 beforeEach(() => {
   freshDb();
@@ -138,6 +174,8 @@ beforeEach(() => {
   sentCommands = [];
   connected = true;
   currentWorkflow = null;
+  formatterLogCalls.recordError = [];
+  formatterLogCalls.buildDiagnostics = [];
   getTabsImpl = async () => ({
     tabs: [
       { id: 7, url: 'https://www.example.com/x' },
@@ -147,9 +185,9 @@ beforeEach(() => {
 });
 
 // Checkpoint A: a workflow calling browser.createTab({url:<blocked>}) is
-// blocked before the create_tab command reaches the extension, and surfaces
-// as a failed step.
-test('workflow createTab to a blocked url -> blocked at checkpoint A, failed step', async () => {
+// blocked before the create_tab command reaches the extension, and returns the
+// standard blocked envelope (no tabId: nothing was opened, nothing to close).
+test('workflow createTab to a blocked url -> blocked envelope at checkpoint A', async () => {
   seedAgentBlock('blocked.com');
   currentWorkflow = {
     parameters: {},
@@ -167,8 +205,11 @@ test('workflow createTab to a blocked url -> blocked at checkpoint A, failed ste
   const body = bodyOf(res);
   assert.equal(res.result.isError, true, 'blocked workflow must be an error envelope');
   assert.equal(body.ok, false);
-  assert.match(body.error, /site policy/i, `error should mention site policy, got: ${body.error}`);
-  assert.match(body.error, /blocked\.com/, `error should name the blocked domain, got: ${body.error}`);
+  assert.equal(body.error, 'site blocked by policy');
+  assert.equal(body.domain, 'blocked.com');
+  assert.equal(body.tabId, undefined, 'checkpoint A has no tab to close');
+  assert.equal(body.diagnostics, undefined, 'policy block must not carry formatter diagnostics');
+  assertNotFormatterError();
   assert.ok(
     !sentCommands.some((c) => c.cmd === 'create_tab'),
     'blocked create_tab must not reach the extension'
@@ -176,9 +217,9 @@ test('workflow createTab to a blocked url -> blocked at checkpoint A, failed ste
 });
 
 // Checkpoint B: a workflow calling browser.click on a tab that resolves to a
-// blocked site is blocked before the click reaches the extension, surfacing as
-// a failed step.
-test('workflow click on a tab resolving to a blocked site -> blocked at checkpoint B, failed step', async (t) => {
+// blocked site is blocked before the click reaches the extension, returning the
+// standard blocked envelope including the auto-close countdown.
+test('workflow click on a tab resolving to a blocked site -> blocked envelope at checkpoint B', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   seedAgentBlock('blocked.com');
   currentWorkflow = {
@@ -195,10 +236,7 @@ test('workflow click on a tab resolving to a blocked site -> blocked at checkpoi
     tab_id: 7,
     params: {},
   });
-  const body = bodyOf(res);
-  assert.equal(res.result.isError, true);
-  assert.equal(body.ok, false);
-  assert.match(body.error, /site policy/i, `error should mention site policy, got: ${body.error}`);
+  assertBlockedAtB(res);
   assert.ok(
     !sentCommands.some((c) => c.cmd === 'click'),
     'blocked click must not reach the extension'
@@ -228,8 +266,158 @@ test('workflow acting only on allowed sites -> succeeds, no false block', async 
   assert.equal(res.result && res.result.isError, undefined, 'allowed workflow must not be an error');
   assert.equal(body.ok, true, `expected ok:true, got: ${JSON.stringify(body)}`);
   assert.equal(body.done, true);
+  assert.equal(body.policyBlocked, undefined, 'allowed run must not report policyBlocked');
+  assertNotFormatterError();
   assert.ok(sentCommands.some((c) => c.cmd === 'create_tab'), 'allowed create_tab should dispatch');
   assert.ok(sentCommands.some((c) => c.cmd === 'click'), 'allowed click should dispatch');
+});
+
+// The other checkpoint-B primitives (#131 coverage): each blocked call returns
+// the same envelope and never reaches the extension.
+for (const [prim, cmd, args] of [
+  ['type', 'type', { tab_id: 8, text: 'hi' }],
+  ['scroll', 'scroll', { tab_id: 8, pixels: 100 }],
+  ['getAccessibilityTree', 'get_accessibility_tree', { tab_id: 8 }],
+]) {
+  test(`workflow ${prim} on a blocked tab -> blocked envelope at checkpoint B`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    seedAgentBlock('blocked.com');
+    currentWorkflow = {
+      parameters: {},
+      run: async ({ browser }) => {
+        await browser[prim](args);
+        return { done: true };
+      },
+    };
+    assertBlockedAtB(await runWorkflow());
+    assert.ok(!sentCommands.some((c) => c.cmd === cmd), `blocked ${prim} must not reach the extension`);
+    t.mock.timers.tick(5000);
+  });
+}
+
+// The extension drops mid-run. The outer gate (tab 7) already passed, so the
+// disconnect happens inside run(): the step fails closed with the
+// policy-unavailable envelope.
+test('workflow step after the extension disconnects -> site policy check failed', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      connected = false;
+      await browser.click({ tab_id: 7, x: 1, y: 1 });
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'site policy check failed');
+  assert.equal(body.reason, 'extension_disconnected');
+  assert.equal(body.tabId, 7);
+  assertNotFormatterError();
+  assert.ok(!sentCommands.some((c) => c.cmd === 'click'), 'click must not reach the extension');
+});
+
+test('workflow step without tab_id -> invalid_tab_id envelope', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      await browser.click({ x: 1, y: 1 });
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.error, 'site policy check failed');
+  assert.equal(body.reason, 'invalid_tab_id');
+  assertNotFormatterError();
+  assert.ok(!sentCommands.some((c) => c.cmd === 'click'), 'click must not reach the extension');
+});
+
+// A workflow that catches the block and carries on still succeeds, but the
+// response reports the refused step as policyBlocked.
+test('workflow that swallows a block -> ok:true with policyBlocked', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (_e) { /* carry on */ }
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, undefined);
+  assert.equal(body.ok, true);
+  assert.equal(body.done, true);
+  assert.ok(body.policyBlocked, 'expected policyBlocked');
+  assert.equal(body.policyBlocked.error, 'site blocked by policy');
+  assert.equal(body.policyBlocked.domain, 'blocked.com');
+  assert.equal(body.policyBlocked.tabId, 8);
+  assertNotFormatterError();
+  t.mock.timers.tick(5000);
+});
+
+// The workflow re-wraps the block with `cause`: the envelope is found on the
+// cause chain.
+test('workflow that rethrows a block wrapped with cause -> blocked envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (err) {
+        throw new Error('wrapped', { cause: err });
+      }
+      return { done: true };
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  t.mock.timers.tick(5000);
+});
+
+// The workflow throws a fresh error without `cause`: the per-run tracker still
+// knows a step was blocked, so the run is reported as a policy outcome.
+test('workflow that rethrows a block without cause -> tracked blocked envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (_e) {
+        throw new Error('step failed');
+      }
+      return { done: true };
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  t.mock.timers.tick(5000);
+});
+
+// Non-policy failures keep the existing formatter-error path.
+test('workflow that throws a plain error -> recorded as a formatter error', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async () => {
+      throw new Error('selector not found');
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'selector not found');
+  assert.ok('diagnostics' in body, 'expected formatter diagnostics');
+  assert.equal(formatterLogCalls.recordError.length, 1, 'plain failure must be recorded');
+  assert.equal(formatterLogCalls.buildDiagnostics.length, 1);
 });
 
 // Helper: returns a handler (named for readability at call sites).

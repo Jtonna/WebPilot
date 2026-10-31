@@ -1473,7 +1473,9 @@ function mountWebUiRoutes(app, deps) {
  * @param {object} message the parsed hello frame
  * @param {{ readProfiles: Function, userDataDir: string|null,
  *           getConnectedProfiles: Function, getProfileForInstall: Function,
- *           log?: Function }} deps
+ *           installId?: string|null, log?: Function }} deps
+ *   `installId` is the upgrade-validated value; it takes precedence over
+ *   `message.installId`.
  * @returns {{ profileId: string|null, via?: string }}
  */
 function resolveHelloProfile(message, deps) {
@@ -1482,8 +1484,17 @@ function resolveHelloProfile(message, deps) {
     userDataDir,
     getConnectedProfiles,
     getProfileForInstall,
+    installId: validatedInstallId,
     log = console.log,
   } = deps;
+  // Prefer the installId validated at WS upgrade (deps.installId) over the
+  // one the hello frame claims, so resolution, persistence and takeover all
+  // key off the same identity (#131). Fall back to the hello value only when
+  // no validated value was supplied.
+  const installId =
+    typeof validatedInstallId === 'string' && validatedInstallId.length > 0
+      ? validatedInstallId
+      : message.installId;
 
   // 1) Client-supplied profileId — validate against local profiles. Do NOT
   //    trust an arbitrary client-supplied value.
@@ -1504,20 +1515,20 @@ function resolveHelloProfile(message, deps) {
   }
 
   // 2) installId -> profileId mapping (survives extension storage being cleared).
-  if (typeof message.installId === 'string' && message.installId.length > 0) {
+  if (typeof installId === 'string' && installId.length > 0) {
     try {
-      const candidate = getProfileForInstall(message.installId);
+      const candidate = getProfileForInstall(installId);
       if (candidate) {
         const profiles = readProfilesFn(userDataDir);
         if (profiles.some((p) => p.directoryName === candidate)) {
           log(
             `[extension-bridge] resolved profileId="${candidate}" from ` +
-              `installId="${message.installId.slice(0, 8)}..."`
+              `installId="${installId.slice(0, 8)}..."`
           );
           return { profileId: candidate, via: 'installId' };
         }
         log(
-          `[extension-bridge] installId="${message.installId.slice(0, 8)}..." mapped to ` +
+          `[extension-bridge] installId="${installId.slice(0, 8)}..." mapped to ` +
             `profileId="${candidate}" but that profile no longer exists; falling through`
         );
       }
@@ -1838,6 +1849,8 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }, 5000);
 
     ws.on('message', (data) => {
+      // Any inbound traffic (pings included) counts as liveness for takeover checks.
+      ws._lastActivity = Date.now();
       try {
         const message = JSON.parse(data.toString());
 
@@ -1861,6 +1874,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
             userDataDir: chromeManager.userDataDir,
             getConnectedProfiles: () => extensionBridge.getConnectedProfiles(),
             getProfileForInstall: (id) => extensionInstalls.getProfileForInstall(id),
+            installId: ws._installId,
           });
           let resolvedProfileId = resolution.profileId;
 
@@ -1882,19 +1896,39 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
             return;
           }
 
+          // The upgrade handler already stamped the installId validated from
+          // the URL. Never let hello override it; fall back only when absent.
+          if (typeof ws._installId !== 'string' || ws._installId.length === 0) {
+            ws._installId =
+              typeof message.installId === 'string' && message.installId.length > 0
+                ? message.installId
+                : null;
+          }
+          // Claim the profile first: a live connection from another install
+          // is never displaced (see extension-bridge setConnection).
+          const claim = extensionBridge.setConnection(resolvedProfileId, ws);
+          if (!claim.ok) {
+            console.log(
+              `[extension-bridge] hello refused profileId="${resolvedProfileId}" ` +
+                `installId="${ws._installId || ''}" reason=${claim.reason}`
+            );
+            try {
+              ws.close(4409, 'connection_in_use');
+            } catch (e) { /* ignore */ }
+            return;
+          }
           registeredProfileId = resolvedProfileId;
           // Persist the installId -> profileId mapping regardless of which
           // resolution path got us here. This is the moment the server
           // "learns" the binding for this install; future connects can use
           // the installId path even if extension storage gets wiped.
-          if (typeof message.installId === 'string' && message.installId.length > 0) {
+          if (ws._installId) {
             try {
-              extensionInstalls.setProfileForInstall(message.installId, resolvedProfileId);
+              extensionInstalls.setProfileForInstall(ws._installId, resolvedProfileId);
             } catch (e) {
               console.log(`[extension-bridge] persist installId mapping failed: ${e.message}`);
             }
           }
-          extensionBridge.setConnection(resolvedProfileId, ws);
           console.log(
             `[extension-bridge] hello accepted profileId="${resolvedProfileId}"`
           );
