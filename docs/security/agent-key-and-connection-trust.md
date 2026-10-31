@@ -40,14 +40,14 @@ after the fix — the pepper itself is unaffected and does not need rotation.
 
 | ID | Title | Severity | File:line | Impact |
 |----|-------|----------|-----------|--------|
-| C1 | Network mode flips the whole listener, not just the agent surface | High | `packages/server-for-chrome-extension/index.js:90-93`; `server.js:1503-1536` (UI gates), `381-439` (makeUiAuth/makeMutatingUiAuth) | Extension WS and `/api/popup/*` become LAN-reachable; `/api/ui/*` and the UI events WS correctly stay loopback-gated via remote-address checks — this part of C1 is confirmed as designed, not a bug in itself, but it's the precondition for C2–C6. |
-| C2 | Extension WS upgrade requires no credential | Critical | `server.js:1600-1657` `makeExtensionUpgradeHandler` | Any non-browser client (no `http(s)` Origin) with any non-empty `installId` completes the WS upgrade. This is the entry point for the whole chain once network mode is on. |
-| C3 | `list_paired_agents` requires no auth, no prior `hello` | Critical | handler at `server.js` (removed in #129; see the note at `server.js:1946`); `paired-keys.js:451-464` `listKeys()` | Any connected WS client can request and receive every paired agent's `agentName`, `profileId`, and `api_key_hash` (field `key`) with zero authentication. |
+| C1 | Network mode flips the whole listener, not just the agent surface | High | `packages/server-for-chrome-extension/index.js:90-93`; `server.js:1929-1987` (UI gates), `396-446` (makeUiAuth/makeMutatingUiAuth) | Extension WS and `/api/popup/*` become LAN-reachable; `/api/ui/*` and the UI events WS correctly stay loopback-gated via remote-address checks — this part of C1 is confirmed as designed, not a bug in itself, but it's the precondition for C2–C6. |
+| C2 | Extension WS upgrade requires no credential | Critical | `server.js:1758-1814` `makeExtensionUpgradeHandler` | Any non-browser client (no `http(s)` Origin) with any non-empty `installId` completes the WS upgrade. This is the entry point for the whole chain once network mode is on. |
+| C3 | `list_paired_agents` requires no auth, no prior `hello` | Critical | handler at `server.js` (removed in #129; see the note at `server.js:2128`); `paired-keys.js:451-464` `listKeys()` | Any connected WS client can request and receive every paired agent's `agentName`, `profileId`, and `api_key_hash` (field `key`) with zero authentication. |
 | C4 | Key hashing / pepper storage (baseline, no bug) | — (informational) | `paired-keys.js:180-183` `hashApiKey` (HMAC-SHA256 w/ pepper); pepper at `<dataDir>/secret/api-key.pepper`, legacy fallback `config.api_key_pepper`; plaintext returned once by `generateKey()`/`addKey` (`paired-keys.js:336`, `353-368`) and `createPairedAgent` (`373-389`) | Confirmed correct as designed — plaintext is never persisted. Not itself a vulnerability; listed because C5/C6 build on it. |
 | C5 | **BUG-2**: hash accepted as a live credential | Critical | `resolveAgentRow` fallback, `paired-keys.js:295-309`; `validateKey`, `paired-keys.js:402-405`; MCP auth gate, `mcp-handler.js:914` (`pairedKeys.validateKey(effectiveKey)`) | `resolveAgentRow` hashes the input, and on miss falls back to matching the input **directly** against `api_key_hash`. A stored hash therefore authenticates as if it were the plaintext key — the one value the system guarantees is `is-a-secret` is the exact value that also `is-a-credential`. |
-| C6 | UI exposes the hash as the agent identifier and feeds it to copy-config | High | `GET /api/ui/status`, `server.js:461` route / `pairedAgents: pairedKeys.listKeys()`; `AgentRow.js:44` `buildMcpConfigJson({ port, apiKey: agent.key })`; `AgentRow.js:73` (`title={agent.key}` — hash rendered into the DOM); `lib/mcpConfig.js:16-26` | The existing-agent "copy config" button emits the hash as `X-API-Key` in the generated `.mcp.json` snippet. It only produces a *working* config because of BUG-2 (C5); once BUG-2 is fixed this button silently emits garbage. The hash is also visible in a DOM `title` attribute (view-source/devtools exposure) and to any local page/extension that can read the status API surface. |
-| C7 | `hello` trusted client-supplied `profileId`; no per-socket response binding; second socket could displace a live connection — **fixed in #131** | Med (was) | `server.js:1481-1527` `resolveHelloProfile` (step 1 validates `hello.profileId` against `readProfiles`; installId comes from the upgrade-validated `deps.installId`); `server.js:1862-1920` hello handler (claim before persist, `4409 connection_in_use` close); `extension-bridge.js:24-66` `setConnection` and `extension-bridge.js:15` `STALE_CONNECTION_MS`; `extension-bridge.js:185-208` `handleResponse` | Before: a second WS connection could displace the legitimate extension connection for a profile, and command responses were matched by command `id` only. Now: a live connection held by a *different* install is never displaced; the refused socket is closed with 4409. A takeover is allowed only when the installId matches (validated at upgrade), the previous socket is closed, the same socket re-sends `hello`, or the previous socket has been silent for more than 45s (the client pings every 15s). The profile is claimed before `hello_ack` and before the install→profile mapping is persisted. Responses arriving on a socket other than the one that received the command are ignored. See §10 for the residual tradeoff. |
-| C8 | `/connect` hands the extension a LAN address for a same-machine connection | Med | `server.js:2305` `app.get('/connect', ...)`; `serverUrl`/`sseUrl` built from `publicHost`; `index.js:90-91` sets `publicHost = getLocalIP()` in network mode | The extension is always on the same machine as the server, yet in network mode it's told to dial the LAN IP instead of loopback — unnecessarily widening exposure and sharing root cause with #125 (popup dashboard link also uses the LAN IP and then hits the loopback-only `/ui` gate, breaking the link for the user on their own machine). |
+| C6 | UI exposes the hash as the agent identifier and feeds it to copy-config | High | `GET /api/ui/status`, `server.js:573` route / `pairedAgents: pairedKeys.listKeys()` at `server.js:671`; `AgentRow.js:44` `buildMcpConfigJson({ port, apiKey: agent.key })`; `AgentRow.js:73` (`title={agent.key}` — hash rendered into the DOM); `lib/mcpConfig.js:16-26` | The existing-agent "copy config" button emits the hash as `X-API-Key` in the generated `.mcp.json` snippet. It only produces a *working* config because of BUG-2 (C5); once BUG-2 is fixed this button silently emits garbage. The hash is also visible in a DOM `title` attribute (view-source/devtools exposure) and to any local page/extension that can read the status API surface. |
+| C7 | `hello` trusted client-supplied `profileId`; no per-socket response binding; second socket could displace a live connection — **fixed in #131** | Med (was) | `server.js:1606-1746` `resolveHelloProfile` (step 1 validates `hello.profileId` against `readProfiles`; installId comes from the upgrade-validated `deps.installId`); `server.js:2031-2126` hello handler (claim before persist, `4409 connection_in_use` close); `extension-bridge.js:24-66` `setConnection` and `extension-bridge.js:15` `STALE_CONNECTION_MS`; `extension-bridge.js:185-208` `handleResponse` | Before: a second WS connection could displace the legitimate extension connection for a profile, and command responses were matched by command `id` only. Now: a live connection held by a *different* install is never displaced; the refused socket is closed with 4409. A takeover is allowed only when the installId matches (validated at upgrade), the previous socket is closed, the same socket re-sends `hello`, or the previous socket has been silent for more than 45s (the client pings every 15s). Resolution order is now (1) client `profileId` validated against `Local State`, (2) the installId mapping, (3) `gaiaEmail`, (4) the install scan, which byte-searches the connecting installId in each profile's extension storage and binds only on exactly one match in a profile that exists in `Local State` (see §10), and (5) inference by exclusion; otherwise the server replies `identify_required` and the popup picker's `reidentify` re-enters step 1. The profile is claimed before `hello_ack` and before the install→profile mapping is persisted. Responses arriving on a socket other than the one that received the command are ignored. See §10 for the residual tradeoff. |
+| C8 | `/connect` hands the extension a LAN address for a same-machine connection | Med | `server.js:2489` `app.get('/connect', ...)`; `serverUrl`/`sseUrl` built from `publicHost`; `index.js:90-91` sets `publicHost = getLocalIP()` in network mode | The extension is always on the same machine as the server, yet in network mode it's told to dial the LAN IP instead of loopback — unnecessarily widening exposure and sharing root cause with #125 (popup dashboard link also uses the LAN IP and then hits the loopback-only `/ui` gate, breaking the link for the user on their own machine). |
 
 Note: C4 is retained in the table as a baseline/no-bug row per the instructions ("drop/merge any that were CORRECTED to false" — C4 was not corrected, it validated true, but carries no independent severity; it is the design precondition C5 subverts).
 
@@ -57,7 +57,7 @@ Note: C4 is retained in the table as a baseline/no-bug row per the instructions 
 |---|---|---|
 | "Claiming an installId grants zero agent power." | `SECURITY.md:43` | **False.** Via C2 + C3 + C5, claiming any installId (no auth) → `list_paired_agents` → `api_key_hash` → full agent power over `/sse`. |
 | "Anyone reaching the port can claim any installId. That grants no MCP tool power; agent-layer auth is the real gate." | `docs/MCP_SERVER.md:263` | **False**, same chain as above — "agent-layer auth is the real gate" is undermined by BUG-2 (C5), and the WS itself leaks the credential-equivalent value (C3) before agent-layer auth is ever reached. |
-| Network-mode design statements that only "the extension WS / MCP SSE endpoints become reachable over LAN" (`docs/MCP_SERVER.md:433`) and that `/api/ui/*`/UI WS stay loopback (`server.js` comments `1503-1536`) | `docs/MCP_SERVER.md:433`, `server.js:1503-1536` | **Confirmed true as stated** — these are accurate descriptions of current binding behavior, not false claims. They are listed here only because they describe the precondition (C1) that makes C2/C3/C5 reachable; the surface being LAN-reachable by design is not itself the bug — the missing auth on it is. |
+| Network-mode design statements that only "the extension WS / MCP SSE endpoints become reachable over LAN" (`docs/MCP_SERVER.md:439`) and that `/api/ui/*`/UI WS stay loopback (`server.js` comments `1929-1987`) | `docs/MCP_SERVER.md:439`, `server.js:1929-1987` | **Confirmed true as stated** — these are accurate descriptions of current binding behavior, not false claims. They are listed here only because they describe the precondition (C1) that makes C2/C3/C5 reachable; the surface being LAN-reachable by design is not itself the bug — the missing auth on it is. |
 
 ## 4. Core design flaw: identity/credential conflation
 
@@ -203,19 +203,19 @@ flowchart TD
 **(b) Exposure removal + UI identity — Size: M**
 - [ ] Add `public_id` column (or reuse `agents.id`) and thread it through `rowToAgentEntry` — `paired-keys.js:229-251`
 - [ ] Drop `key`/`api_key_hash` from `listKeys()` output — `paired-keys.js:451-464`
-- [ ] Remove `key` from `GET /api/ui/status` `pairedAgents` payload — `server.js:461`, `566`
-- [x] Remove the `list_paired_agents` extension-WS handler entirely — removed in #129; see the note at `server.js:1946`
+- [ ] Remove `key` from `GET /api/ui/status` `pairedAgents` payload — `server.js:573`, `671`
+- [x] Remove the `list_paired_agents` extension-WS handler entirely — removed in #129; see the note at `server.js:2128`
 - [ ] Switch dashboard to `public_id` for rename/revoke/rebind/filters; drop the `title={agent.key}` DOM exposure — `AgentRow.js:44`, `73`; site-policy agent filters
 - [ ] Replace per-agent "copy config" with "regenerate key"; keep plaintext copy-config only in the post-pairing modal — `AgentRow.js`, `PairAgentModal.js`, `lib/mcpConfig.js`
 
 **(c) Connection-trust / loopback gating (incl. #125) — Size: M**
-- [x] Loopback-gate the extension WS upgrade — `server.js:1600-1657`
+- [x] Loopback-gate the extension WS upgrade — `server.js:1758-1814`
 - [x] Loopback-gate `/api/popup/*` (or otherwise require an authenticated local caller) — `popup-routes.js:40` (`loopbackGate` on each route)
-- [x] Loopback-gate `/connect`, `/ui`, `/health` — `server.js:197` (`uiGate`), `2289-2290` (`healthGate`, `connectGate`), `2305`
-- [ ] Make `/connect` always return `ws://localhost:<port>` / `http://localhost:<port>/sse` regardless of network mode — `server.js:1670-1678`, `2305` (`serverUrl` is loopback; `sseUrl` still uses `publicHost`); drop `publicHost = getLocalIP()` usage there — `index.js:90-93`
-- [x] Validate `hello.profileId` against `readProfiles` on the direct-`profileId` path, matching the `installId` path's validation — `server.js:1503-1517` (`resolveHelloProfile` step 1)
-- [x] Bind `handleResponse` to the originating socket, not just command `id` — `extension-bridge.js:185-208`; call site `server.js:1983`
-- [x] Refuse silent displacement of an established profile connection by a second/unapproved socket — `extension-bridge.js:24-66`, `server.js:1912-1920` (#131)
+- [x] Loopback-gate `/connect`, `/ui`, `/health` — `server.js:198` (`uiGate`), `2473-2474` (`healthGate`, `connectGate`), `2489`
+- [ ] Make `/connect` always return `ws://localhost:<port>` / `http://localhost:<port>/sse` regardless of network mode — `server.js:1828-1836`, `2489` (`serverUrl` is loopback; `sseUrl` still uses `publicHost`); drop `publicHost = getLocalIP()` usage there — `index.js:90-93`
+- [x] Validate `hello.profileId` against `readProfiles` on the direct-`profileId` path, matching the `installId` path's validation — `server.js:1625-1641` (`resolveHelloProfile` step 1)
+- [x] Bind `handleResponse` to the originating socket, not just command `id` — `extension-bridge.js:185-208`; call site `server.js:2165`
+- [x] Refuse silent displacement of an established profile connection by a second/unapproved socket — `extension-bridge.js:24-66`, `server.js:2089-2101` (#131)
 
 **(d) Docs updates — Size: S**
 - [ ] Correct "Claiming an installId grants zero agent power" — `SECURITY.md:43`
@@ -237,7 +237,10 @@ flowchart TD
 - **Takeover protection rests on the installId, which is not a secret
   credential.** It is a random UUID that only crosses loopback, and the WS
   upgrade is loopback-gated. A process that can read the extension's storage
-  can present it, which is local same-machine access and out of scope.
+  can present it, which is local same-machine access and out of scope. The
+  install scan (below) shows the installId sits in that profile's extension
+  storage on disk; it does not authenticate the caller beyond holding the
+  installId.
 - **A stalled connection can be taken over after 45s.** A different install
   may displace a socket only if it has sent nothing for more than 45s
   (`STALE_CONNECTION_MS`; the client pings every 15s). This trades a short
@@ -245,4 +248,17 @@ flowchart TD
 - **A client can still name any real `profileId` in `hello`.** Step 1 accepts
   any profileId that matches a local profile directory: it is validated, not
   authenticated. What prevents hijacking a profile that already has a live
-  connection is the takeover refusal.
+  connection is the takeover refusal. The popup profile picker uses the same
+  path: `reidentify` sends a fresh `hello` with the user-chosen `profileId`,
+  and the server treats it exactly like step 1 (validated, not authenticated).
+  The takeover refusal remains the protection.
+- **Install scan reads inside the Chrome profile tree.** When steps 1-3 don't
+  resolve, the server byte-searches the `*.log` and `*.ldb` files in
+  `<user-data-dir>/<profile>/Local Extension Settings/<extensionId>/` for the
+  connecting installId (`src/chrome/install-scan.js`). It is read-only and runs
+  only after a `hello` on the loopback-gated extension WS. `extensionId` and
+  `installId` formats are validated before any filesystem call. Profile
+  directory names containing `/`, `\`, `..`, `:`, or NUL are rejected, and
+  symlinks are skipped. Files over 8 MB are skipped and the scan stops at 32 MB
+  total. Logs carry counts only, never paths or installIds. The scan binds only
+  when exactly one profile matches and that profile exists in `Local State`.
