@@ -11,6 +11,9 @@ const { v4: uuidv4 } = require('uuid');
  *   - isConnected()          — alias for isAnyConnected()
  *   - isConnected(profileId) — exact profile check
  */
+// A live connection with no traffic (incl. pings) for this long may be taken over.
+const STALE_CONNECTION_MS = 45000;
+
 function createExtensionBridge() {
   // profileId -> ws
   const connections = new Map();
@@ -21,25 +24,44 @@ function createExtensionBridge() {
   function setConnection(profileId, ws) {
     if (!profileId) {
       console.log('[extension-bridge] setConnection called with empty profileId — refusing');
-      return;
+      return { ok: false, reason: 'invalid_profile' };
     }
     const prev = connections.get(profileId);
-    if (prev && prev !== ws) {
+    if (prev === ws) {
+      // Same socket re-sending hello: nothing to replace.
+      ws._lastActivity = Date.now();
+      return { ok: true };
+    }
+    if (prev && _wsAlive(prev)) {
+      const sameInstall = !!(prev._installId && ws._installId && prev._installId === ws._installId);
+      const stale =
+        typeof prev._lastActivity === 'number' &&
+        Date.now() - prev._lastActivity > STALE_CONNECTION_MS;
+      if (!sameInstall && !stale) {
+        console.log(
+          `[extension-bridge] refusing connection for profile="${profileId}" — ` +
+            'a live connection from a different install already holds it'
+        );
+        return { ok: false, reason: 'connection_in_use' };
+      }
+      const closeReason = sameInstall ? 'replaced_by_new_connection' : 'stale_connection';
       console.log(
         `[extension-bridge] replacing existing connection for profile="${profileId}" ` +
-          `(prev readyState=${prev.readyState})`
+          `(prev readyState=${prev.readyState}, reason=${closeReason})`
       );
       try {
-        prev.close();
+        prev.close(4000, closeReason);
       } catch (e) {
         // ignore
       }
     }
+    ws._lastActivity = Date.now();
     connections.set(profileId, ws);
     console.log(
       `[extension-bridge] connection registered for profile="${profileId}" ` +
         `(total=${connections.size})`
     );
+    return { ok: true };
   }
 
   function clearConnection(profileIdOrWs) {
@@ -234,4 +256,4 @@ function createExtensionBridge() {
   };
 }
 
-module.exports = { createExtensionBridge };
+module.exports = { createExtensionBridge, STALE_CONNECTION_MS };
