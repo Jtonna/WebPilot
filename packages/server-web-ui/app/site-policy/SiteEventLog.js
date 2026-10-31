@@ -19,7 +19,7 @@ const SOURCE_LABELS = {
 };
 
 export function eventKey(entry) {
-  return `${entry.agentKey}|${entry.domain}`;
+  return `${entry.agentId}|${entry.domain}`;
 }
 
 function toIso(value) {
@@ -36,11 +36,11 @@ function toIso(value) {
  * global block); Revoke is a plain confirm and only affects that agent.
  *
  * Props:
- *   agents                 — [{ key, name }] for the agent filter
+ *   agents                 — [{ id, name }] for the agent filter
  *   agentFilter, decisionFilter, onAgentFilterChange, onDecisionFilterChange
  *   entries, loading, error, onRetry
  *   hasMore, loadingMore, onLoadMore
- *   eventBusyKey           — `${agentKey}|${domain}` of the row being written
+ *   eventBusyKey           — `${agentId}|${domain}` of the row being written
  *   onAllow(entry), onRevoke(entry) → Promise
  */
 export default function SiteEventLog({
@@ -120,7 +120,7 @@ export default function SiteEventLog({
                   </div>
                 </td>
                 <td data-label="Agent">
-                  <Link href={`/agents/?agent=${encodeURIComponent(entry.agentKey)}`} className="wp-link">
+                  <Link href={`/agents/?agent=${encodeURIComponent(entry.agentId)}`} className="wp-link">
                     {name}
                   </Link>
                 </td>
@@ -197,7 +197,7 @@ export default function SiteEventLog({
             >
               <option value="">All agents</option>
               {agents.map((a) => (
-                <option key={a.key} value={a.key}>{a.name}</option>
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
             <label htmlFor={decisionSelectId} className="wp-site-policy-field-label">Decision</label>

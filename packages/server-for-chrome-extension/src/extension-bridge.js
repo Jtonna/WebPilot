@@ -11,35 +11,57 @@ const { v4: uuidv4 } = require('uuid');
  *   - isConnected()          — alias for isAnyConnected()
  *   - isConnected(profileId) — exact profile check
  */
+// A live connection with no traffic (incl. pings) for this long may be taken over.
+const STALE_CONNECTION_MS = 45000;
+
 function createExtensionBridge() {
   // profileId -> ws
   const connections = new Map();
-  // commandId -> { resolve, reject, timeout, profileId }
+  // commandId -> { resolve, reject, timeout, profileId, ws }
   const pendingCommands = new Map();
   const COMMAND_TIMEOUT = 30000;
 
   function setConnection(profileId, ws) {
     if (!profileId) {
       console.log('[extension-bridge] setConnection called with empty profileId — refusing');
-      return;
+      return { ok: false, reason: 'invalid_profile' };
     }
     const prev = connections.get(profileId);
-    if (prev && prev !== ws) {
+    if (prev === ws) {
+      // Same socket re-sending hello: nothing to replace.
+      ws._lastActivity = Date.now();
+      return { ok: true };
+    }
+    if (prev && _wsAlive(prev)) {
+      const sameInstall = !!(prev._installId && ws._installId && prev._installId === ws._installId);
+      const stale =
+        typeof prev._lastActivity === 'number' &&
+        Date.now() - prev._lastActivity > STALE_CONNECTION_MS;
+      if (!sameInstall && !stale) {
+        console.log(
+          `[extension-bridge] refusing connection for profile="${profileId}" — ` +
+            'a live connection from a different install already holds it'
+        );
+        return { ok: false, reason: 'connection_in_use' };
+      }
+      const closeReason = sameInstall ? 'replaced_by_new_connection' : 'stale_connection';
       console.log(
         `[extension-bridge] replacing existing connection for profile="${profileId}" ` +
-          `(prev readyState=${prev.readyState})`
+          `(prev readyState=${prev.readyState}, reason=${closeReason})`
       );
       try {
-        prev.close();
+        prev.close(4000, closeReason);
       } catch (e) {
         // ignore
       }
     }
+    ws._lastActivity = Date.now();
     connections.set(profileId, ws);
     console.log(
       `[extension-bridge] connection registered for profile="${profileId}" ` +
         `(total=${connections.size})`
     );
+    return { ok: true };
   }
 
   function clearConnection(profileIdOrWs) {
@@ -141,7 +163,9 @@ function createExtensionBridge() {
         reject(new Error('Command timeout'));
       }, timeoutMs);
 
-      pendingCommands.set(id, { resolve, reject, timeout, profileId });
+      // Store the originating socket so handleResponse can reject a response
+      // that arrives on a different socket than the command was sent on.
+      pendingCommands.set(id, { resolve, reject, timeout, profileId, ws });
 
       const message = { id, type, params };
 
@@ -158,12 +182,26 @@ function createExtensionBridge() {
     });
   }
 
-  function handleResponse(message) {
+  function handleResponse(message, ws) {
     const { id, success, result, error } = message;
 
     const pending = pendingCommands.get(id);
     if (!pending) {
       console.log(`[extension-bridge] unknown command response id=${id}`);
+      return;
+    }
+
+    // Connection-displacement safety: if the command was sent on a specific
+    // socket and this response arrived on a DIFFERENT socket, ignore it. The
+    // command-id match alone is not enough — a displaced/second extension
+    // connection for the same profile must not be able to answer another
+    // socket's in-flight command. When no ws is supplied (older callers) or
+    // the command has no recorded socket, fall back to id-only matching.
+    if (ws && pending.ws && ws !== pending.ws) {
+      console.log(
+        `[extension-bridge] ignoring response id=${id} — arrived on a different socket ` +
+          `than the command was sent on`
+      );
       return;
     }
 
@@ -218,4 +256,4 @@ function createExtensionBridge() {
   };
 }
 
-module.exports = { createExtensionBridge };
+module.exports = { createExtensionBridge, STALE_CONNECTION_MS };

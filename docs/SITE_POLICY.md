@@ -1,6 +1,6 @@
 # Site Policy
 
-Site policy is enforced on the server only, in `isAllowed(agentId, url)` (`site-policy.js:249-292`). The Chrome extension only executes commands and makes no policy decisions. The MCP gate that calls `isAllowed` lives in `mcp-handler.js`.
+Site policy is enforced on the server only, in `isAllowed(agentId, url)` (`site-policy.js:249-292`). The Chrome extension only executes commands and makes no policy decisions. The MCP gate that calls `isAllowed` lives in `mcp-handler.js`. It also runs for the browser primitives that workflows call.
 
 Citations are `file:line` relative to `packages/server-for-chrome-extension/src/` unless a full path is given.
 
@@ -14,7 +14,7 @@ Citations are `file:line` relative to `packages/server-for-chrome-extension/src/
 | 4. Default | none | allow | Nothing above matched | `default` |
 
 - The first match wins. Tier beats specificity, so a higher-tier rule wins over a more specific rule in a lower tier. Within the agent tier, a named rule beats that agent's `*` row whatever its decision.
-- A caller without a valid key gets no agent tier. The popup always calls `isAllowed(null, …)` (`popup-routes.js:103`, `:158`).
+- A caller without a valid key gets no agent tier. The popup always calls `isAllowed(null, …)` (`popup-routes.js:108`, `:163`).
 - Return contract (`site-policy.js:47-52`): `{ allowed, decision, source, domain, matchedDomain }`. `matchedDomain` is the stored domain of the matching rule: `'*'` for a wildcard match and `null` for default.
 
 ## Domain matching
@@ -57,32 +57,39 @@ Invariants:
 
 ## Where the gate runs
 
-The gate `_enforceSitePolicy` (`mcp-handler.js:1482-1590`) runs after auth and before dispatch (`mcp-handler.js:935-957`).
+The gate `_enforceSitePolicy` runs after auth and before dispatch, in the `tools/call` gate.
 
-- **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`mcp-handler.js:1502-1529`). A blocked URL is never opened.
-- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`, `:1429-1459`).
-  - The lenient `_resolveTabUrl` wrapper (`:1461-1474`) is used only by the formatter-guide gate and `webpilot_get_formatter_info`.
-  - A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`:39`, `:1573-1584`).
-- **Chains**: each `browser_request_chain` step goes through the gate again (`mcp-handler.js:2241-2261`).
-  - A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (`:2248-2284`).
+- **Checkpoint A**: `browser_create_tab` is gated on `args.url` (`_enforceSitePolicy`, Checkpoint A branch). A blocked URL is never opened.
+- **Checkpoint B**: tools in `TAB_ID_TOOLS` (`mcp-handler.js:14-22`) are gated on the tab's current URL, resolved through the extension's `get_tabs` command (`_lookupTabUrlStrict`).
+  - The lenient `_resolveTabUrl` wrapper is used only by the formatter-guide gate and `webpilot_get_formatter_info`.
+  - A block schedules `close_tab` after `AUTO_CLOSE_DELAY_MS` = 5000 ms (`mcp-handler.js:39`, the Checkpoint B block branch of `_enforceSitePolicy`).
+- **Chains**: each `browser_request_chain` step goes through the gate again (the `browser_request_chain` step loop).
+  - A blocked step returns the blocked response in place of its result, and the chain **continues** with the next step without throwing (same step loop).
   - A step whose check cannot complete returns the [fail-closed envelope](#fail-closed-cases) in place of its result, and the chain still continues.
   - A blocked step that takes a `tab_id` still triggers the auto-close.
+- **Workflows**: the outer `webpilot_run_workflow` call is gated at Checkpoint B on its own `tab_id`, but a workflow's code calls the browser primitives (`createTab`, `click`, `type`, `scroll`, `getAccessibilityTree`) handed to it by `buildBrowserPrimitives` directly, server-side, bypassing `tools/call`. Each of those primitives re-runs `_enforceSitePolicy` before dispatch: `createTab` at Checkpoint A on its `url`, the tab-scoped primitives at Checkpoint B on their `tab_id`. `getTabs` is unguarded, mirroring the `browser_get_tabs` exemption.
+  - A blocked primitive **throws**, so the workflow stops at that step. `webpilot_run_workflow` still returns the standard envelope instead of a failed step. That envelope is either the [blocked response](#blocked-response) (with `tabId`, `tabWillCloseAt` and `tabCloseInSeconds` for a Checkpoint B tab) or `site policy check failed` with a `reason`.
+  - A `policy_error` thrown inside the primitive's gate is treated as blocked.
+  - The handler looks for the envelope on the error or its `cause` chain (up to 5 levels). If the workflow re-threw without `cause`, it falls back to the first policy outcome tracked during the run.
+  - If the workflow catches the block and finishes, the result is `ok: true` plus `policyBlocked`, which holds the envelope body of the run's first policy outcome.
+  - Policy outcomes are never recorded as formatter errors, and no diagnostics are attached.
 
 ### Checked and exempt tools
 
 | Tool | Checked? | How |
 |---|---|---|
 | `browser_create_tab` | yes | Checkpoint A |
-| `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow` | yes | Checkpoint B |
+| `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js` | yes | Checkpoint B |
+| `webpilot_run_workflow` | yes | Checkpoint B on its own `tab_id`, **and** each internal browser primitive the workflow calls is gated again (`buildBrowserPrimitives`). A blocked primitive returns the policy envelope (or `policyBlocked` if the workflow swallowed it). See [Where the gate runs](#where-the-gate-runs). |
 | Each step inside `browser_request_chain` | yes | Gated again as its own tool |
-| `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (`mcp-handler.js:1493-1500`) |
-| `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (`mcp-handler.js:1587-1589`) |
+| `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (the exempt-tool branch of `_enforceSitePolicy`) |
+| `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (the end of `_enforceSitePolicy`) |
 
 A new tool that takes `tab_id` must be added to `TAB_ID_TOOLS`. If it is not, the gate skips it without any warning.
 
 ### Blocked response
 
-Built by `_buildBlockedResponse` (`mcp-handler.js:1359-1381`) and returned with `isError: true`:
+Built by `_buildBlockedResponse` and returned with `isError: true`:
 
 ```json
 { "ok": false, "error": "site blocked by policy", "domain": "chase.com", "policySource": "global_site_blocklist" }
@@ -90,7 +97,9 @@ Built by `_buildBlockedResponse` (`mcp-handler.js:1359-1381`) and returned with 
 
 Checkpoint B adds `tabId`, `tabWillCloseAt` (an ISO timestamp) and `tabCloseInSeconds: 5`. Checkpoint A has none of these fields because the tab was never opened.
 
-When the gate cannot reach a verdict it returns a different envelope, built by `_buildPolicyUnavailableResponse` (`mcp-handler.js:1383-1404`), also with `isError: true`:
+The same envelope is what `webpilot_run_workflow` returns when a workflow primitive is blocked. If the workflow swallows the block, it appears as `policyBlocked` in an `ok: true` result.
+
+When the gate cannot reach a verdict it returns a different envelope, built by `_buildPolicyUnavailableResponse`, also with `isError: true`:
 
 ```json
 { "ok": false, "error": "site policy check failed", "reason": "tab_url_unavailable", "message": "tab 123 not found", "tabId": 123 }
@@ -104,21 +113,24 @@ Since #100, the gate fails closed: when a checked tool's verdict cannot be reach
 
 | `reason` | Case | Where |
 |---|---|---|
-| `policy_error` | Any exception thrown by the gate. Message: `Site policy could not be evaluated: <err>. Request blocked.` | `mcp-handler.js:947-957` |
-| `policy_error` | Any exception thrown by the gate for a chain step. Message ends `Step blocked.` The envelope becomes that step's result, and the chain continues | `mcp-handler.js:2252-2261` |
-| `invalid_url` | Checkpoint A with a non-string `url` (`url must be a string`) | `mcp-handler.js:1508-1516` |
-| `invalid_tab_id` | Checkpoint B with a missing `tab_id` (`tab_id is required`) or a non-integer one, including numeric strings (`tab_id must be an integer (got <type>: <value>)`) | `mcp-handler.js:1542-1550` |
-| `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.`) | `mcp-handler.js:1553-1555` |
-| `tab_url_unavailable` | Checkpoint B when `get_tabs` fails (`could not read tab URL: <err>`), the tab is not listed (`tab <id> not found`), or its URL is not a string (`tab <id> has no readable URL`) | `mcp-handler.js:1556-1565` |
+| `policy_error` | Any exception thrown by the gate. Message: `Site policy could not be evaluated: <err>. Request blocked.` | the `tools/call` gate |
+| `policy_error` | Any exception thrown by the gate for a chain step. Message ends `Step blocked.` The envelope becomes that step's result, and the chain continues | the `browser_request_chain` step loop |
+| `policy_error` | Any exception thrown by the gate for a workflow primitive. It is treated as blocked, and `webpilot_run_workflow` returns the envelope (or `policyBlocked` if the workflow swallowed it). Message ends `Step blocked.` | `buildBrowserPrimitives` (`_gate`) |
+| `invalid_url` | Checkpoint A with a non-string `url` (`url must be a string`) | `_enforceSitePolicy` (Checkpoint A branch) |
+| `invalid_tab_id` | Checkpoint B with a missing `tab_id` (`tab_id is required`) or a non-integer one, including numeric strings (`tab_id must be an integer (got <type>: <value>)`) | `_enforceSitePolicy` (Checkpoint B branch) |
+| `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.`) | `_enforceSitePolicy` (Checkpoint B branch) |
+| `tab_url_unavailable` | Checkpoint B when `get_tabs` fails (`could not read tab URL: <err>`), the tab is not listed (`tab <id> not found`), or its URL is not a string (`tab <id> has no readable URL`) | `_enforceSitePolicy` (Checkpoint B branch) |
 
 These cases still proceed without a check:
 
-- Checkpoint A with a missing, `null` or empty `url` (`:1507`, `:1517`).
+- Checkpoint A with a missing, `null` or empty `url` (`_enforceSitePolicy`, Checkpoint A branch).
   - The extension raises its own "URL is required".
   - Checkpoint A has no connectivity check, because `browser_create_tab` may launch Chrome itself.
-- Checkpoint B on a found tab whose URL is `''` (not yet navigated). This evaluates to default allow with a null domain, so no event is recorded (`:1566-1572`).
+- Checkpoint B on a found tab whose URL is `''` (not yet navigated). This evaluates to default allow with a null domain, so no event is recorded.
 
 Fail-closed refusals are not recorded in the event log, and the tab is not auto-closed.
+
+Auto-close on the workflow path applies only to Checkpoint B blocks, the same as the other paths.
 
 ## Storage
 
@@ -243,7 +255,6 @@ See also [CONTRIBUTING.md](../CONTRIBUTING.md#signing-and-updating-the-signed-bu
 | Gap | Tracking |
 |---|---|
 | First boot offline: until the first successful fetch the signed tier has no rows, because no signed snapshot ships with the installer | #116 |
-| Popup routes are not loopback-gated in network mode; `SECURITY.md:43` ("grants zero agent power") is stale | #110 |
 | Stale `financial-institutions.txt` header (names `blocklist-updater.js`, uses "overrides" wording, has an unparsed `# version: 1`); stale code comments (the updater header's "if newer", `global-user-rules.js:74-75`, `scripts/sign-formatters.js:23`, `popup.js:209`, storybook strings) | #112 |
-| Workflow primitives bypass the gate; pending-navigation gap | #114 |
+| Pending-navigation gap (Checkpoint B allows a tab whose URL hasn't navigated yet, see [Fail-closed cases](#fail-closed-cases)) | untracked |
 | The verifier ignores the signed manifest's `kind`; CI checks hashes but not signatures | untracked |

@@ -344,7 +344,7 @@ describe('list', () => {
     seedAgent(db, { id: 2 });
   });
 
-  test('orders by last_seen_at DESC and maps entry shape without numeric ids', () => {
+  test('orders by last_seen_at DESC and identifies agents by non-secret id (never hash)', () => {
     mod.record(1, verdict('a.com'), at('2026-01-01T00:00:00.000Z'));
     mod.record(1, verdict('b.com', 'block', 'global_user', 'b.com'), at('2026-01-03T00:00:00.000Z'));
     mod.record(2, verdict('c.com'), at('2026-01-02T00:00:00.000Z'));
@@ -353,7 +353,7 @@ describe('list', () => {
     assert.equal(hasMore, false);
     assert.equal(nextCursor, null);
     assert.deepEqual(entries[0], {
-      agentKey: 'hash_1',
+      agentId: 1,
       agentName: 'agent_1',
       domain: 'b.com',
       decision: 'block',
@@ -367,11 +367,13 @@ describe('list', () => {
       agentRuleDecision: null,
     });
     for (const e of entries) {
+      // The event-row id is never exposed, and no key/hash field leaks.
       assert.equal('id' in e, false);
-      assert.equal('agentId' in e, false);
-      assert.equal('agent_id' in e, false);
+      assert.equal('agentKey' in e, false);
+      assert.equal('agent_key' in e, false);
+      assert.equal('api_key_hash' in e, false);
     }
-    assert.equal(entries[1].agentKey, 'hash_2');
+    assert.equal(entries[1].agentId, 2);
     assert.equal(entries[1].agentName, 'agent_2');
   });
 

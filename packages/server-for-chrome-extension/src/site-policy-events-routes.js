@@ -4,7 +4,7 @@
  * Web UI routes for the site policy event log.
  *
  *   GET  /api/ui/site-policy/events                          (auth)
- *        Query: agentId (api_key_hash), decision ('allow'|'block'),
+ *        Query: agentId (agent row id), decision ('allow'|'block'),
  *        limit, cursor. Returns site-policy-events.list() as-is.
  *   POST /api/ui/agents/:agentId/site-events/allow     (auth, mutatingAuth)
  *   POST /api/ui/agents/:agentId/site-events/revoke    (auth, mutatingAuth)
@@ -13,7 +13,7 @@
  *        same-domain allow in place); it never deletes. The actions never
  *        touch site_policy_events rows, and no event row is required.
  *
- * `agentIdFromKey(key)` maps the webapp's agent key (api_key_hash) to the
+ * `agentIdFromKey(id)` validates the webapp's agent row id and returns the
  * numeric agents.id of an ACTIVE agent, or a falsy value.
  */
 
@@ -101,7 +101,7 @@ function mountSiteEventRoutes(app, { auth, mutatingAuth, broadcastUiEvent, agent
         );
         _broadcast(`site_event_${action}`);
         res.status(201).json({
-          agentKey: req.params.agentId,
+          agentId: req.params.agentId,
           domain: normalized,
           decision,
           createdAt: row ? row.created_at : null,

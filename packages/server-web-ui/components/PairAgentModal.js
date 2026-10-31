@@ -148,10 +148,10 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
   // ---------------------------------------------------------------------------
   async function revokeTentative() {
     const g = generatedRef.current;
-    if (!g || !g.apiKey) return;
+    if (!g || !g.id) return;
     if (committedRef.current) return;
     try {
-      await revokeAgent(g.apiKey);
+      await revokeAgent(g.id);
     } catch (e) {
       // Don't strand the user — log and move on. console.warn keeps this
       // out of the toast region (where it would conflict with the close).
@@ -174,6 +174,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       const minted = await createAgent(name, profileId);
       const next = {
         apiKey: minted.apiKey,
+        id: minted.id,
         agentName: minted.agentName || name,
         profileId: minted.profileId || profileId,
       };
@@ -223,9 +224,9 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     return () => {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       if (renameTimerRef.current) clearTimeout(renameTimerRef.current);
-      if (!committedRef.current && generatedRef.current && generatedRef.current.apiKey) {
+      if (!committedRef.current && generatedRef.current && generatedRef.current.id) {
         // Fire-and-forget — we're unmounting.
-        revokeAgent(generatedRef.current.apiKey).catch(() => { /* swallow */ });
+        revokeAgent(generatedRef.current.id).catch(() => { /* swallow */ });
       }
     };
   }, []);
@@ -254,7 +255,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     }
     if (!includeKey) return;
     const g = generatedRef.current;
-    if (!g || !g.apiKey) return;
+    if (!g || !g.id) return;
     const trimmed = nextName.trim();
     if (!trimmed) return; // empty input — wait for the user to type something
     if (trimmed.length > AGENT_NAME_MAX) return;
@@ -262,7 +263,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     renameTimerRef.current = setTimeout(async () => {
       renameTimerRef.current = null;
       try {
-        await renameAgent(g.apiKey, trimmed);
+        await renameAgent(g.id, trimmed);
         const next = { ...g, agentName: trimmed };
         generatedRef.current = next;
         setGenerated(next);
@@ -281,7 +282,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     setSelectedProfile(nextProfileId);
     if (!includeKey) return;
     const g = generatedRef.current;
-    if (!g || !g.apiKey) {
+    if (!g || !g.id) {
       // No tentative entry yet (initial mint failed) — try a fresh mint
       // against this new profile so the user can still get a key.
       if (nextProfileId) {
@@ -291,7 +292,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
     }
     if (nextProfileId === g.profileId) return;
     try {
-      await updateAgentProfile(g.apiKey, nextProfileId);
+      await updateAgentProfile(g.id, nextProfileId);
       const next = { ...g, profileId: nextProfileId };
       generatedRef.current = next;
       setGenerated(next);
@@ -363,7 +364,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
       // hasn't landed yet, do a synchronous mint here so the user isn't
       // staring at the placeholder after clicking Copy.
       if (includeKey) {
-        if (!generatedRef.current || !generatedRef.current.apiKey) {
+        if (!generatedRef.current || !generatedRef.current.id) {
           const name = agentName.trim() || rollAutoName();
           const prof = selectedProfile
             || (profileList.length > 0 ? profileList[0].directoryName : '');
@@ -386,7 +387,7 @@ export default function PairAgentModal({ open, onClose, port, profiles }) {
           const trimmed = agentName.trim();
           if (g && trimmed && trimmed !== g.agentName && trimmed.length <= AGENT_NAME_MAX) {
             try {
-              await renameAgent(g.apiKey, trimmed);
+              await renameAgent(g.id, trimmed);
               const next = { ...g, agentName: trimmed };
               generatedRef.current = next;
               setGenerated(next);

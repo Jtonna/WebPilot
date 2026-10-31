@@ -48,7 +48,8 @@ function eventRows() {
 // ---- stubs ----
 stubs['./db/connection'] = { getDb: () => db, init: () => db };
 const fakePairedKeys = {
-  validateKey: (key) => (key === 'k1' ? { key: 'h1', profileId: 'default', agentName: 'A' } : null),
+  // validateKey now returns the agent's non-secret row id (never a key/hash).
+  validateKey: (key) => (key === 'k1' ? { id: 1, profileId: 'default', agentName: 'A' } : null),
   touchKey: () => {},
 };
 stubs['./paired-keys'] = fakePairedKeys;

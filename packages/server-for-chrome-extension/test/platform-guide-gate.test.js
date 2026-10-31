@@ -161,7 +161,7 @@ async function runGateTests() {
 
   const fakePairedKeys = {
     validateKey: (key) => key === 'valid-key'
-      ? { agentName: 'TestAgent', profileId: 'default', key: 'valid-key' }
+      ? { id: 1, agentName: 'TestAgent', profileId: 'default' }
       : null,
     touchKey: () => {}
   };

@@ -94,26 +94,38 @@ export function createAgent(agentName, profileId) {
   });
 }
 
-export function renameAgent(key, newName) {
-  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}/rename`, {
+// All agent admin endpoints address the agent by its non-secret row `id`
+// (getStatus().pairedAgents[i].id) — never a key/hash.
+export function renameAgent(id, newName) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(id)}/rename`, {
     method: 'POST',
     body: { newName },
   });
 }
 
-export function revokeAgent(key) {
-  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}`, {
+export function revokeAgent(id) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 }
 
 // Re-bind an existing agent to a different Chrome profile. The server flips
 // the entry's profileId field; tool-call routing picks up the change on the
-// next call (no socket teardown — see PATCH /api/ui/agents/:key in server.js).
-export function updateAgentProfile(key, profileId) {
-  return apiFetch(`/api/ui/agents/${encodeURIComponent(key)}`, {
+// next call (no socket teardown — see PATCH /api/ui/agents/:id in server.js).
+export function updateAgentProfile(id, profileId) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: { profileId },
+  });
+}
+
+// Regenerate an agent's API key. Returns { apiKey } — the new plaintext, shown
+// to the operator exactly once. The previously-issued key stops working
+// immediately. See POST /api/ui/agents/:id/regenerate in server.js.
+export function regenerateAgent(id) {
+  return apiFetch(`/api/ui/agents/${encodeURIComponent(id)}/regenerate`, {
+    method: 'POST',
+    body: {},
   });
 }
 
@@ -243,8 +255,8 @@ export function deleteGlobalRule(domain) {
   });
 }
 
-// GET /api/ui/agents/:agentId/site-rules — agentId is the api_key_hash
-// returned by getStatus().pairedAgents[i].key. Returns an array of
+// GET /api/ui/agents/:agentId/site-rules — agentId is the agent row id
+// returned by getStatus().pairedAgents[i].id. Returns an array of
 // { domain, decision, createdAt } from agent_site_rules. WS `site_policy_changed`
 // reasons for per-agent rule writes are `agent_rule_upsert` / `agent_rule_delete`.
 export function getAgentSiteRules(agentId) {
@@ -267,7 +279,7 @@ export function deleteAgentSiteRule(agentId, domain) {
   );
 }
 
-// GET /api/ui/site-policy/events — returns { entries: [{ agentKey, agentName, domain,
+// GET /api/ui/site-policy/events — returns { entries: [{ agentId, agentName, domain,
 // decision, source, matchedDomain, firstSeenAt, lastSeenAt, decisionChangedAt,
 // hitCount, actionable, agentRuleDecision }], hasMore, nextCursor }. One row per
 // agent+domain, newest last-seen first. Refetch on WS events `site_policy_changed` and
@@ -283,7 +295,7 @@ export function getSitePolicyEvents({ agentId, decision, limit, cursor } = {}) {
 }
 
 // POST /api/ui/agents/:agentId/site-events/allow — body { domain }. Creates a
-// per-agent allow rule. Returns 201 { agentKey, domain, decision, createdAt }; 400 for
+// per-agent allow rule. Returns 201 { agentId, domain, decision, createdAt }; 400 for
 // non-actionable domains (IPs, localhost, `*`); 404 unknown/revoked agent.
 // Note: the event row itself is not changed immediately; it flips on the agent's next
 // request, and `agentRuleDecision` in `getSitePolicyEvents` shows the new rule immediately.

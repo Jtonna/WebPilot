@@ -1270,6 +1270,10 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * manifest schema.
    *
    * @param {string|null} apiKey  Resolved API key for the calling agent
+   * @param {{ envelope: object|null, kind: string|null }} [policyTracker]
+   *   Per-run record of the FIRST site-policy outcome a primitive hit.
+   *   webpilot_run_workflow creates a fresh one per request and reads it
+   *   after `run()` settles; see _gate below.
    * @returns {{
    *   getAccessibilityTree: Function,
    *   click: Function,
@@ -1279,18 +1283,84 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    *   createTab: Function
    * }}
    */
-  function buildBrowserPrimitives(apiKey) {
+  function buildBrowserPrimitives(apiKey, policyTracker = { envelope: null, kind: null }) {
+    // Re-apply the site-policy gate for every browser primitive a workflow
+    // invokes. Without this, workflow code reaches the internal `_browser*`
+    // helpers directly — the gate in tools/call only fires for the OUTER
+    // webpilot_run_workflow call's tab_id, so a workflow could otherwise
+    // open arbitrary URLs or act on unchecked tabs and bypass site blocks.
+    // This mirrors the browser_request_chain re-check (each chained step is
+    // gated individually).
+    //
+    // A blocked primitive THROWS so workflow code stops at that step. The
+    // thrown error carries the standard policy envelope (the same MCP result
+    // a direct tool call would get) on `err.__sitePolicyEnvelope`, tagged by
+    // `err.__sitePolicyKind`: 'blocked' ('site blocked by policy') or
+    // 'unavailable' ('site policy check failed', incl. a policy evaluation
+    // that threw — fail CLOSED as in tools/call). The first outcome of the
+    // run is also kept in `policyTracker`, so webpilot_run_workflow can
+    // still return the envelope when the workflow re-wraps the error without
+    // `cause`, or report it as `policyBlocked` when the workflow swallows it.
+    // Policy outcomes are never recorded as formatter errors.
+    const _gate = async (toolName, gateArgs) => {
+      let blocked;
+      let kind;
+      try {
+        blocked = await _enforceSitePolicy(toolName, gateArgs, apiKey);
+      } catch (e) {
+        console.error('[policy] workflow-step enforcement threw — blocking step:', e);
+        blocked = _buildPolicyUnavailableResponse({
+          reason: POLICY_FAILURE_REASONS.POLICY_ERROR,
+          message: `Site policy could not be evaluated: ${e.message}. Step blocked.`,
+        });
+      }
+      if (!blocked) return;
+      let detail = 'site policy blocked';
+      try {
+        const body = JSON.parse(blocked.content[0].text);
+        kind = body.error === 'site blocked by policy' ? 'blocked' : 'unavailable';
+        detail = [
+          body.error,
+          body.domain ? `domain=${body.domain}` : null,
+          body.reason ? `reason=${body.reason}` : null,
+        ]
+          .filter(Boolean)
+          .join(' ');
+      } catch (_e) { kind = 'unavailable'; /* fall back to generic message */ }
+      if (!policyTracker.envelope) {
+        policyTracker.envelope = blocked;
+        policyTracker.kind = kind;
+      }
+      const err = new Error(`workflow step blocked by site policy: ${detail}`);
+      err.__sitePolicyEnvelope = blocked;
+      err.__sitePolicyKind = kind;
+      throw err;
+    };
+
     return {
-      getAccessibilityTree: ({ tab_id, usePlatformOptimizer } = {}) =>
-        _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey),
-      click: ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) =>
-        _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey),
-      type: ({ tab_id, text, ref, selector, delay, pressEnter } = {}) =>
-        _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey),
-      scroll: ({ tab_id, ref, selector, pixels, direction, amount } = {}) =>
-        _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey),
+      getAccessibilityTree: async ({ tab_id, usePlatformOptimizer } = {}) => {
+        await _gate('browser_get_accessibility_tree', { tab_id });
+        return _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey);
+      },
+      click: async ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) => {
+        await _gate('browser_click', { tab_id });
+        return _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey);
+      },
+      type: async ({ tab_id, text, ref, selector, delay, pressEnter } = {}) => {
+        await _gate('browser_type', { tab_id });
+        return _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey);
+      },
+      scroll: async ({ tab_id, ref, selector, pixels, direction, amount } = {}) => {
+        await _gate('browser_scroll', { tab_id });
+        return _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey);
+      },
+      // browser_get_tabs is site-agnostic and explicitly exempt in
+      // _enforceSitePolicy; mirror that here and do not over-block.
       getTabs: () => _browserGetTabs({}, apiKey),
-      createTab: ({ url } = {}) => _browserCreateTab({ url }, apiKey)
+      createTab: async ({ url } = {}) => {
+        await _gate('browser_create_tab', { url });
+        return _browserCreateTab({ url }, apiKey);
+      }
     };
   }
 
@@ -2067,15 +2137,46 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
       console.log(`[mcp:workflow] running ${platform}/${workflow} tabId=${workflowTabId}`);
 
+      // Fresh per request: records the first site-policy outcome any
+      // workflow primitive hit during this run (see buildBrowserPrimitives).
+      const policyTracker = { envelope: null, kind: null };
+
       try {
         const result = await wf.run({
           params: workflowParams,
-          browser: buildBrowserPrimitives(apiKey),
+          browser: buildBrowserPrimitives(apiKey, policyTracker),
           tabId: workflowTabId,
           findInTree
         });
-        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, ...(result && typeof result === 'object' ? result : { result }) }) }] };
+        const body = { ok: true, ...(result && typeof result === 'object' ? result : { result }) };
+        // The workflow caught a policy block and carried on: still succeed,
+        // but tell the caller a step was refused.
+        if (policyTracker.envelope) {
+          try {
+            body.policyBlocked = JSON.parse(policyTracker.envelope.content[0].text);
+          } catch (_e) { /* envelope bodies are always JSON; ignore if not */ }
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(body) }] };
       } catch (err) {
+        // A site-policy outcome is not a formatter failure: return the
+        // standard policy envelope (same shape as a direct tool call or a
+        // blocked chain step) and do not record a formatter error. Look for
+        // the envelope along the `cause` chain in case the workflow wrapped
+        // it; if it was re-thrown without `cause`, fall back to the run's
+        // tracked outcome.
+        let policyEnvelope = null;
+        for (let e = err, depth = 0; e && depth < 5; e = e.cause, depth++) {
+          if (e.__sitePolicyEnvelope) {
+            policyEnvelope = e.__sitePolicyEnvelope;
+            break;
+          }
+        }
+        if (!policyEnvelope) policyEnvelope = policyTracker.envelope;
+        if (policyEnvelope) {
+          console.warn(`[mcp:workflow] ${platform}/${workflow} stopped by site policy: ${err.message}`);
+          return policyEnvelope;
+        }
+
         let incident;
         if (err.__formatterIncident) {
           incident = err.__formatterIncident;

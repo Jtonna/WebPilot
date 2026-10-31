@@ -40,9 +40,13 @@ Out of scope:
 
 For context when assessing reports, the WebPilot trust model is:
 
-- **Extension = identity** — each Chrome profile is identified by a per-install UUID. Claiming an installId grants zero agent power.
-- **Server = security boundary** — all authorization decisions happen server-side.
-- **Agents = power** — every agent has a distinct API key obtained via an explicit human approval handshake in the dashboard.
+- **Extension = identity, loopback-only** — each Chrome profile is identified by a per-install UUID (`installId`). The extension WebSocket is **loopback-only** and is never LAN-reachable, even in network mode. An installId is an identity, not a credential, and it is only ever presented from the local machine; it carries no agent power. The only gate on MCP tools is agent-layer API-key auth.
+- **Server = security boundary** — all authorization decisions happen server-side. In network mode, only the API-key-gated MCP surface (`/sse`, `/message`) is reachable over the LAN; the extension WebSocket, `/api/popup/*`, `/connect`, `/ui`, and `/health` stay loopback-only (enforced by `src/loopback.js`).
+- **Agents = power** — every agent has a distinct API key obtained via an explicit human approval handshake in the dashboard. Only the plaintext key authenticates; a stored key hash is never a credential (see below).
+
+### Agent key handling
+
+The plaintext API key is shown exactly **once** — at pairing approval, or when an agent's key is regenerated — and is never persisted. The server stores only an HMAC hash (`api_key_hash`) of the key; that hash never leaves the server, is never sent to any client, and authenticates nothing on its own. Authentication hashes the presented plaintext and compares it against the stored hash, so a leaked hash cannot be replayed as a credential.
 
 See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) §Authentication & authorization for the detailed model.
 
@@ -55,6 +59,12 @@ The MCP transport that AI agents use to reach the WebPilot server requires an `X
 - **If you've already pushed a `.mcp.json` with a real key**, treat the key as compromised: open the WebPilot dashboard, revoke the paired agent, and re-pair to mint a fresh key. Removing the file from `HEAD` is not enough — the value is still in the repo's history and on every fork/clone.
 
 The same advice applies to any other client config that embeds the WebPilot API key (Cursor `mcp.json`, Continue config, custom shell scripts, etc.).
+
+### Migration (breaking)
+
+Earlier builds exposed a per-agent "Copy config" button that populated the generated `.mcp.json` with the agent's stored `api_key_hash` as `X-API-Key`. That value is a hash, not a plaintext key, and it **no longer authenticates** — a leaked or copied hash is accepted by nothing. Any client config produced by that old button will now be rejected.
+
+To recover, each existing agent must either be **re-paired** (run the pairing handshake again) or have its key **regenerated** via the dashboard's per-agent "Regenerate key" action (a one-time plaintext reveal), then have its client config updated with the new plaintext key. The signing pepper (`<dataDir>/secret/api-key.pepper`) is unaffected and does not need rotation.
 
 ## Supply chain integrity
 
