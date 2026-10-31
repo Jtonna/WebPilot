@@ -21,7 +21,7 @@ import { useCopyToClipboard } from '../lib/useCopyToClipboard';
  */
 const EXTENSIONS_URL = 'chrome://extensions/';
 
-export default function ProfileSetupModal({ open, profileName, extensionPath, onClose }) {
+export default function ProfileSetupModal({ open, profileName, extensionPath, pendingIdentification = false, onClose }) {
   return (
     <Modal
       open={open}
@@ -29,8 +29,31 @@ export default function ProfileSetupModal({ open, profileName, extensionPath, on
       titleId="wp-profile-setup-title"
     >
       <h2 id="wp-profile-setup-title" className="wp-modal-title">
-        Load the WebPilot extension
+        {pendingIdentification ? 'Match the waiting extension' : 'Load the WebPilot extension'}
       </h2>
+      {pendingIdentification ? (
+        <>
+          <div className="wp-modal-body">
+            <p style={{ margin: 0 }}>
+              An extension is waiting to be matched — open the WebPilot popup
+              in that Chrome profile and pick{' '}
+              {profileName ? <strong>{profileName}</strong> : 'this profile'}{' '}
+              to finish.
+            </p>
+          </div>
+          <div className="wp-modal-actions">
+            <button
+              type="button"
+              className="wp-btn wp-btn-primary"
+              onClick={onClose}
+              autoFocus
+            >
+              Done
+            </button>
+          </div>
+        </>
+      ) : (
+      <>
       <div className="wp-modal-body">
         <p style={{ margin: 0, marginBottom: 'var(--s-4)' }}>
           Four short steps — most takes about a minute.
@@ -92,6 +115,8 @@ export default function ProfileSetupModal({ open, profileName, extensionPath, on
           Done
         </button>
       </div>
+      </>
+      )}
     </Modal>
   );
 }

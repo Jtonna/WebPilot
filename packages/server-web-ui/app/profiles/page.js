@@ -27,6 +27,7 @@ export default function ProfilesPage() {
   const [agents, setAgents]     = useState([]);
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [extensionPath, setExtensionPath] = useState(null);
+  const [pendingIdentification, setPendingIdentification] = useState(0);
   const [error, setError]       = useState(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName]   = useState('');
@@ -44,6 +45,7 @@ export default function ProfilesPage() {
       setProfiles(data.profiles || []);
       setAgents(data.pairedAgents || []);
       setExtensionPath((data.paths && data.paths.extensionPath) || null);
+      setPendingIdentification(data.pendingIdentification?.count ?? 0);
       setError(null);
     } catch (err) {
       setError(err);
@@ -60,11 +62,14 @@ export default function ProfilesPage() {
     const u2 = client.subscribe('extension_disconnected', () => refresh());
     const u3 = client.subscribe('agents_changed', () => refresh());
     const u4 = client.subscribe('pairing_approved', () => refresh());
+    // Server-wide count of extensions waiting to be matched to a profile.
+    const u5 = client.subscribe('identification_pending_changed', () => refresh());
     return () => {
       u1 && u1();
       u2 && u2();
       u3 && u3();
       u4 && u4();
+      u5 && u5();
       client.disconnect();
     };
   }, []);
@@ -142,8 +147,9 @@ export default function ProfilesPage() {
                     </div>
                     {needsSetup ? (
                       <div className="wp-row-inline-hint">
-                        Open Chrome’s extensions page in this profile and load
-                        the WebPilot extension.
+                        {pendingIdentification > 0
+                          ? 'An extension is waiting to be matched — open the WebPilot popup in that Chrome profile and pick this profile to finish.'
+                          : 'Open Chrome’s extensions page in this profile and load the WebPilot extension.'}
                       </div>
                     ) : null}
                   </div>
@@ -217,6 +223,7 @@ export default function ProfilesPage() {
         open={!!setupTarget}
         profileName={setupTarget ? (setupTarget.displayName || setupTarget.directoryName) : null}
         extensionPath={extensionPath}
+        pendingIdentification={pendingIdentification > 0}
         onClose={() => setSetupTarget(null)}
       />
     </>

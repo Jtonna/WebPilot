@@ -156,9 +156,13 @@ No sub-nav / tabs (Settings uses section anchors). One `<h1>` per page; no bread
 
 **Dashboard** — Page header, then **Action items** (inline `PairingPromptCard`s — approve / deny in-card, profile selector with `+ New sandbox profile` sentinel), then **Chrome profiles** (rows link to `/agents?profile=<dir>`), then **System status** (one card: Chrome / Extension / Server). Truly empty: replace System status with a Welcome card + single `Pair an agent` CTA. No activity feed.
 
+When an extension is waiting to be matched, a line above **Chrome profiles** reads `1 extension is waiting to be matched · Go to Profiles`, or `N extensions are waiting to be matched`. The link opens `/profiles/`. It is plain secondary text, not a pill.
+
 **Pairings** — `Awaiting review` (same card as Dashboard) and persistent server-backed **History** (`GET /api/ui/pairings/history` paginated by cursor; row expands to show pairing ID, decided-at timestamp, link to agent, Revoke if active). `Load 50 more` button — no infinite scroll.
 
 **Profiles** — `Known profiles` (sort: active → ready → needs_setup, then last-active desc; `needs_setup` rows show a `Set up` button opening the four-step Profile setup walkthrough modal) and a prominent **+ New sandbox profile** panel (inline form, not a modal).
+
+While an extension is waiting, a `needs_setup` row shows this hint in place of the install hint: `An extension is waiting to be matched — open the WebPilot popup in that Chrome profile and pick this profile to finish.` **Set up** opens the modal in its matching variant, titled `Match the waiting extension`; the body uses the same sentence with the profile name in bold and the only action is a `Done` button. Both pages refresh on `identification_pending_changed`.
 
 **Agents** — **Pair a new agent** CTA opens the walkthrough modal (three steps: copy `.mcp.json`, copy agent prompt, approve inline via embedded `PairingPromptCard`). **Paired agents** list with Regenerate key / rename / revoke row actions. Regenerate key opens a one-time key-reveal modal (`RevealKeyModal`) showing the new plaintext key in a copyable `.mcp.json` snippet — the key is not stored in plaintext, so it can't be re-copied afterward; regenerating is the only way to get a working key again. **Manual setup snippets** collapsible at bottom. Last-active: relative ≤7d, absolute older.
 
@@ -200,6 +204,8 @@ Page updates live as rules, agents, or logs change, and on reconnect. All modals
 **Empty states:** one line + one icon (32px) + at most one action. Examples — `No pairings yet. They'll appear here after you approve or deny your first request.` / `No agents paired yet.` / `Nothing pending right now.`
 
 **Status pills:** `Active` (green, live extension + recent activity) → `Ready` (blue, set up but not connected) → `Needs setup` (amber, no extension installId yet). Dot + label. Active outranks Ready outranks Needs setup. Decision pills: `Allow` / `Block`. Health pills: `Healthy` / `Degraded` / `Unhealthy`.
+
+A waiting extension does not change a pill; the row stays `Needs setup` until the match completes.
 
 **Confirmation modals** (`ConfirmModal`): title is a short declarative question (`Revoke API key?` / `Restart server?`). Body: one sentence effect, one sentence recovery. Default focus on Cancel; Esc closes; Enter does not auto-confirm. Use `wp-btn-danger` for destructive, primary for non-destructive (restart). Every destructive action gets a modal — even in fast-moving lists.
 

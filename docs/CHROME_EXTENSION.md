@@ -75,18 +75,25 @@ When the WebSocket closes, `ws.onclose` picks the popup status and retry delay f
 Once the WebSocket is open the extension sends a `hello` message **before any other traffic** — the server gates all non-hello messages until the handshake completes. The handshake carries:
 
 - `profileId` -- previously-resolved Chrome profile directoryName (e.g. `"Default"`, `"Profile 1"`), if any.
-- `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`).
+- `gaiaEmail` -- the result of `chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })`, if available (wire field name is `gaiaEmail`). Sent only when no `profileId` is stored.
 - `installId` -- a persistent UUID minted on first install (stored as `webpilot.installId` in `chrome.storage.local`). The id is intentionally kept across `FORGET_CONFIG` resets so the server's `installId → profileId` map (the `extension_installs` SQLite table) survives config wipes.
+- `extensionId` -- `chrome.runtime.id`, so the server can locate this install's storage on disk for the install scan. The server ignores a value that isn't 32 characters of `a`-`p` and logs that it did.
 
-The server resolves the binding in five ordered steps (see `resolveHelloProfile()` in `server.js` around lines 1479-1577):
+The server resolves the binding in six ordered steps (see `resolveHelloProfile()` in `server.js`):
 
 1. **Direct `profileId`** — if the hello message carries a client-supplied `profileId`, the server validates it against the real local Chrome profiles (`readProfiles(userDataDir)`) before trusting it; an unrecognized value is ignored and resolution falls through to the next step.
 2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile only if it still corresponds to a real directory under Chrome's user-data-dir.
 3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
-4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
-5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; no picker consumes them yet (#138 adds one; see the `identify_required` handler in `background.js`). The extension keeps any stored `webpilot.profileId` and resends `hello` after a backoff (3 s, 10 s, 30 s), so step 1 or 2 resolves if the server's view changes. If all resends still get `identify_required`, it sets `webpilot.profileId` to `null`, closes the socket with `4001` (`identify_failed`) and reconnects after 5 s; the next `hello` carries `gaiaEmail` again since no `profileId` is left.
+4. **Install scan** — the server reads each local profile's `Local Extension Settings/<extensionId>/` `*.log` and `*.ldb` files for the `installId` bytes (`scanForInstallId()` in `src/chrome/install-scan.js`). It binds only on exactly one match, and only if that profile exists in `Local State`; zero or several matches fall through. The scan is read-only and conservative:
+   - It reads nothing unless `extensionId` matches `^[a-p]{32}$` and `installId` is a UUID.
+   - It skips symlinks and profile names containing `/`, `\`, `..`, `:` or NUL.
+   - It skips files over 8 MB and stops at 32 MB total.
+   - Non-single-match results are cached for 30 s, so the 3/10/30 s retries below don't rescan the disk.
+   - It logs counts only, never paths or ids.
+5. **Inference by exclusion** — if exactly one known profile is *not currently connected* and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. There is no install-map check here. Ambiguity (zero or multiple candidates) falls through to step 6.
+6. **`identify_required` push** — the server gives up auto-resolving and sends `knownProfiles`, one entry per local profile: `{ directoryName, displayName, gaiaEmail, connected, registered }`. `connected` means a live, bound extension socket holds that profile. `registered` means the profile has a row in the `extension_installs` table, so some install has completed a handshake there before. The socket joins the server's pending-identification tracker, which broadcasts `identification_pending_changed` to the web UI until the socket binds, is refused with `4409`, or closes. The extension stores the list under `webpilot.knownProfiles` in `chrome.storage.local`, and the popup renders the [profile picker](#what-the-popup-shows) from it. The extension keeps any stored `webpilot.profileId` and resends `hello` after a backoff (3 s, 10 s, 30 s), so step 1 or 2 resolves if the server's view changes. A profile picked in the popup arrives as a `reidentify` message, which stores the profile and resends `hello` at once. If all resends still get `identify_required`, the extension sets `webpilot.profileId` to `null`, closes the socket with `4001` (`identify_failed`) and reconnects after 5 s; the next `hello` carries `gaiaEmail` again since no `profileId` is left.
 
-The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list). It can also refuse the connection by closing the socket with code `4409` (`connection_in_use`) instead of sending `hello_ack`, because another install already holds the profile. See [Reconnect and close codes](#reconnect-and-close-codes). The 8-second client watchdog (`HELLO_TIMEOUT_MS = 8000`) covers a server that never replies: on expiry the extension sets error state `identify_timeout`, closes with 1000 and reconnects on the same 3/10/30 s backoff counter, then fails with 4001 as above. The watchdog is cancelled when `identify_required` arrives. The server's parallel 5-second `helloDeadline` pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`; `hello_ack` also resets the identify retry counter.
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list for the popup picker). It can also refuse the connection by closing the socket with code `4409` (`connection_in_use`) instead of sending `hello_ack`, because another install already holds the profile. See [Reconnect and close codes](#reconnect-and-close-codes). The 8-second client watchdog (`HELLO_TIMEOUT_MS = 8000`) covers a server that never replies: on expiry the extension sets error state `identify_timeout`, closes with 1000 and reconnects on the same 3/10/30 s backoff counter, then fails with 4001 as above. The watchdog is cancelled when `identify_required` arrives. The server's parallel 5-second `helloDeadline` pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`; `hello_ack` also resets the identify retry counter.
 
 ### Message handlers
 
@@ -98,13 +105,14 @@ The server replies with either `hello_ack` (handshake complete; `profileId` is t
 
 #### From popup / other extension contexts (chrome.runtime.onMessage)
 
-The current minimal popup does **not** send any `chrome.runtime.sendMessage` — it queries the server's REST surface directly. The remaining `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging only (cross-context config updates):
+The popup sends exactly one message, `reidentify`, when the user picks a profile. It reads everything else from the server's REST surface and from storage. The other `chrome.runtime.onMessage` handlers in `background.js` are kept for internal extension messaging (cross-context config updates):
 
 | Message type | Action |
 |--------------|--------|
+| `reidentify` | Sent by the popup profile picker with `{ profileId }`. The background is the **only** writer of `webpilot.profileId`. It validates the id against the stored `webpilot.knownProfiles` (if none is stored it accepts the id unvalidated and logs a line), writes it, resets the identify retry cycle, then resends `hello` on an open socket or reconnects. A user-initiated reconnect bypasses the 4409 backoff. Replies `{ success: true }` or `{ success: false, error }`, where `error` is `'No profile selected'`, `'Unknown profile'` or `'WebPilot is disconnected. Reconnect from the popup first.'`. |
 | `CONNECT_REQUEST` | Loads stored config and initiates a WebSocket connection if config is available. |
 | `RECONNECT` | Clears `manuallyDisconnected`, re-enables the extension, and initiates a WebSocket connection. |
-| `FORGET_CONFIG` | Disconnects, clears stored config (`serverUrl`, `enabled`, legacy `apiKey`), resets state, and restarts auto-connect to pick up server again. `webpilot.installId` is intentionally preserved. |
+| `FORGET_CONFIG` | Disconnects, clears stored config (`serverUrl`, `enabled`, `manuallyDisconnected`, `webpilot.profileId`, `webpilot.knownProfiles`, legacy `apiKey`), resets state, and restarts auto-connect to pick up server again. `webpilot.installId` is intentionally preserved. |
 | `SERVICE_STATUS_CHANGED` | Updates `isEnabled` and connects/disconnects WebSocket accordingly. |
 | `CONFIG_UPDATED` | Updates stored config and reconnects if enabled. |
 
@@ -219,11 +227,11 @@ Persistent CDP debugger session management.
 
 ## Popup UI
 
-The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, profile picker, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`. For how verdicts are computed and what the global tier toggle does, see [SITE_POLICY.md](SITE_POLICY.md#precedence) and [Global tier toggle](SITE_POLICY.md#global-tier-toggle).
+The popup is a **minimal status-and-escape-hatch panel** themed to match the webapp. Agent management, sites management, pairing approval, network-mode toggle, and site policy live in the web UI at `http://localhost:3456/ui/`. Popup files: `popup/popup.html`, `popup/popup.js`, `popup/popup.css`. For how verdicts are computed and what the global tier toggle does, see [SITE_POLICY.md](SITE_POLICY.md#precedence) and [Global tier toggle](SITE_POLICY.md#global-tier-toggle).
 
 ### What the popup shows
 
-Four components, top to bottom:
+Five components, top to bottom:
 
 1. **Connection status** — colored dot + one-word label (`Connected` / `Disconnected`; `Connecting` while loading). Shows the bound profile directory (`profileId`, e.g. `Default`) underneath. The server URL is not shown; "Open dashboard" is the way to reach the server.
 2. **Current tab** — domain + state pill. Caption below the pill: "Global policy for this Chrome profile (per-agent rules aren't shown)." A "Rule on <matchedDomain>" line also appears when the matching rule is on a parent domain. Pill states:
@@ -233,14 +241,21 @@ Four components, top to bottom:
    - `Blocked (global block list)`
 3. **Block / Allow toggle** — single primary button that writes a **global** user rule (a `global_user_site_rules` row) for the current tab's domain. Applies to all agents, unless overridden by a per-agent rule for that agent (including an agent's `*` default). If the global tier is off: the rule still saves but has no effect (see [Global tier toggle](SITE_POLICY.md#global-tier-toggle)), the toggle is disabled, and the popup shows "Global rules are off — this toggle won't apply until they're turned back on in the dashboard." Per-agent fine-tuning happens at `/ui/site-policy/`.
 4. **Open dashboard** — opens `<server>/ui/` in a new tab, where `<server>` is the `serverUrl` from `chrome.storage.local` converted to http(s) (default `http://localhost:3456`). Because `/connect` now always returns a loopback `serverUrl` (`ws://127.0.0.1:<port>`), this link always resolves to localhost — which is correct, since `/ui` is loopback-only and the dashboard runs on the same machine.
-5. **Skip / fallback messages** — the tab section is hidden and a plain-text skip surface is shown instead when the popup has nothing renderable:
+5. **Profile picker** — replaces the tab section while `GET /api/popup/state` answers 401, meaning the server has not matched this Chrome profile yet. It opens with "WebPilot hasn't matched this Chrome profile yet. Choose it below, or open the WebPilot dashboard to finish setup."
+   - One row per `webpilot.knownProfiles` entry, showing the display name and the directory name. While the list is empty it says "Waiting for the server to list profiles…".
+   - Row order: **Suggested** (neither connected nor registered), then **Already registered** (registered, not connected), then **in use** (connected, disabled). Servers that predate the `registered` flag are treated as not registered.
+   - Picking an "Already registered" row opens an inline confirmation instead of acting: "This profile already has an extension registered. Only pick it if you are using WebPilot from that profile right now." with Replace and Cancel buttons (not `window.confirm`, which is unreliable in popups).
+   - A pick sends `reidentify`, shows "Connecting…" and disables every row. The popup then polls `/api/popup/state` every 500 ms for up to 8 s, and loads the normal view once it answers 200.
+   - While polling it reads `webpilot.connectionState` from `chrome.storage.session`, ignoring entries older than the pick. A `connection_in_use` refusal shows "Another WebPilot connection is active for that profile. Pick a different one, or close the other WebPilot window." A timeout shows "Still waiting — the profile may be in use or the server is busy. Try again."
+   - `chrome.storage.onChanged` re-renders the picker when `webpilot.knownProfiles` changes, and reloads the main view when `webpilot.profileId` gets a value.
+6. **Skip / fallback messages** — the tab section is hidden and a plain-text skip surface is shown instead when the popup has nothing renderable:
    - Non-http(s) pages, and loopback hosts (`localhost`, `127.0.0.1`, `::1`), are never sent to the server for a per-tab policy lookup: "Site policy doesn’t apply to this page." (This is a client-side skip only; server-side, an agent's `*` rule still matches loopback hosts.)
    - No active tab resolved: "No active tab."
    - The server responded but didn't return a usable `currentTab`: "No policy data for this page yet."
    - No `webpilot.installId` in storage yet: "Extension has no installId. Reload the extension in chrome://extensions/."
-   - A fetch error or a 401 response shows the `Disconnected` connection state plus the error text (e.g. "Install ID not recognized by server." for a 401, or "Could not reach the WebPilot server." for a network failure).
+   - A fetch error shows the `Disconnected` connection state plus the error text (e.g. "Could not reach the WebPilot server." for a network failure). A 401 shows no error; it opens the profile picker instead.
 
-The popup reads `webpilot.installId` + `serverUrl` from `chrome.storage.local` (written by the background auto-connect flow) and hits two server endpoints, authenticating with the `X-Install-Id` header:
+The popup reads `webpilot.installId`, `serverUrl` and `webpilot.knownProfiles` from `chrome.storage.local` (written by the background), and `webpilot.connectionState` from `chrome.storage.session`. It never writes storage. It hits two server endpoints, authenticating with the `X-Install-Id` header:
 
 - `GET  /api/popup/state?tabUrl=<url>`: connection + current-tab pill.
 - `POST /api/popup/site-toggle`: set the global user rule (`global_user_site_rules`) for the domain.
@@ -299,7 +314,7 @@ Upserts a row in `global_user_site_rules` via `upsertGlobalUserRule` in `src/glo
 - `source` and `policyDecision` are the recomputed global-only verdict's `source` and `decision` (`decision` itself just echoes the request).
 - On a non-2xx response, the popup shows the body's `reason` (falling back to `error`) inline under the toggle.
 
-It does **not** send any `chrome.runtime.sendMessage` to the background service worker, and the worker does not broadcast popup-targeted messages. The popup is decoupled from the worker's runtime state; it polls the server directly.
+The popup sends exactly one `chrome.runtime.sendMessage` to the background service worker: `reidentify`, when the user picks a profile. The worker does not broadcast popup-targeted messages. The popup is otherwise decoupled from the worker's runtime state; it polls the server directly, and reads the `chrome.storage.session` mirror only to explain a refused pick.
 
 ### Per-profile installation
 Each Chrome profile loads its own copy of the extension. The `webpilot_dev_reload_extension` MCP tool reloads the extension on the calling agent's paired profile; the server routes `reload_extension` to that one profile's WebSocket. Multi-profile installs need one tool call per profile, or a manual reload at `chrome://extensions/` in each profile (see `accessibility-tree-formatters/DEV_GUIDE.md`).
@@ -318,7 +333,7 @@ The following capabilities that previously lived in the extension popup are now 
 
 ### Storage Keys
 
-Settings and state are stored in `chrome.storage.local`:
+Settings and state are stored in `chrome.storage.local`, except where the table says `session`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -332,7 +347,8 @@ Settings and state are stored in `chrome.storage.local`:
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 | `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
 | `webpilot.profileId` | string | null | Bound Chrome profile directoryName; cleared to `null` when identify retries are exhausted |
-| `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
+| `webpilot.knownProfiles` | array | `[]` | Profile choices for the popup picker, supplied by `identify_required`: `{ directoryName, displayName, gaiaEmail, connected, registered }` per profile. Cleared by `FORGET_CONFIG` |
+| `webpilot.connectionState` (`chrome.storage.session`) | object | unset | `{ status, error, errorType, updatedAt }`, mirrored on every connection status change. The popup reads it to explain a refused pick. Cleared when the browser session ends |
 
 `webpilot.installId` is intentionally **not** cleared on config resets (e.g. `FORGET_CONFIG`) so the server's `installId → profileId` mapping survives storage wipes. Any pre-1.2.0 `apiKey` value left in `chrome.storage.local` is purged on first startup after upgrade (one-time migration; the legacy transport key was retired 2026-05-17).
 
@@ -354,7 +370,7 @@ Standard command envelope:
 | Type | Envelope | Params / Fields | Description |
 |------|----------|-----------------|-------------|
 | `hello_ack` | Push (no `id`) | `profileId` (string) | Server confirms the hello handshake and the resolved Chrome profile binding. The extension must wait for this before sending non-hello traffic. Not sent if the server refuses the claim; it closes with `4409` instead. |
-| `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; extension caches the list and the webapp's `/pairings` flow surfaces the picker. |
+| `identify_required` | Push (no `id`) | `knownProfiles` (array) | Server could not resolve which profile this extension belongs to; extension caches the list and the popup picker renders it. Each entry is `{ directoryName, displayName, gaiaEmail, connected, registered }`. |
 | `store_refs` | Push (no `id`) | `tabId`, `refs`, `refContexts` | Server pushes ref-to-backendDOMNodeId mappings and ancestry context to the extension after formatting an accessibility tree. |
 
 > The server no longer pushes `paired_agents_list` (removed in #129). Agent administration is a web-UI-only concern; the extension never caches the agent roster.
@@ -383,8 +399,10 @@ Error:
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `hello` | `profileId?`, `gaiaEmail?`, `installId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile via the webapp, or closes the socket with `4409` `connection_in_use` if a different install already holds the profile). |
+| `hello` | `profileId?`, `gaiaEmail?`, `installId?`, `extensionId?` | First message on every new WS connection. The server gates all other traffic until it resolves the binding and replies with `hello_ack` (or `identify_required` if it needs the operator to pick a profile in the extension popup, or closes the socket with `4409` `connection_in_use` if a different install already holds the profile). |
 
+> The popup-to-background `reidentify` message is a `chrome.runtime` message, not a WebSocket one. See the [background message table](#from-popup--other-extension-contexts-chromeruntimeonmessage).
+>
 > **Removed (#129):** `revoke_key`, `rename_agent`, and `list_paired_agents` are no longer sent by the extension or handled by the server; agent administration (list/rename/revoke) is web-UI-only.
 >
 > **Deprecated (server logs and ignores):** `set_network_mode` and `set_pairing_required`. Network mode and pairing config are owned by the web UI.
@@ -399,7 +417,7 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 
 | Permission | Purpose |
 |-----------|---------|
-| `storage` | Persist connection config (server URL, enabled state, installId, profileId) |
+| `storage` | Persist connection config (server URL, enabled state, installId, profileId) in `chrome.storage.local`, and mirror connection state to `chrome.storage.session` |
 | `alarms` | Schedule the `webpilot-reconnect` heartbeat that wakes the suspended service worker to reconnect |
 | `activeTab` | Access the currently active tab |
 | `tabs` | Query and manage all browser tabs |

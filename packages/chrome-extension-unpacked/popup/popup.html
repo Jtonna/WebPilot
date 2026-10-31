@@ -49,6 +49,17 @@
       <p id="tab-skip-text" class="wp-skip-text"></p>
     </section>
 
+    <!-- Profile picker: shown instead of the tab section while the server has
+         not matched this Chrome profile yet (/api/popup/state answers 401).
+         Rows are rendered by popup.js from chrome.storage.local
+         `webpilot.knownProfiles`. -->
+    <section id="picker-section" class="wp-popup-picker" hidden>
+      <p id="picker-copy" class="wp-skip-text"></p>
+      <p id="picker-waiting" class="wp-tab-note" hidden>Waiting for the server to list profiles…</p>
+      <ul id="picker-list" class="wp-picker-list"></ul>
+      <p id="picker-msg" class="wp-picker-msg" data-kind="info" role="status" aria-live="polite" hidden></p>
+    </section>
+
     <!-- 4. Open dashboard escape hatch. -->
     <footer class="wp-popup-footer">
       <a id="dashboard-link" class="wp-btn-secondary" href="#" target="_blank" rel="noopener">Open dashboard</a>

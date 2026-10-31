@@ -103,6 +103,11 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute must win over the `display: flex` / `inline-flex`
+   rules below (.wp-popup-tab, .wp-popup-picker, .wp-btn-primary); the UA
+   `[hidden] { display: none }` rule loses to any author display rule. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -245,6 +250,139 @@ html, body {
 .wp-pill[data-state="allowed"]           .wp-pill-dot { background: var(--wp-success); }
 .wp-pill[data-state="blocked_global_site_blocklist"]  .wp-pill-dot { background: var(--wp-danger); }
 .wp-pill[data-state="blocked_user"]      .wp-pill-dot { background: var(--wp-danger); }
+
+/* ────────── Profile picker (shown while the profile is unmatched) ────────── */
+
+.wp-popup-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--wp-separator);
+}
+
+.wp-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.wp-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 40px;
+  padding: 4px var(--s-2);
+  background: var(--wp-bg-card);
+  color: var(--wp-fg);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-instant) var(--ease),
+    opacity var(--dur-instant) var(--ease);
+}
+
+.wp-picker-row:hover:not(:disabled) { background: var(--wp-bg-elevated); }
+.wp-picker-row:disabled             { opacity: 0.45; cursor: not-allowed; }
+
+.wp-picker-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.wp-picker-name,
+.wp-picker-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wp-picker-name { font-weight: 500; }
+
+.wp-picker-dir {
+  font-family: var(--wp-font-mono);
+  font-size: var(--fs-nano);
+  color: var(--wp-fg-muted);
+}
+
+.wp-picker-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-nano);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--wp-fg-secondary);
+  line-height: 1.4;
+}
+
+.wp-picker-tag[data-kind="suggested"] { color: var(--wp-success); border-color: var(--wp-success); }
+.wp-picker-tag[data-kind="in-use"]    { color: var(--wp-warning); border-color: var(--wp-warning); }
+
+.wp-picker-tag[data-kind="registered"] { color: var(--wp-warning); border-color: var(--wp-warning); }
+
+.wp-picker-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  padding: var(--s-2);
+  background: var(--wp-bg-card);
+  border: 1px solid var(--wp-warning);
+  border-radius: var(--radius-sm);
+}
+
+.wp-picker-confirm-text {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-picker-confirm-actions {
+  display: flex;
+  gap: var(--s-2);
+  justify-content: flex-end;
+}
+
+.wp-picker-confirm-btn {
+  padding: 4px var(--s-3);
+  background: var(--wp-bg-card);
+  color: var(--wp-fg);
+  border: 1px solid var(--wp-separator-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--wp-font-sans);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.wp-picker-confirm-btn:hover:not(:disabled) { background: var(--wp-bg-elevated); }
+.wp-picker-confirm-btn:disabled             { opacity: 0.45; cursor: not-allowed; }
+.wp-picker-confirm-btn[data-kind="replace"] { color: var(--wp-warning); border-color: var(--wp-warning); }
+
+.wp-picker-msg {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  color: var(--wp-fg-secondary);
+}
+
+.wp-picker-msg[data-kind="error"] { color: var(--wp-danger); }
 
 /* ────────── Skip surface + footer ────────── */
 
