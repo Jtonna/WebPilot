@@ -445,8 +445,113 @@ function makeMutatingUiAuth(hostBinding) {
   };
 }
 
+/**
+ * The set of profileIds that have at least one installId mapped to them in
+ * `extension_installs`. Presence proves the extension completed a hello
+ * handshake in that profile at least once. Read-only: uses loadInstalls(),
+ * never getProfileForInstall() (which bumps `last_seen_at`).
+ *
+ * Shared by GET /api/ui/status (webPilotStatus "ready") and the
+ * `identify_required` payload (`registered` flag, #138).
+ *
+ * @param {string} [logLabel] log prefix for the failure line
+ * @returns {Set<string>}
+ */
+function loadRegisteredProfileIds(logLabel = '[extension-installs]') {
+  try {
+    const installs = extensionInstalls.loadInstalls();
+    return new Set(
+      Object.values(installs)
+        .map((e) => e && e.profileId)
+        .filter((p) => typeof p === 'string' && p.length > 0)
+    );
+  } catch (e) {
+    console.log(`${logLabel} failed to load extension installs: ${e.message}`);
+    return new Set();
+  }
+}
+
+/**
+ * Build the `knownProfiles` array sent in `identify_required` (#138):
+ *   [{ directoryName, displayName, gaiaEmail, connected, registered }]
+ * `connected` = the profile has a live bound extension socket;
+ * `registered` = the profile has an `extension_installs` row.
+ * The extension popup uses the flags to suggest the right profile.
+ *
+ * @param {{ profiles: Array<{directoryName: string, displayName?: string,
+ *             gaiaEmail?: string|null}>,
+ *           connectedProfiles?: Iterable<string>,
+ *           registeredProfiles?: Iterable<string> }} input
+ * @returns {Array<{ directoryName: string, displayName: string|null,
+ *                   gaiaEmail: string|null, connected: boolean,
+ *                   registered: boolean }>}
+ */
+function buildKnownProfiles({ profiles, connectedProfiles, registeredProfiles }) {
+  const connected = new Set(connectedProfiles || []);
+  const registered = new Set(registeredProfiles || []);
+  return (profiles || []).map((p) => ({
+    directoryName: p.directoryName,
+    displayName: p.displayName === undefined ? null : p.displayName,
+    gaiaEmail: p.gaiaEmail === undefined ? null : p.gaiaEmail,
+    connected: connected.has(p.directoryName),
+    registered: registered.has(p.directoryName),
+  }));
+}
+
+/**
+ * Tracks extension sockets that were sent `identify_required` and have not
+ * yet bound to a profile (#138). The web UI shows "open the WebPilot popup in
+ * this profile to finish" while the count is > 0.
+ *
+ * Every actual change broadcasts
+ *   { type: 'identification_pending_changed', count }
+ * on the UI event socket. Adding a socket already in the set, or deleting one
+ * that is not, is a no-op (no broadcast).
+ *
+ * Lifecycle (wired in createServer): add on each identify_required send;
+ * delete on hello_ack, on the 4409 connection_in_use refusal, and on close.
+ *
+ * @param {{ broadcastUiEvent?: Function }} deps
+ */
+function createPendingIdentificationTracker({ broadcastUiEvent } = {}) {
+  const sockets = new Set();
+  function emit() {
+    if (typeof broadcastUiEvent !== 'function') return;
+    try {
+      broadcastUiEvent({ type: 'identification_pending_changed', count: sockets.size });
+    } catch (e) {
+      console.log(`[extension-bridge] identification_pending_changed broadcast failed: ${e.message}`);
+    }
+  }
+  return {
+    add(ws) {
+      if (sockets.has(ws)) return false;
+      sockets.add(ws);
+      emit();
+      return true;
+    },
+    delete(ws) {
+      if (!sockets.delete(ws)) return false;
+      emit();
+      return true;
+    },
+    has(ws) {
+      return sockets.has(ws);
+    },
+    get size() {
+      return sockets.size;
+    },
+  };
+}
+
 function mountWebUiRoutes(app, deps) {
   const { chromeManager, extensionBridge, pairedKeys, setNetworkMode, port, broadcastUiEvent, hostBinding } = deps;
+  // Number of extension sockets awaiting identification (#138). Optional so
+  // route tests can mount without a tracker.
+  const getPendingIdentificationCount =
+    typeof deps.getPendingIdentificationCount === 'function'
+      ? deps.getPendingIdentificationCount
+      : () => 0;
   // Web UI is localhost-only — no API key involved. See makeUiAuth().
   const auth = makeUiAuth(hostBinding);
   // Extra localhost gate layered onto every mutating admin endpoint. See
@@ -474,20 +579,9 @@ function mountWebUiRoutes(app, deps) {
       const connectedProfiles = extensionBridge.getConnectedProfiles();
       const connectedSet = new Set(connectedProfiles);
 
-      // Compute the set of profileIds that have at least one installId mapped
-      // to them in extension-installs.json. Presence here proves the extension
-      // completed a hello handshake in that profile at least once.
-      let registeredProfileIds = new Set();
-      try {
-        const installs = extensionInstalls.loadInstalls();
-        registeredProfileIds = new Set(
-          Object.values(installs)
-            .map((e) => e && e.profileId)
-            .filter((p) => typeof p === 'string' && p.length > 0)
-        );
-      } catch (e) {
-        console.log(`[ui-api:status] failed to load extension installs: ${e.message}`);
-      }
+      // Profiles with at least one extension_installs row (see
+      // loadRegisteredProfileIds — shared with identify_required).
+      const registeredProfileIds = loadRegisteredProfileIds('[ui-api:status]');
 
       // Tag each profile with its per-profile webPilotStatus. Mutually
       // exclusive: active > ready > needs_setup.
@@ -559,6 +653,18 @@ function mountWebUiRoutes(app, deps) {
         // per-profile `webPilotStatus` field on each entry in `profiles`.
         connectedProfiles,
         pendingPairings: pairedKeys.listPendingPairings(),
+        // Extension sockets sent identify_required that have not bound to a
+        // profile yet (#138). Live updates: identification_pending_changed.
+        pendingIdentification: {
+          count: (() => {
+            try {
+              const n = getPendingIdentificationCount();
+              return Number.isFinite(n) ? n : 0;
+            } catch (_e) {
+              return 0;
+            }
+          })(),
+        },
         // Formatter errors surface as discriminated action items
         // alongside pending pairings on the dashboard.
         actionItems: formatterActionItems,
@@ -1793,6 +1899,25 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     }
   }
 
+  // Extension sockets awaiting identification (#138) — see
+  // createPendingIdentificationTracker for the lifecycle.
+  const pendingIdentification = createPendingIdentificationTracker({ broadcastUiEvent });
+
+  // Send identify_required with the flagged profile list and mark the socket
+  // pending. Throws on failure; callers log with their own context.
+  function sendIdentifyRequired(ws, reason) {
+    const knownProfiles = buildKnownProfiles({
+      profiles: readProfiles(chromeManager.userDataDir),
+      connectedProfiles: extensionBridge.getConnectedProfiles(),
+      registeredProfiles: loadRegisteredProfileIds('[extension-bridge]'),
+    });
+    console.log(
+      `[extension-bridge] ${reason} — sending identify_required with ${knownProfiles.length} known profile(s)`
+    );
+    ws.send(JSON.stringify({ type: 'identify_required', knownProfiles }));
+    pendingIdentification.add(ws);
+  }
+
   const extensionWss = new WebSocketServer({ noServer: true });
   const uiWss = new WebSocketServer({ noServer: true });
 
@@ -1885,15 +2010,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     const helloDeadline = setTimeout(() => {
       if (!registeredProfileId) {
         try {
-          const profiles = readProfiles(chromeManager.userDataDir).map((p) => ({
-            directoryName: p.directoryName,
-            displayName: p.displayName,
-            gaiaEmail: p.gaiaEmail,
-          }));
-          console.log(
-            `[extension-bridge] hello timeout — sending identify_required with ${profiles.length} known profile(s)`
-          );
-          ws.send(JSON.stringify({ type: 'identify_required', knownProfiles: profiles }));
+          sendIdentifyRequired(ws, 'hello timeout');
         } catch (e) {
           console.log(`[extension-bridge] failed to send identify_required: ${e.message}`);
         }
@@ -1952,15 +2069,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           if (!resolvedProfileId) {
             // Can't determine profile — tell the extension to show its picker
             try {
-              const profiles = readProfiles(chromeManager.userDataDir).map((p) => ({
-                directoryName: p.directoryName,
-                displayName: p.displayName,
-                gaiaEmail: p.gaiaEmail,
-              }));
-              console.log(
-                `[extension-bridge] hello without resolvable profile — sending identify_required (${profiles.length} known)`
-              );
-              ws.send(JSON.stringify({ type: 'identify_required', knownProfiles: profiles }));
+              sendIdentifyRequired(ws, 'hello without resolvable profile');
             } catch (e) {
               console.log(`[extension-bridge] identify_required send failed: ${e.message}`);
             }
@@ -1983,6 +2092,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
               `[extension-bridge] hello refused profileId="${resolvedProfileId}" ` +
                 `installId="${ws._installId || ''}" reason=${claim.reason}`
             );
+            pendingIdentification.delete(ws);
             try {
               ws.close(4409, 'connection_in_use');
             } catch (e) { /* ignore */ }
@@ -2006,6 +2116,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           try {
             ws.send(JSON.stringify({ type: 'hello_ack', profileId: resolvedProfileId }));
           } catch (e) { /* ignore */ }
+          pendingIdentification.delete(ws);
           broadcastUiEvent({
             type: 'extension_connected',
             profileId: resolvedProfileId,
@@ -2062,6 +2173,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
       const wasProfileId = registeredProfileId;
       console.log(`[extension-bridge] Extension disconnected profile="${wasProfileId || '(unidentified)'}"`);
       extensionBridge.clearConnection(ws);
+      pendingIdentification.delete(ws);
       if (wasProfileId) {
         broadcastUiEvent({
           type: 'extension_disconnected',
@@ -2324,6 +2436,7 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
     port,
     broadcastUiEvent,
     hostBinding: host,
+    getPendingIdentificationCount: () => pendingIdentification.size,
     setNetworkMode: ({ enabled }) => {
       // Persist + restart-spawn approach: write to the DB
       // (`config.network_enabled`). The replacement daemon boots and reads
@@ -2436,4 +2549,7 @@ module.exports = {
   makeConnectHandler,
   mountWebUiRoutes,
   makeMutatingUiAuth,
+  buildKnownProfiles,
+  loadRegisteredProfileIds,
+  createPendingIdentificationTracker,
 };
