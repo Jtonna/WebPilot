@@ -2,12 +2,18 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { StringDecoder } = require('node:string_decoder');
 
 const MAX_SIZE = 1073741824; // 1 GB
 
 class SizeManagedWriter {
-  constructor(logPath) {
+  constructor(logPath, maxSize = MAX_SIZE) {
     this.logPath = logPath;
+    this.maxSize = maxSize;
+    // Multi-byte UTF-8 characters can be split across Buffer chunks.
+    this.decoder = new StringDecoder('utf8');
+    // True when the next byte written begins a new line (file start or after '\n').
+    this.atLineStart = true;
     // Truncate on startup (fresh each run)
     fs.writeFileSync(logPath, '', 'utf8');
     // Restrict perms so other local users cannot tail this log. Logs
@@ -21,18 +27,50 @@ class SizeManagedWriter {
   }
 
   write(data) {
-    const str = typeof data === 'string' ? data : data.toString();
+    let str;
+    if (typeof data === 'string') {
+      str = data;
+    } else {
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      str = this.decoder.write(buf);
+    }
     // Strip ANSI escape codes so the log file is plain text
     const clean = str.replace(/\x1b\[[0-9;]*m/g, '');
-    const bytes = Buffer.byteLength(clean, 'utf8');
+    const out = this._stampLines(clean);
+    const bytes = Buffer.byteLength(out, 'utf8');
 
     // Use appendFileSync for guaranteed flush — no buffering issues on Windows
-    fs.appendFileSync(this.logPath, clean, 'utf8');
+    fs.appendFileSync(this.logPath, out, 'utf8');
     this.bytesWritten += bytes;
 
-    if (this.bytesWritten >= MAX_SIZE) {
+    if (this.bytesWritten >= this.maxSize) {
       this._rotate();
     }
+  }
+
+  // Prefix each line that starts within this chunk with an ISO-8601 timestamp.
+  // A line that is continued from a previous chunk is not stamped again.
+  // An empty trailing segment (chunk ends in '\n') is not stamped; it will be
+  // stamped by the next chunk if that chunk has content.
+  _stampLines(text) {
+    if (text.length === 0) return text;
+    const parts = text.split('\n');
+    let out = '';
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLast = i === parts.length - 1;
+      if (this.atLineStart && (part.length > 0 || !isLast)) {
+        out += new Date().toISOString() + ' ';
+      }
+      out += part;
+      if (!isLast) {
+        out += '\n';
+        this.atLineStart = true;
+      } else if (part.length > 0) {
+        this.atLineStart = false;
+      }
+    }
+    return out;
   }
 
   _rotate() {

@@ -8,6 +8,7 @@ const sitePolicy = require('./site-policy');
 const sitePolicyEvents = require('./site-policy-events');
 const formatterUnlockState = require('./formatter-unlock-state');
 const { getReleaseInfo } = require('./release-info');
+const { normalizeLaunchUrl } = require('./chrome/manager');
 
 // Tools that operate on an existing tab_id and therefore need a per-call
 // current-URL policy check (checkpoint B in the site-policy gate).
@@ -37,6 +38,12 @@ const POLICY_FAILURE_REASONS = Object.freeze({
 // tab_id-bearing tool. The error response carries the deadline so the agent
 // knows the tab is going away on its own.
 const AUTO_CLOSE_DELAY_MS = 5000;
+
+// browser_create_tab launched-tab discovery (issue #132): when ChromeManager
+// spawned Chrome with the target URL, poll get_tabs this long for that tab
+// before falling back to a create_tab (which would open a duplicate).
+const TAB_DISCOVERY_TIMEOUT_MS = 3000;
+const TAB_DISCOVERY_POLL_MS = 250;
 
 // Max script body — 5 MB is more than any reasonable injectable bundle and
 // keeps a malicious upstream from streaming until the daemon OOMs.
@@ -276,6 +283,12 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
   const webUiUrl = `http://localhost:${serverPort}/ui`;
   const sessions = new Map();  // session_id -> { res, queue, mcpApiKey }
   const chromeManager = options.chromeManager || null;
+  // browser_create_tab: after Chrome was spawned with the URL, how long to
+  // poll get_tabs for the tab Chrome opened before falling back to create_tab.
+  const tabDiscoveryTimeoutMs = typeof options.tabDiscoveryTimeoutMs === 'number'
+    ? options.tabDiscoveryTimeoutMs
+    : TAB_DISCOVERY_TIMEOUT_MS;
+  const tabDiscoveryPollMs = options.tabDiscoveryPollMs || TAB_DISCOVERY_POLL_MS;
 
   /**
    * Resolve which Chrome profile this tool call should target.
@@ -329,29 +342,6 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
-  }
-
-  /**
-   * After ChromeManager restarts Chrome, the extension's WebSocket needs a moment
-   * to reconnect. Poll until isConnected(profile) or timeout.
-   */
-  async function waitForExtensionConnection(profileId, timeoutMs) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      if (extensionBridge.isConnected(profileId)) {
-        console.log(
-          `[mcp-handler] extension reconnected for profile="${profileId}" ` +
-            `after ${Date.now() - start}ms`
-        );
-        return true;
-      }
-      await sleep(250);
-    }
-    console.log(
-      `[mcp-handler] timed out waiting for extension reconnect profile="${profileId}" ` +
-        `after ${timeoutMs}ms`
-    );
-    return false;
   }
 
   const tools = [
@@ -1064,12 +1054,30 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
   /**
    * The canonical "extension not connected" message. Shared by
-   * _requireExtensionConnected, _browserCreateTab, the generic dispatch
-   * connectivity check, and the site-policy gate's extension_disconnected
-   * fail-closed envelope so the wording stays identical everywhere.
+   * _requireExtensionConnected, the generic dispatch connectivity check, and
+   * the site-policy gate's extension_disconnected fail-closed envelope so the
+   * wording stays identical everywhere. NOT used by browser_create_tab itself
+   * (it must never tell the agent to call browser_create_tab).
    */
   function _disconnectedMessage(profileId) {
-    return `No browser instance connected for profile '${profileId}'. Call browser_create_tab to launch Chrome.`;
+    return (
+      `No browser instance connected for profile '${profileId}'. ` +
+      'Open Chrome on that profile, or call browser_create_tab to launch it.'
+    );
+  }
+
+  /**
+   * browser_create_tab error: Chrome is (or was just made) running but the
+   * extension for the profile has not said hello within the budget.
+   */
+  function _notConnectedYetMessage(profileId, budgetMs) {
+    const within = typeof budgetMs === 'number' && budgetMs > 0
+      ? `within ${Math.round(budgetMs / 1000)}s`
+      : 'yet';
+    return (
+      `Chrome is running for profile '${profileId}' but the WebPilot extension has not connected ${within}. ` +
+      'It may still be starting — retry in a few seconds. If this persists, check chrome://extensions.'
+    );
   }
 
   /**
@@ -1084,36 +1092,144 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     return targetProfile;
   }
 
+  /**
+   * Comparable form of a URL for matching a launched tab: lowercased scheme
+   * and host (URL does this), default port dropped, trailing slash on the
+   * path ignored, hash ignored. Returns null for unparseable input.
+   */
+  function _comparableUrl(raw) {
+    if (typeof raw !== 'string' || raw === '') return null;
+    let u;
+    try { u = new URL(raw); } catch (e) { return null; }
+    const pathname = u.pathname.replace(/\/+$/, '');
+    return `${u.protocol}//${u.host}${pathname}${u.search}`;
+  }
+
+  /**
+   * After ChromeManager spawned Chrome with the target URL on the command
+   * line, find the tab Chrome opened for it instead of creating a second one.
+   *
+   * Polls `get_tabs` for up to tabDiscoveryTimeoutMs. A tab matches when its
+   * url (or pendingUrl, if the extension reports one) equals the target under
+   * _comparableUrl. Several matches → prefer the active one, then the highest
+   * id (newest). If nothing matches by the end of the window but the profile
+   * has exactly one tab that isn't a chrome:// page, accept it (covers a
+   * redirect). Returns a create_tab-shaped result, or null.
+   *
+   * No pre-spawn tab-id snapshot: get_tabs is per-profile and the target
+   * profile's extension is by definition not connected whenever a URL spawn
+   * happens; after a restart/launch the browser session is new and tab ids
+   * restart, so an old snapshot would be meaningless. Every tab counts as
+   * "new".
+   */
+  async function _findLaunchedTab(profileId, launchUrl) {
+    const target = _comparableUrl(launchUrl);
+    const deadline = Date.now() + tabDiscoveryTimeoutMs;
+    let lastTabs = null;
+
+    for (;;) {
+      try {
+        const res = await extensionBridge.sendCommand(profileId, 'get_tabs', {});
+        lastTabs = Array.isArray(res && res.tabs) ? res.tabs : Array.isArray(res) ? res : [];
+      } catch (e) {
+        console.log(`[mcp-handler] launched-tab lookup: get_tabs failed: ${e.message}`);
+      }
+      if (lastTabs && target) {
+        const matches = lastTabs.filter(
+          (t) => t && (_comparableUrl(t.url) === target || _comparableUrl(t.pendingUrl) === target)
+        );
+        if (matches.length > 0) {
+          matches.sort((a, b) => (Number(!!b.active) - Number(!!a.active)) || (Number(b.id) - Number(a.id)));
+          return _launchedTabResult(matches[0], launchUrl);
+        }
+      }
+      if (Date.now() >= deadline) break;
+      await sleep(tabDiscoveryPollMs);
+    }
+
+    if (lastTabs && lastTabs.length === 1) {
+      const only = lastTabs[0];
+      const u = (only && (only.url || only.pendingUrl)) || '';
+      if (only && only.id != null && !/^chrome:/i.test(u)) {
+        console.log(`[mcp-handler] launched-tab lookup: no URL match; accepting the only tab id=${only.id} (redirect?)`);
+        return _launchedTabResult(only, launchUrl);
+      }
+    }
+    return null;
+  }
+
+  function _launchedTabResult(tab, launchUrl) {
+    return {
+      tab_id: tab.id,
+      url: tab.url || tab.pendingUrl || launchUrl,
+      title: tab.title || '',
+      opened_by_chrome_launch: true,
+    };
+  }
+
   async function _browserCreateTab({ url }, apiKey) {
     const targetProfile = resolveTargetProfile(apiKey);
 
-    if (chromeManager) {
-      console.log(`[mcp-handler] browser_create_tab readiness gate for profile="${targetProfile}"`);
-      let ensureResult;
-      try {
-        ensureResult = await chromeManager.ensureReady([targetProfile]);
-        console.log(`[mcp-handler] chromeManager.ensureReady result:`, ensureResult);
-      } catch (e) {
-        console.log(`[mcp-handler] chromeManager.ensureReady threw: ${e.message}`);
-        throw new Error(`Failed to ensure Chrome readiness: ${e.message}`);
-      }
-
-      if (ensureResult && (ensureResult.action === 'restart' || ensureResult.action === 'launch')) {
-        console.log(
-          `[mcp-handler] waiting up to 10s for extension WS profile="${targetProfile}" (action=${ensureResult.action})`
+    if (!chromeManager) {
+      if (!extensionBridge.isConnected(targetProfile)) {
+        throw new Error(
+          `No browser instance connected for profile '${targetProfile}', and this server cannot launch Chrome. ` +
+            'Open Chrome on that profile and retry.'
         );
-        const ok = await waitForExtensionConnection(targetProfile, 10000);
-        if (!ok) {
-          throw new Error(
-            `Chrome was ${ensureResult.action}ed for profile "${targetProfile}" but the WebPilot extension ` +
-              `did not (re)connect within 10s. Ensure the extension is installed and loaded in this profile.`
-          );
-        }
+      }
+      return await extensionBridge.sendCommand(targetProfile, 'create_tab', { url });
+    }
+
+    // Validate up front (same rules as the extension's create_tab) so a bad
+    // URL never launches Chrome or opens a window. about:blank is accepted by
+    // the extension but is not passed on the Chrome command line.
+    const launchUrl = normalizeLaunchUrl(url);
+    if (!launchUrl) {
+      const isBlank = typeof url === 'string' && url.trim().toLowerCase() === 'about:blank';
+      if (!isBlank) {
+        if (typeof url !== 'string' || url.trim() === '') throw new Error('URL is required');
+        throw new Error(`Unsupported or invalid URL "${url}": only http(s) URLs (or about:blank) can be opened`);
       }
     }
 
-    if (!extensionBridge.isConnected(targetProfile)) {
-      throw new Error(_disconnectedMessage(targetProfile));
+    // The single coordinated wait lives in ensureReady; no wait here.
+    console.log(`[mcp-handler] browser_create_tab readiness gate for profile="${targetProfile}"`);
+    let ensureResult;
+    try {
+      ensureResult = await chromeManager.ensureReady([targetProfile], { url: launchUrl, waitForConnect: true });
+      console.log(`[mcp-handler] chromeManager.ensureReady result:`, ensureResult);
+    } catch (e) {
+      console.log(`[mcp-handler] chromeManager.ensureReady threw: ${e.message}`);
+      throw new Error(`Failed to ensure Chrome readiness: ${e.message}`);
+    }
+    const r = ensureResult || {};
+
+    if (r.action === 'abort') {
+      if (r.unknown || r.reason === 'chrome_state_unknown') {
+        throw new Error(
+          `Could not determine whether Chrome is running for profile '${targetProfile}' (the Chrome process scan failed), ` +
+            'so WebPilot did not launch or restart it. Retry in a few seconds; if this persists, open Chrome on that profile yourself.' +
+            (r.message ? ` Details: ${r.message}` : '')
+        );
+      }
+      throw new Error(
+        `Chrome could not be made ready for profile '${targetProfile}': ${r.reason || r.message || 'unknown reason'}`
+      );
+    }
+
+    if (r.action === 'partial' || r.connected === false || !extensionBridge.isConnected(targetProfile)) {
+      throw new Error(_notConnectedYetMessage(targetProfile, r.budgetMs));
+    }
+
+    // Chrome was spawned with the URL: it already opened the tab. Find it
+    // rather than opening a duplicate; fall back to create_tab only if absent.
+    if (r.urlLaunched && launchUrl) {
+      const found = await _findLaunchedTab(targetProfile, launchUrl);
+      if (found) {
+        console.log(`[mcp-handler] browser_create_tab: using tab id=${found.tab_id} opened by Chrome launch`);
+        return found;
+      }
+      console.log('[mcp-handler] browser_create_tab: launched tab not found; falling back to create_tab');
     }
 
     return await extensionBridge.sendCommand(targetProfile, 'create_tab', { url });
@@ -2218,7 +2334,12 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       const detectedFormatter = formatterManager.getFormatterNameForUrl(args.url);
       const createdTabId = responseObj.tab_id ?? responseObj.tabId ?? responseObj.id ?? null;
       if (detectedFormatter) {
-        responseObj.warning = `Platform '${detectedFormatter}' detected on the URL you opened. Call webpilot_get_formatter_info({platform: '${detectedFormatter}', tab_id: ${createdTabId}}) before interacting.`;
+        const formatterWarning = `Platform '${detectedFormatter}' detected on the URL you opened. Call webpilot_get_formatter_info({platform: '${detectedFormatter}', tab_id: ${createdTabId}}) before interacting.`;
+        // Keep the extension's own non-fatal create_tab warning (e.g. "tab not
+        // grouped") instead of overwriting it.
+        responseObj.warning = typeof responseObj.warning === 'string' && responseObj.warning
+          ? `${responseObj.warning}; ${formatterWarning}`
+          : formatterWarning;
       }
       return {
         content: [{ type: 'text', text: JSON.stringify(responseObj, null, 2) }]

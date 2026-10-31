@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { log, error } = require('./logger');
+const { ChromeDetectionError } = require('./detector');
 
 const FLAG = '--silent-debugger-extension-api';
 
@@ -50,7 +51,8 @@ function listChromePids() {
     entries = fs.readdirSync('/proc');
   } catch (e) {
     error('linux-detector', 'failed to read /proc', e);
-    return [];
+    // Scan failed: unknown, not "no chrome".
+    throw new ChromeDetectionError('failed to read /proc: ' + e.message, { cause: e });
   }
 
   for (const name of entries) {

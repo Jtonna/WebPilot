@@ -5,6 +5,7 @@
   "description": "Browser control via MCP for AI agents",
   "permissions": [
     "storage",
+    "alarms",
     "activeTab",
     "tabs",
     "tabGroups",

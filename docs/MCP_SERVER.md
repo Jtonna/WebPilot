@@ -119,7 +119,12 @@ Persistent `installId → profileId` map. SQLite-backed via the `extension_insta
 
 Chrome process management (cross-platform):
 
-- `manager.js` -- `ChromeManager` orchestrates detect/close/launch with a PID-based cache. `getStatus()` is O(1) liveness; `refresh()` runs full detection; `ensureReady(profiles)` is the readiness gate (no-op if Chrome is already running with the flag and the right profiles; otherwise kill+relaunch).
+- `manager.js` -- `ChromeManager` orchestrates detect/close/launch with a PID-based cache. `getStatus(opts)` trusts the cache only when the cached PID is alive and `hasFlag` is true; a flagless entry or `opts.extensionDisconnected` forces `refresh()`, rate-limited to one per `FORCED_REFRESH_MIN_INTERVAL_MS` (5000 ms; inside the window it returns the cached entry with `rateLimited: true`). `refresh()` runs full detection and prefers the flagged parent when several match. A failed scan (`ChromeDetectionError`, code `CHROME_DETECTION_FAILED`) makes `getStatus()`/`refresh()` return `{ running: null, unknown: true, hasFlag: null }` and leaves the cache untouched; `closeAll()` returns `{ closed: false, unknown: true }` without closing anything. `ensureReady(profiles, { url, waitForConnect })` is the readiness gate and owns the one coordinated connect wait (`waitForConnect` defaults to `true`):
+  - Running with the flag and all required profiles connected: `noop`. A profile that is missing gets `EXTENSION_GRACE_MS` (3000 ms) to reconnect on its own; if it does not, it is spawned (`launch-additional`) and waited on within `CONNECT_BUDGET_RUNNING_MS` (10000 ms).
+  - Running without the flag: `restart` (`closeAll()`, then relaunch active ∪ required profiles with `RESTORE_SESSION_FLAG`, `--restore-last-session`). Not running: `launch`. Both wait within `CONNECT_BUDGET_LAUNCH_MS` (15000 ms).
+  - A valid http(s) `url` is passed to chrome.exe for each spawned required profile, so Chrome opens it instead of a blank window.
+  - Timeout: `partial`. Failed scan or failed close: `abort` (`reason: 'chrome_state_unknown'`, plus `unknown: true` for a failed scan).
+  - Result: `{ action, launched, reason, urlLaunched, connected, stillMissing?, waitedMs?, budgetMs? }`. `connected` is `true`/`false`, or `null` when no wait ran.
 - `detector.js` + per-OS modules (`windows-detector.js`, `macos-detector.js`, `linux-detector.js`) -- enumerate Chrome processes, identify the "browser parent" (no `--type=`), parse its command line for `--silent-debugger-extension-api`.
 - `launcher.js` -- Spawns Chrome detached with `--profile-directory=<name>` and the silent-debugger flag. Only passes `--user-data-dir` when non-default.
 - `closer.js` -- Graceful close. On Windows uses `PostMessage(WM_CLOSE)` on every visible Chrome HWND so multi-window processes shut down cleanly.
@@ -230,7 +235,7 @@ Navigational tools (`browser_create_tab`, `browser_close_tab`, `browser_click`, 
 |------|-------------|----------------|
 | `request_pairing` | Initiate **async** pairing — returns a `pairing_id` immediately; the human approves via the web UI. Short-circuits and returns the existing identity if the caller already presents a valid API key. | `agent_name` |
 | `check_pairing_status` | Poll the status of a pending `pairing_id`. When `approved`, returns the `api_key`. | `pairing_id` |
-| `browser_create_tab` | Open a new tab with a URL | `url` |
+| `browser_create_tab` | Open a new tab with a URL. If Chrome has to be launched or the profile has no window, Chrome is started with the URL so no blank window is left behind. The URL must be http(s) (or `about:blank`). | `url` |
 | `browser_close_tab` | Close a tab by ID | `tab_id` |
 | `browser_get_tabs` | List all open tabs | (none) |
 | `browser_get_accessibility_tree` | Get the accessibility tree of a tab. Server formats the raw nodes via `formatterManager.formatTree`; set `usePlatformOptimizer: false` to force the default formatter. Sends a `store_refs` notification to the extension as a side-effect. | `tab_id`, `usePlatformOptimizer?` |
@@ -367,7 +372,7 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 |--------|------|-------------|
 | GET | `/ui/...` | Static web UI (Next.js export) served via `fs.readFileSync` for pkg-snapshot compatibility |
 | WS | `/api/ui/events` (upgrade) | Web UI event stream (pairing changes, agent changes, extension connect/disconnect, site-policy event log changes via `site_policy_events_changed`, and site-rule/tier changes via `site_policy_changed`; see [SITE_POLICY.md#admin-surfaces-and-live-events](SITE_POLICY.md#admin-surfaces-and-live-events) for the `reason` values) |
-| GET | `/api/ui/status` | Snapshot: Chrome status, profiles with per-profile `webPilotStatus` (`active`/`ready`/`needs_setup`), `connectedProfiles`, `pendingPairings`, `pairedAgents`, `networkMode`, `paths`, `notifications`, `port`, and `globalSiteBlocklist` (`{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`) (`server.js:583-589`) |
+| GET | `/api/ui/status` | Snapshot: Chrome status, profiles with per-profile `webPilotStatus` (`active`/`ready`/`needs_setup`), `connectedProfiles`, `pendingPairings`, `pairedAgents`, `networkMode`, `paths`, `notifications`, `port`, and `globalSiteBlocklist` (`{ enabled, version, lastFetchedAt, domainCount, lastCheckedAt, lastCheckError }`) (`server.js:583-589`). `chrome` carries `unknown: true` (with `running: null`, `hasFlag: null`) when the process scan failed; read it as "state unknown", never "not running". |
 | POST | `/api/ui/pairings/:id/approve` | Body `{ profileId, newProfileName? }`. Approves a pending pairing and binds it to the given profile (or to a freshly-created sandbox profile when `profileId === '__new__'`). Returns 409 on terminal state. |
 | POST | `/api/ui/pairings/:id/deny` | Denies a pending pairing. Returns 409 on terminal state. |
 | GET | `/api/ui/pairings/history` | Cursor-paginated terminal-state pairings (approved/denied/expired) sorted by `decidedAt` DESC. |
@@ -379,7 +384,7 @@ The web UI / management surfaces (localhost-only — non-loopback rejected with 
 | DELETE | `/api/ui/agents/:id` | Revoke a paired agent. |
 | GET | `/api/ui/formatters` | List all loaded formatters with per-formatter manifest metadata fused with runtime health (`health`, `successCount`, `errorCount`, `lastSuccessAt`, `lastErrorAt`, `lastError`). Powers the Formatters tab. |
 | GET | `/api/ui/formatters/:name/logs?limit=N` | Recent ring-buffer log entries + status for a single formatter. `limit` defaults to 50, max 500. |
-| POST | `/api/ui/chrome/restart` | Calls `chromeManager.ensureReady()` — no-op if Chrome is already running with the flag and the right profiles; otherwise kill+relaunch. |
+| POST | `/api/ui/chrome/restart` | Calls `chromeManager.ensureReady(requiredProfiles, { waitForConnect: false })`, so it returns right after spawning and the dashboard re-polls `/api/ui/status`. `requiredProfiles` is the connected profiles, else `managedProfile`, else `Default`. A running Chrome without the flag is closed and relaunched with `--restore-last-session`. Response: `{ success, action, reason, message, unknown, browserPid, hasFlag, profilesLaunched, stillMissing }`. `success` is `false` when `action` is `abort` (including `chrome_state_unknown`, where nothing was closed or launched, and a close timeout). `unknown` is `true` whenever the scan failed. An unexpected throw returns 500 `{ success: false, error }`. |
 | POST | `/api/ui/server/restart` | Spawn-and-exit replacement daemon (identical pattern to the network-mode toggle). |
 | GET / POST | `/api/ui/settings/notifications` | Get/set notification preferences (`systemNotifications`, `sound`). |
 | POST | `/api/ui/settings/network-mode` | Body `{ enabled }`. Persists the preference and spawn-and-exits to rebind to `0.0.0.0` (or back to `127.0.0.1`). |
@@ -477,8 +482,9 @@ Background daemon output is captured by a size-managed log writer (`src/service/
 - Intercepts `process.stdout.write` and `process.stderr.write` for dual capture
 - Uses synchronous `fs.appendFileSync` for guaranteed flush (avoids buffering issues on Windows)
 - Strips ANSI escape codes for clean log files
+- Prefixes every log line with an ISO-8601 timestamp (`2026-10-31T12:00:00.000Z `) in the file only; terminal output is unchanged. A line continued across several writes is stamped once.
 - Log file is truncated fresh on each startup
-- Maximum log size: 1 GB; when exceeded, drops the oldest 25% of the log (automatic rotation)
+- Maximum log size: 1 GB, counted in bytes written including the timestamp prefixes (`SizeManagedWriter` takes an optional `maxSize` constructor argument); when exceeded, rotation drops the oldest 25% of the log
 - Log file location: `<dataDir>/daemon.log`
 
 ### PID and Port Files

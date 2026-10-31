@@ -467,7 +467,9 @@ function mountWebUiRoutes(app, deps) {
   app.get('/api/ui/status', auth, async (req, res) => {
     try {
       const chromeStatus = await chromeManager.getStatus();
-      const rawProfiles = chromeStatus.knownProfiles || [];
+      // chromeStatus may be { running:null, unknown:true } when the process
+      // scan failed (#132); it still carries knownProfiles, but read defensively.
+      const rawProfiles = (chromeStatus && chromeStatus.knownProfiles) || [];
       const connectedProfiles = extensionBridge.getConnectedProfiles();
       const connectedSet = new Set(connectedProfiles);
 
@@ -1166,15 +1168,24 @@ function mountWebUiRoutes(app, deps) {
       console.log(
         `[ui-api:chrome:restart] requiredProfiles=${JSON.stringify(requiredProfiles)}`
       );
-      const result = await chromeManager.ensureReady(requiredProfiles);
-      const status = await chromeManager.getStatus();
+      // waitForConnect:false — the dashboard must not block on the extension's
+      // connect wait; it re-polls /api/ui/status afterwards. No url: this is
+      // a plain restart, not a tab open.
+      const result = await chromeManager.ensureReady(requiredProfiles, { waitForConnect: false });
+      const status = (await chromeManager.getStatus()) || {};
+      // 'abort' (incl. reason 'chrome_state_unknown') is a failed outcome even
+      // though the request itself was handled; 'partial' means windows opened
+      // but the extension never reported in.
       res.json({
-        success: true,
+        success: result.action !== 'abort',
         action: result.action,
         reason: result.reason,
-        browserPid: status.browserPid,
-        hasFlag: status.hasFlag,
+        message: result.message || null,
+        unknown: !!(result.unknown || status.unknown),
+        browserPid: status.browserPid ?? null,
+        hasFlag: status.hasFlag ?? null,
         profilesLaunched: result.launched || [],
+        stillMissing: result.stillMissing || [],
       });
     } catch (e) {
       console.error('[ui-api] /chrome/restart failed:', e.message);

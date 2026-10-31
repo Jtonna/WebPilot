@@ -387,15 +387,27 @@ Lists all open browser tabs.
     "active": true,
     "windowId": 1062346367,
     "groupId": 2072108014
+  },
+  {
+    "id": 1062346400,
+    "url": "",
+    "pendingUrl": "https://example.com/next",
+    "title": "",
+    "active": false,
+    "windowId": 1062346367,
+    "groupId": null
   }
 ]
 ```
+
+The second entry is a tab that is still loading: `url` is empty and `pendingUrl` holds the URL it is navigating to.
 
 **Response Fields:**
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | number | Unique tab identifier. Use this for close_tab. |
 | `url` | string | Current URL of the tab |
+| `pendingUrl` | string | Optional. URL the tab is loading before it commits; absent once the page has loaded. |
 | `title` | string | Page title |
 | `active` | boolean | True if this is the currently focused tab |
 | `windowId` | number | Browser window containing this tab |
@@ -418,7 +430,7 @@ Opens a new browser tab with the specified URL.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `url` | string | Yes | The URL to open |
+| `url` | string | Yes | `http(s)` URL or `about:blank`. A value with no scheme (`example.com`, `localhost:3000`) gets `https://`. Anything else (`chrome://`, `file://`, `javascript:`, `data:`, other `about:` pages) is rejected before Chrome is launched or a tab is created. |
 
 **Returns:**
 ```json
@@ -426,7 +438,7 @@ Opens a new browser tab with the specified URL.
   "tab_id": 1062346731,
   "url": "https://example.com",
   "title": "",
-  "warning": "Platform 'threads' detected on the URL you opened. Call webpilot_get_formatter_info({platform:'threads', tab_id:1062346731}) before interacting."
+  "warning": "Platform 'threads' detected on the URL you opened. Call webpilot_get_formatter_info({platform: 'threads', tab_id: 1062346731}) before interacting."
 }
 ```
 
@@ -434,13 +446,21 @@ Opens a new browser tab with the specified URL.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tab_id` | number | The new tab's ID for future reference |
-| `url` | string | The URL the tab was opened with |
+| `url` | string | The tab's URL, or its pending URL while it is still loading. May differ from the input after scheme normalization or a redirect. |
 | `title` | string | Page title (may be empty if page hasn't finished loading) |
-| `warning` | string | Optional. Present when the requested URL matches a platform with a formatter. Names the formatter and the unlock call needed before interacting with the tab. |
+| `opened_by_chrome_launch` | boolean | Optional. `true` when Chrome had to be launched and opened the URL itself, so the server returned that tab instead of creating a second one. |
+| `warning` | string | Optional. Non-fatal notes, joined with `; `. Two sources: the extension (e.g. `tab not grouped: <error>` or `window not focused: <error>`, where the tab was still created), and the formatter notice naming the unlock call when the URL matches a platform with a formatter. |
 
 **Errors:**
 - Site policy blocked → [Blocked by Site Policy](#blocked-by-site-policy)
 - Site policy check failed → [site policy check failed](#site-policy-check-failed) (`invalid_url`, `policy_error`)
+- `URL is required` - `url` is missing or empty
+- `Unsupported or invalid URL "<url>": only http(s) URLs (or about:blank) can be opened` - Unsupported scheme or unparseable URL. Nothing is launched or created.
+- `Could not determine whether Chrome is running for profile '<profileId>' (the Chrome process scan failed), so WebPilot did not launch or restart it. ...` - The process scan failed, so the server left Chrome alone. Retry in a few seconds, or open Chrome on that profile yourself.
+- `Chrome is running for profile '<profileId>' but the WebPilot extension has not connected within <N>s. ...` - Chrome is up but the extension did not report in. `<N>` is 10 when Chrome was already running and 15 after a launch or restart. Retry in a few seconds, then check `chrome://extensions`.
+- `Failed to ensure Chrome readiness: <err>` - The readiness step threw
+- `Chrome could not be made ready for profile '<profileId>': <reason>` - Chrome could not be launched or restarted
+- `No browser instance connected for profile '<profileId>', and this server cannot launch Chrome. Open Chrome on that profile and retry.` - The server has no Chrome manager and no extension is connected
 
 **Notes:**
 - Title may be empty if the page hasn't finished loading
@@ -1281,10 +1301,10 @@ When the gate cannot reach a verdict, the call is refused (`isError: true`) with
 | `reason` | Meaning | What to do |
 |---|---|---|
 | `policy_error` | The policy evaluation threw | Retry once; if it persists, report it (server logs have details) |
-| `extension_disconnected` | A tab-scoped tool was called with no extension connected | Call `browser_create_tab` to launch Chrome, then re-fetch tabs |
+| `extension_disconnected` | A tab-scoped tool was called with no extension connected | Open Chrome on that profile, or call `browser_create_tab` to launch it, then re-fetch tabs |
 | `tab_url_unavailable` | `get_tabs` failed, the tab isn't listed, or it has no readable URL | Re-fetch tabs with `browser_get_tabs` and use a current `tab_id` |
 | `invalid_tab_id` | `tab_id` is missing or not an integer (numeric strings like `"7"` are rejected) | Pass `tab_id` as an integer |
-| `invalid_url` | `browser_create_tab` got a non-string `url` | Pass `url` as a string |
+| `invalid_url` | `browser_create_tab` got a non-string `url` | Pass `url` as a string. Unsupported schemes are a separate plain error; see [browser_create_tab](#browser_create_tab). |
 
 See [Fail-closed cases](./SITE_POLICY.md#fail-closed-cases).
 
@@ -1303,13 +1323,15 @@ If you try to close a tab that doesn't exist:
 
 ### Extension Not Connected
 
-If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The exact error string is `No browser instance connected for profile '<profileId>'. Call browser_create_tab to launch Chrome.`
+If no Chrome extension is connected for the agent's bound profile, browser tools error helpfully. The exact error string is `No browser instance connected for profile '<profileId>'. Open Chrome on that profile, or call browser_create_tab to launch it.`
 
-The gated tab tools (`browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow`), when called with an integer `tab_id`, get this text inside the [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "extension_disconnected"`. All other tools, including `browser_close_tab` and `browser_get_tabs`, get a plain JSON-RPC `-32000` error. `browser_create_tab` tries to launch Chrome instead.
+The gated tab tools (`browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js`, `webpilot_run_workflow`), when called with an integer `tab_id`, get this text inside the [`site policy check failed`](#site-policy-check-failed) envelope with `reason: "extension_disconnected"`. All other tools, including `browser_close_tab` and `browser_get_tabs`, get a plain JSON-RPC `-32000` error. `browser_create_tab` does not use this error. It launches Chrome itself and has its own errors, listed under [browser_create_tab](#browser_create_tab).
 
 The web UI at `http://localhost:3456/ui/` shows per-profile state (`active` / `ready` / `needs_setup`). The dashboard also surfaces a **Restart Chrome** action when the Chrome process is detected but missing the required `--silent-debugger-extension-api` flag (endpoint: `POST /api/ui/chrome/restart`).
 
-**Solution:** Open the WebPilot web UI to inspect Chrome status, restart Chrome with the flag if needed, or re-load the unpacked extension in the target profile.
+When `browser_create_tab` finds Chrome running without the flag, it closes Chrome and relaunches it with the flag and `--restore-last-session`, so open windows and tabs come back. If the process scan fails, it does nothing and returns the `Could not determine whether Chrome is running` error. If Chrome is up but the extension does not report in within the budget, it returns the `has not connected` error. Both are listed under [browser_create_tab](#browser_create_tab).
+
+**Solution:** Call `browser_create_tab` to launch or restart Chrome, or open the WebPilot web UI to inspect Chrome status, restart Chrome with the flag if needed, or re-load the unpacked extension in the target profile.
 
 ---
 
