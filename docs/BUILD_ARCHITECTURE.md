@@ -297,9 +297,10 @@ The server reads from the config file first, then falls back to environment vari
 The daemon uses `SizeManagedWriter` (implemented in `service/logger.js`) which manages log file output:
 
 - Uses synchronous `fs.appendFileSync` for guaranteed flush (avoids buffering issues on Windows)
-- Maximum file size: 1 GB
+- Maximum file size: 1 GB by default (optional `maxSize` constructor argument); the byte count includes the timestamp prefixes
 - Rotation: discards the oldest 25% of the file when the limit is reached
 - Strips ANSI escape codes from output
+- Prefixes each line with an ISO-8601 timestamp, applied to the log file only (terminal output unchanged); a line continued across multiple writes is stamped once
 - Log file is truncated fresh on each daemon start
 - Logging is set up by intercepting `process.stdout.write` and `process.stderr.write`
 
