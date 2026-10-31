@@ -148,20 +148,82 @@ export async function addTabToGroup(tabId) {
 }
 
 /**
+ * Validate and normalize a URL before anything is created, so a bad URL fails
+ * with a clear error instead of leaving a blank window/tab behind.
+ * Only http(s) and about:blank are accepted: Chrome refuses (or silently
+ * replaces with about:blank / the new-tab page) chrome://, file://, javascript:,
+ * data: and similar when opened from an extension.
+ * A scheme-less value such as "example.com" or "localhost:3000" gets https://.
+ *
+ * @param {*} raw
+ * @returns {string} Normalized absolute URL
+ */
+function normalizeUrl(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new Error('URL is required');
+  }
+  let candidate = raw.trim();
+  const schemeMatch = /^([a-z][a-z0-9+.-]*):(?!\d+(\/|$))/i.exec(candidate);
+  if (schemeMatch) {
+    const scheme = schemeMatch[1].toLowerCase();
+    if (scheme === 'about') {
+      if (candidate.toLowerCase() !== 'about:blank') {
+        throw new Error(`Unsupported URL "${raw}": only http(s) URLs and about:blank can be opened`);
+      }
+      return 'about:blank';
+    }
+    if (scheme !== 'http' && scheme !== 'https') {
+      throw new Error(
+        `Unsupported URL scheme "${scheme}:" in "${raw}": only http(s) URLs can be opened`
+      );
+    }
+  } else {
+    candidate = candidate.replace(/^\/\//, '');
+    candidate = 'https://' + candidate;
+  }
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error(`Invalid URL "${raw}"`);
+  }
+  if (!parsed.hostname) {
+    throw new Error(`Invalid URL "${raw}": missing host`);
+  }
+  return parsed.href;
+}
+
+/**
  * Create a new browser tab.
+ *
+ * The URL is validated up front and always passed at creation time (never a
+ * separate navigate step). If a step after creation fails: grouping/focus are
+ * best-effort (tab already exists with its URL, so succeed with a warning);
+ * anything else closes the just-created window/tab before the error is thrown,
+ * so a failed call never leaves an orphan empty window.
  *
  * @param {Object} params
  * @param {string} params.url - URL to open
- * @returns {Promise<Object>} Tab info with id, url, title
+ * @returns {Promise<Object>} Tab info with id, url, title (plus warning if a non-fatal step failed)
  */
 export async function createTab(params) {
-  const { url } = params;
-
-  if (!url) {
-    throw new Error('URL is required');
-  }
+  const url = normalizeUrl(params && params.url);
 
   const { tabMode, focusNewTabs } = await getSettings();
+  const warnings = [];
+  const result = (tab) => {
+    const out = {
+      tab_id: tab.id,
+      url: tab.url || tab.pendingUrl || url,
+      title: tab.title || ''
+    };
+    if (warnings.length > 0) out.warning = warnings.join('; ');
+    return out;
+  };
+  const group = async (tabId) => {
+    const r = await addTabToGroup(tabId);
+    if (!r.success) warnings.push(`tab not grouped: ${r.error}`);
+  };
 
   if (tabMode === 'window') {
     let windowId = await ensureWebPilotWindow();
@@ -176,38 +238,52 @@ export async function createTab(params) {
         createOpts.top = bounds.top;
         createOpts.left = bounds.left;
       }
-      const win = await chrome.windows.create(createOpts);
-      webPilotWindowId = win.id;
-      const tab = win.tabs[0];
-      await addTabToGroup(tab.id);
-      return {
-        tab_id: tab.id,
-        url: tab.url || url,
-        title: tab.title || ''
-      };
+      let win;
+      try {
+        win = await chrome.windows.create(createOpts);
+      } catch (error) {
+        if (!bounds) throw error;
+        // Saved bounds can be invalid (e.g. monitor gone). Retry without them,
+        // still with the URL.
+        console.warn('windows.create with saved bounds failed, retrying without:', error.message);
+        win = await chrome.windows.create({ url, focused: true });
+      }
+      try {
+        webPilotWindowId = win.id;
+        let tab = win.tabs && win.tabs[0];
+        if (!tab) {
+          [tab] = await chrome.tabs.query({ windowId: win.id });
+        }
+        if (!tab) {
+          throw new Error('New window has no tab');
+        }
+        await group(tab.id);
+        return result(tab);
+      } catch (error) {
+        // Never leave an orphan window behind an error.
+        webPilotWindowId = null;
+        await chrome.windows.remove(win.id).catch(() => {});
+        throw error;
+      }
     }
 
     // Add tab to existing WebPilot window
     const tab = await chrome.tabs.create({ url, windowId, active: focusNewTabs });
     if (focusNewTabs) {
-      await chrome.windows.update(windowId, { focused: true });
+      try {
+        await chrome.windows.update(windowId, { focused: true });
+      } catch (error) {
+        warnings.push(`window not focused: ${error.message}`);
+      }
     }
-    await addTabToGroup(tab.id);
-    return {
-      tab_id: tab.id,
-      url: tab.url || url,
-      title: tab.title || ''
-    };
+    await group(tab.id);
+    return result(tab);
   }
 
   // Default: tab group mode
   const tab = await chrome.tabs.create({ url, active: focusNewTabs });
-  await addTabToGroup(tab.id);
-  return {
-    tab_id: tab.id,
-    url: tab.url || url,
-    title: tab.title || ''
-  };
+  await group(tab.id);
+  return result(tab);
 }
 
 /**
