@@ -8,6 +8,15 @@ const { readProfiles } = require('./local-state');
 const { getActiveProfiles } = require('./profile-activity');
 const { getDefaultChromePath, getDefaultUserDataDir } = require('./paths');
 
+// Minimum gap between forced re-verifications of a cached-but-suspect status
+// (cached hasFlag:false, or extension disconnected) so we don't hammer
+// PowerShell process scans.
+const FORCED_REFRESH_MIN_INTERVAL_MS = 5000;
+
+function isDetectionFailure(e) {
+  return !!e && e.code === 'CHROME_DETECTION_FAILED';
+}
+
 /**
  * ChromeManager — orchestrates Chrome detection, graceful close, and relaunch.
  *
@@ -31,6 +40,7 @@ class ChromeManager {
       profileDirectory: null,
       lastFullCheck: 0,
     };
+    this._lastForcedRefreshAt = 0;
 
     log('manager', 'ChromeManager constructed', {
       userDataDir: this.userDataDir,
@@ -40,21 +50,46 @@ class ChromeManager {
   }
 
   /**
-   * Cheap status read. If the cached PID is still alive, returns cached info
-   * without re-enumerating processes. Otherwise triggers a refresh().
+   * Status read. The cache is trusted only when the cached PID is alive AND
+   * hasFlag is true (a flagless cache entry can be stale: the user may have
+   * restarted Chrome since). A cached flagless entry, or an
+   * `extensionDisconnected` hint, forces a re-verify via refresh(),
+   * rate-limited to one per FORCED_REFRESH_MIN_INTERVAL_MS; inside the window
+   * the cached entry is returned (fromCache:true, rateLimited:true).
+   *
+   * opts.extensionDisconnected: caller hint that the extension is not
+   * connected, so a cached hasFlag:true should be re-verified too.
    *
    * Returns: { running, browserPid, hasFlag, userDataDir, knownProfiles }
+   * or, if the process scan failed: { running:null, unknown:true, hasFlag:null,
+   * browserPid:null, reason, userDataDir, knownProfiles }
    */
-  async getStatus() {
+  async getStatus(opts) {
+    const options = opts || {};
     log('manager', 'getStatus called', { cachedPid: this._cache.browserPid });
 
     if (this._cache.browserPid && this._isAlive(this._cache.browserPid)) {
+      const suspect = !this._cache.hasFlag || !!options.extensionDisconnected;
+      let rateLimited = false;
+      if (suspect) {
+        const now = Date.now();
+        if (now - this._lastForcedRefreshAt >= FORCED_REFRESH_MIN_INTERVAL_MS) {
+          this._lastForcedRefreshAt = now;
+          log('manager', 'getStatus — cached entry suspect, forcing refresh', {
+            hasFlag: this._cache.hasFlag,
+            extensionDisconnected: !!options.extensionDisconnected,
+          });
+          return await this.refresh();
+        }
+        rateLimited = true;
+      }
       const knownProfiles = readProfiles(this.userDataDir);
       log('manager', 'getStatus cache-hit', {
         browserPid: this._cache.browserPid,
         hasFlag: this._cache.hasFlag,
+        rateLimited,
       });
-      return {
+      const hit = {
         running: true,
         browserPid: this._cache.browserPid,
         hasFlag: this._cache.hasFlag,
@@ -62,6 +97,8 @@ class ChromeManager {
         knownProfiles,
         fromCache: true,
       };
+      if (rateLimited) hit.rateLimited = true;
+      return hit;
     }
 
     log('manager', 'getStatus cache-miss — running refresh');
@@ -71,13 +108,32 @@ class ChromeManager {
   /**
    * Full re-detection. Enumerates Chrome browser-parents, picks the one
    * matching our user-data-dir (or the first one without --user-data-dir if
-   * we're using the OS default), updates cache.
+   * we're using the OS default), updates cache. If the process scan fails,
+   * the cache is left untouched and the result is
+   * { running:null, unknown:true, hasFlag:null, browserPid:null, reason, ... }.
    */
   async refresh() {
     log('manager', 'refresh called');
     const startedAt = Date.now();
 
-    const browsers = await detectChromeBrowsers();
+    let browsers;
+    try {
+      browsers = await detectChromeBrowsers();
+    } catch (e) {
+      if (!isDetectionFailure(e)) throw e;
+      error('manager', 'refresh — detection failed, state unknown (cache untouched)', e);
+      return {
+        running: null,
+        unknown: true,
+        browserPid: null,
+        hasFlag: null,
+        reason: e.message,
+        userDataDir: this.userDataDir,
+        knownProfiles: readProfiles(this.userDataDir),
+        fromCache: false,
+        durationMs: Date.now() - startedAt,
+      };
+    }
     const knownProfiles = readProfiles(this.userDataDir);
 
     // Match: a browser whose --user-data-dir equals ours, OR a browser with
@@ -99,7 +155,9 @@ class ChromeManager {
     if (ours.length === 0) {
       cacheEntry = { browserPid: null, hasFlag: false, profileDirectory: null };
     } else {
-      const first = ours[0];
+      // Prefer the flagged parent when several match (a flagless one may be a
+      // stray earlier process).
+      const first = ours.find((b) => b.hasFlag) || ours[0];
       cacheEntry = {
         browserPid: first.pid,
         hasFlag: !!first.hasFlag,
@@ -144,13 +202,23 @@ class ChromeManager {
    * processes get cleaned up by Chrome's normal shutdown path.
    *
    * Returns: { closed, remaining, durationMs }
+   * If the process scan fails: { closed:false, unknown:true, remaining:[],
+   * reason, durationMs } and nothing is closed.
    */
   async closeAll(opts) {
     const options = opts || {};
     const timeoutMs = options.timeoutMs || 20000;
     log('manager', 'closeAll called', { timeoutMs });
 
-    const browsers = await detectChromeBrowsers();
+    const startedAt = Date.now();
+    let browsers;
+    try {
+      browsers = await detectChromeBrowsers();
+    } catch (e) {
+      if (!isDetectionFailure(e)) throw e;
+      error('manager', 'closeAll — detection failed, refusing to claim closed', e);
+      return { closed: false, unknown: true, remaining: [], reason: e.message, durationMs: Date.now() - startedAt };
+    }
     const defaultUdd = getDefaultUserDataDir();
     const ours = browsers.filter((b) => {
       if (b.userDataDir) return this._pathsEqual(b.userDataDir, this.userDataDir);
@@ -189,6 +257,8 @@ class ChromeManager {
    *   4. if !running — launch required profiles
    *
    * Returns: { action, browserPid?, launched: string[], reason }
+   * action 'abort' with reason 'chrome_state_unknown' (and unknown:true) means
+   * the process scan failed: nothing was launched or closed.
    */
   async ensureReady(requiredProfiles) {
     const reqProfiles = Array.isArray(requiredProfiles) && requiredProfiles.length > 0
@@ -197,7 +267,21 @@ class ChromeManager {
 
     log('manager', 'ensureReady called', { requiredProfiles: reqProfiles });
 
-    const status = await this.getStatus();
+    const bridge = this.extensionBridge;
+    const extensionDisconnected = !!(bridge && typeof bridge.isConnected === 'function' &&
+      reqProfiles.some((p) => !bridge.isConnected(p)));
+    const status = await this.getStatus({ extensionDisconnected });
+
+    if (status.unknown) {
+      error('manager', 'ensureReady abort — chrome state unknown', new Error(status.reason || 'detection failed'));
+      return {
+        action: 'abort',
+        launched: [],
+        unknown: true,
+        reason: 'chrome_state_unknown',
+        message: 'could not determine whether Chrome is running (process scan failed): ' + (status.reason || 'unknown error'),
+      };
+    }
 
     // Case 2: running with flag — verify each required profile has a live
     // extension WS connection. Chrome being alive with the debugger flag is
@@ -278,6 +362,16 @@ class ChromeManager {
       log('manager', 'active profiles before close', { activeBefore });
 
       const closeResult = await this.closeAll();
+      if (closeResult.unknown) {
+        error('manager', 'ensureReady abort — chrome state unknown during close', new Error(closeResult.reason || 'detection failed'));
+        return {
+          action: 'abort',
+          launched: [],
+          unknown: true,
+          reason: 'chrome_state_unknown',
+          message: 'could not determine whether Chrome is running (process scan failed): ' + (closeResult.reason || 'unknown error'),
+        };
+      }
       if (!closeResult.closed) {
         const e = new Error('Failed to close Chrome gracefully within timeout');
         error('manager', 'ensureReady abort — close failed', e);
@@ -391,4 +485,4 @@ function createChromeManager(opts) {
   return new ChromeManager(opts);
 }
 
-module.exports = { ChromeManager, createChromeManager };
+module.exports = { ChromeManager, createChromeManager, FORCED_REFRESH_MIN_INTERVAL_MS };
