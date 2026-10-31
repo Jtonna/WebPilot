@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 141,
-    "body": "Approved plan: (a) clear identifyReconnectPending in connectWebSocket right after `wsConnection = ws` (not before `new WebSocket`, so a constructor throw can't clear it while the CLOSING socket is still current); (b) in attemptAutoConnect's fetch .then, call clearAutoConnectInterval() immediately before arming a new interval in the failure branch AND clear it in the success branch; no in-flight guard (FORGET_CONFIG and the 1008 handler need a forced restart). node --check + manual checklist."
-  }
-]
+[]
