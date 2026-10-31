@@ -136,8 +136,25 @@ export default function HomePage() {
         toast.success('Chrome launched.');
       } else if (action === 'restart') {
         toast.success('Chrome restarted.');
+      } else if (action === 'launch-additional') {
+        toast.success('Opened a Chrome window for the profile missing its extension connection.');
       } else if (action === 'noop') {
         toast.info('Chrome is already running with the debug flag.');
+      } else if (action === 'partial') {
+        const missing = Array.isArray(result.stillMissing) && result.stillMissing.length > 0
+          ? ` (${result.stillMissing.join(', ')})`
+          : '';
+        toast.info(
+          `Chrome opened but the WebPilot extension has not reported in yet${missing}. It may still be starting; check again shortly.`
+        );
+      } else if (action === 'abort') {
+        if (result.reason === 'chrome_state_unknown' || result.unknown) {
+          toast.error('Could not tell whether Chrome is running, so nothing was changed. Try again in a moment.');
+        } else {
+          toast.error(result.reason || result.message || 'Chrome could not be restarted.');
+        }
+      } else if (result && result.unknown) {
+        toast.info('Chrome state is unknown; nothing was changed.');
       } else {
         toast.success('Chrome is running with the debug flag.');
       }
@@ -162,6 +179,8 @@ export default function HomePage() {
   const chrome = status?.chrome ?? {};
   const chromeRunning = !!chrome.running;
   const chromeHasFlag = !!chrome.hasFlag;
+  // Process scan failed on the server (#132): state is neither running nor stopped.
+  const chromeUnknown = !!chrome.unknown;
   const profiles = status?.profiles ?? [];
   const connectedProfiles = status?.connectedProfiles ?? [];
   const activeProfiles = profiles.filter((p) => p.webPilotStatus === 'active' || p.webPilotStatus === 'ready');
@@ -196,13 +215,18 @@ export default function HomePage() {
     pendingPairings.length === 0 &&
     formatterActionItems.length === 0 &&
     pairedAgents.length === 0 &&
-    !chromeRunning;
+    !chromeRunning &&
+    !chromeUnknown;
 
   // ---- Chrome row state ----
   let chromeState = 'unknown';
   let chromeValue = 'Not detected';
   let chromeAction = null;
-  if (chromeRunning && chromeHasFlag) {
+  if (chromeUnknown) {
+    chromeState = 'warn';
+    chromeValue = 'Status unknown · process scan failed';
+    chromeAction = null;
+  } else if (chromeRunning && chromeHasFlag) {
     chromeState = 'ok';
     chromeValue = 'Running · debug flag enabled';
   } else if (chromeRunning && !chromeHasFlag) {
