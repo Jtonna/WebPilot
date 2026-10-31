@@ -133,6 +133,8 @@ const state = {
   pickerBusy: false,
 };
 
+const REGISTERED_CONFIRM_COPY =
+  'This profile already has an extension registered. Only pick it if you are using WebPilot from that profile right now.';
 const NOT_REGISTERED_COPY =
   "WebPilot hasn't matched this Chrome profile yet. Choose it below, or open the WebPilot dashboard to finish setup.";
 const IN_USE_COPY =
@@ -442,17 +444,64 @@ function buildPickerRow(p) {
   text.appendChild(dir);
   btn.appendChild(text);
 
-  if (p.connected || !p.registered) {
+  // Older servers omit `registered`; normalizeProfiles maps that to false, so
+  // those rows stay one-click.
+  const needsConfirm = !p.connected && p.registered;
+  {
     const tag = document.createElement('span');
     tag.className = 'wp-picker-tag';
-    tag.dataset.kind = p.connected ? 'in-use' : 'suggested';
-    tag.textContent = p.connected ? 'in use' : 'Suggested';
+    tag.dataset.kind = p.connected ? 'in-use' : needsConfirm ? 'registered' : 'suggested';
+    tag.textContent = p.connected ? 'in use' : needsConfirm ? 'Already registered' : 'Suggested';
     btn.appendChild(tag);
   }
-
-  btn.addEventListener('click', () => onPickProfile(p.directoryName));
   li.appendChild(btn);
+
+  if (needsConfirm) {
+    // Picking an already-registered profile from the wrong Chrome profile binds
+    // this install to it, so ask first (inline; window.confirm is unreliable in popups).
+    const confirm = document.createElement('div');
+    confirm.className = 'wp-picker-confirm';
+    confirm.hidden = true;
+    const msg = document.createElement('p');
+    msg.className = 'wp-picker-confirm-text';
+    msg.textContent = REGISTERED_CONFIRM_COPY;
+    const actions = document.createElement('div');
+    actions.className = 'wp-picker-confirm-actions';
+    const replace = document.createElement('button');
+    replace.type = 'button';
+    replace.className = 'wp-picker-confirm-btn';
+    replace.dataset.kind = 'replace';
+    replace.textContent = 'Replace';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'wp-picker-confirm-btn';
+    cancel.textContent = 'Cancel';
+    actions.appendChild(replace);
+    actions.appendChild(cancel);
+    confirm.appendChild(msg);
+    confirm.appendChild(actions);
+    li.appendChild(confirm);
+
+    btn.addEventListener('click', () => {
+      if (state.pickerBusy) return;
+      collapsePickerConfirms();
+      confirm.hidden = false;
+    });
+    cancel.addEventListener('click', () => { confirm.hidden = true; });
+    replace.addEventListener('click', () => {
+      collapsePickerConfirms();
+      onPickProfile(p.directoryName);
+    });
+  } else {
+    btn.addEventListener('click', () => onPickProfile(p.directoryName));
+  }
   return li;
+}
+
+function collapsePickerConfirms() {
+  document.querySelectorAll('#picker-list .wp-picker-confirm').forEach((el) => {
+    el.hidden = true;
+  });
 }
 
 // Show the picker built from chrome.storage.local `webpilot.knownProfiles`.
@@ -479,6 +528,9 @@ async function renderPicker(message) {
 function setPickerDisabled(busy) {
   document.querySelectorAll('#picker-list .wp-picker-row').forEach((btn) => {
     btn.disabled = busy || btn.dataset.inUse === '1';
+  });
+  document.querySelectorAll('#picker-list .wp-picker-confirm-btn').forEach((btn) => {
+    btn.disabled = busy;
   });
 }
 
