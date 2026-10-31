@@ -42,26 +42,33 @@ background.js (service worker)
 
 The service worker is the entry point and command router. It:
 
-1. Manages the WebSocket connection to the MCP server (connect, disconnect, keepalive, reconnect on error)
+1. Manages the WebSocket connection to the MCP server (connect, disconnect, keepalive, reconnect on close, and a `chrome.alarms` heartbeat that reconnects after the service worker is suspended)
 2. Receives command messages (JSON with `id`, `type`, `params`)
 3. Routes each command to the appropriate handler based on `type`
 4. Sends results back to the server (JSON with `id`, `success`, `result` or `error`)
 5. Listens for Chrome events (tab closed, navigation complete) to clean up state
 
-On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The WebSocket `serverUrl` returned by `/connect` is **always** loopback (`ws://127.0.0.1:<port>`) regardless of network mode, so the extension — which always runs on the same machine as the server — always connects to localhost; the extension WS upgrade is itself loopback-gated server-side. The extension auto-reconnects after a close, with the delay and popup status depending on the close code (see [Reconnect and close codes](#reconnect-and-close-codes)). On a 1006 close it also self-heals a stale non-loopback `serverUrl` left over in `chrome.storage.local` (e.g. a previously-stored LAN address), resetting the dial target to the `localhost:3456` default before the retry fires. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup.
+On startup, the extension auto-connects to `localhost:3456` by fetching `/connect` to obtain the server URL, SSE URL, and network mode, then stores those values in `chrome.storage.local` and establishes the WebSocket connection. The extension's own persistent `webpilot.installId` (minted on first install) is its identity — `/connect` no longer hands out a transport key (retired in the 2026-05-17 cutover; the audit document that originally described the retirement has since been removed from `docs/`). If configuration is already stored in `chrome.storage.local`, that is used directly. On every successful WebSocket connection (including reconnects), `refreshConnectionMetadata()` fetches `/connect` again to update the stored `serverUrl`, `sseUrl`, and `networkMode` values -- this ensures the extension picks up any server-side changes. The WebSocket `serverUrl` returned by `/connect` is **always** loopback (`ws://127.0.0.1:<port>`) regardless of network mode, so the extension — which always runs on the same machine as the server — always connects to localhost; the extension WS upgrade is itself loopback-gated server-side. The extension auto-reconnects after a close, with the delay and popup status depending on the close code (see [Reconnect and close codes](#reconnect-and-close-codes)). On a 1006 close it also self-heals a stale non-loopback `serverUrl` left over in `chrome.storage.local` (e.g. a previously-stored LAN address), resetting the dial target to the `localhost:3456` default before the retry fires. A `manuallyDisconnected` flag prevents auto-reconnect when the user explicitly disconnects via the popup. A `chrome.alarms` heartbeat (`webpilot-reconnect`, every 0.5 min) backs up the timer-based retries; see [Reconnect and close codes](#reconnect-and-close-codes).
 
 ### Reconnect and close codes
 When the WebSocket closes, `ws.onclose` picks the popup status and retry delay from the close code. Retries only run while the extension is enabled, not `manuallyDisconnected`, and has a `serverUrl`.
 
 | Code | Meaning | Popup status | Retry |
 |---|---|---|---|
-| 1000, 1001 | Clean close | `disconnected` (no error) | 5 s |
+| 1000, 1001 (server-initiated) | Clean close | `disconnected` (no error) | 5 s |
 | 1006 | Server unreachable | `server_unreachable` | 5 s |
 | 1008 / `Unauthorized` | Missing or malformed `installId` | `auth_failed` | None. Clears stored `serverUrl`, `enabled` and `apiKey`, then re-runs auto-connect; `installId` is kept |
 | 1011 | Server error | `server_error` | 5 s |
 | 4000 | Server replaced this socket (same install reconnecting, or stale previous socket) | `connection_lost` | 5 s |
-| 4409 | Server refused a takeover: a live connection from a different install holds this profile (`connection_in_use`) | `connection_in_use`, "Another WebPilot connection is active for this browser profile" | 30 s (`CONNECTION_IN_USE_RETRY_MS`); config kept |
+| 4001 | Extension closed its own socket after exhausting identify retries (`CLOSE_CODE_IDENTIFY_FAILED`) | `identify_failed`, "Identification failed" | 5 s |
+| 4409 | Server refused a takeover: a live connection from a different install holds this profile (`connection_in_use`) | `connection_in_use`, "Another WebPilot connection is active for this browser profile" | 30 s (`CONNECTION_IN_USE_RETRY_MS`), also enforced against the alarm heartbeat via `nextRetryAt`; config kept |
 | Other | Unexpected close | `connection_lost` | 5 s |
+
+**Identify timeout.** If no `hello_ack` arrives within `HELLO_TIMEOUT_MS`, the extension closes the socket itself with code 1000 and reason `identify_timeout`. `onclose` skips its normal retry in this case because the identify backoff has already scheduled the reconnect.
+
+**Alarm heartbeat.** MV3 suspends the service worker after about 30 s idle, and `setTimeout` retries die with it. A `webpilot-reconnect` alarm (period 0.5 min) survives suspension and wakes the worker. It is created on install, on startup, and on every worker load, and the `onAlarm` listener is registered at top level so a woken worker handles the tick. Each tick re-reads `enabled`, `serverUrl`, `manuallyDisconnected` and `webpilot.installId` from `chrome.storage.local`, and reconnects only if no socket is live, the extension is enabled and not manually disconnected, and `nextRetryAt` has expired. `scheduleReconnect()` is the single retry path and sets `nextRetryAt`. `nextRetryAt` is in-memory, so the 30 s hold after a 4409 is only guaranteed while the worker stays alive.
+
+**Socket guards.** `connectWebSocket()` returns early if the current socket is OPEN or CONNECTING. Every handler ignores events from a socket that is no longer the current `wsConnection`; this matters because the server closes the previous socket with 4000 when it replaces it.
 
 ### Hello handshake
 
@@ -77,9 +84,9 @@ The server resolves the binding in five ordered steps (see `resolveHelloProfile(
 2. **`installId` lookup** — the server consults the `extension_installs` SQLite table (`installId → profileId` map) and uses the cached profile only if it still corresponds to a real directory under Chrome's user-data-dir.
 3. **`gaiaEmail` match** — the server reads Chrome's `Local State` and binds to the profile whose `gaia_email` (case-insensitive) matches the value the extension surfaced from `chrome.identity.getProfileUserInfo`.
 4. **Inference by exclusion** — if exactly one known profile is *not yet connected*, *not in the install map*, and *has no `gaiaEmail` of its own*, the server binds the connecting extension to it by elimination. Ambiguity (zero or multiple candidates) falls through to step 5.
-5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; the actual profile picker is rendered by the webapp's `/pairings` flow (see `background.js` around lines 400-401). Once the operator picks, the extension stores `webpilot.profileId` and re-runs `sendHelloHandshake()` so step 1 resolves on the retry.
+5. **`identify_required` push** — the server gives up auto-resolving and sends the list of known profiles to the extension. The extension stashes them under `webpilot.knownProfiles` in `chrome.storage.local`; no picker consumes them yet (#138 adds one; see the `identify_required` handler in `background.js`). The extension keeps any stored `webpilot.profileId` and resends `hello` after a backoff (3 s, 10 s, 30 s), so step 1 or 2 resolves if the server's view changes. If all resends still get `identify_required`, it sets `webpilot.profileId` to `null`, closes the socket with `4001` (`identify_failed`) and reconnects after 5 s; the next `hello` carries `gaiaEmail` again since no `profileId` is left.
 
-The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list and the webapp's `/pairings` flow surfaces the picker). It can also refuse the connection by closing the socket with code `4409` (`connection_in_use`) instead of sending `hello_ack`, because another install already holds the profile. See [Reconnect and close codes](#reconnect-and-close-codes). An 8-second client-side watchdog (`HELLO_TIMEOUT_MS = 8000`) surfaces failures to the popup. The server also runs a parallel 5-second `helloDeadline` that pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`.
+The server replies with either `hello_ack` (handshake complete; `profileId` is the bound profile) or `identify_required` (server can't resolve — the extension caches the candidate list). It can also refuse the connection by closing the socket with code `4409` (`connection_in_use`) instead of sending `hello_ack`, because another install already holds the profile. See [Reconnect and close codes](#reconnect-and-close-codes). The 8-second client watchdog (`HELLO_TIMEOUT_MS = 8000`) covers a server that never replies: on expiry the extension sets error state `identify_timeout`, closes with 1000 and reconnects on the same 3/10/30 s backoff counter, then fails with 4001 as above. The watchdog is cancelled when `identify_required` arrives. The server's parallel 5-second `helloDeadline` pushes `identify_required` if `hello` never arrives. Tool calls and management traffic resume only after `hello_ack`; `hello_ack` also resets the identify retry counter.
 
 ### Message handlers
 
@@ -107,9 +114,9 @@ The current minimal popup does **not** send any `chrome.runtime.sendMessage` —
 
 Tab lifecycle management.
 
-- `createTab(params)` -- Opens a new tab with the given URL. The tab's `active` state is controlled by the `focusNewTabs` setting (defaults to false, meaning tabs open in the background). Automatically organizes the tab via `organizeTab`.
+- `createTab(params)` -- Opens a new tab. The URL is validated by `normalizeUrl` first: only http(s) and `about:blank` are accepted, a scheme-less value gets `https://`, and other schemes or other `about:` pages are rejected before anything is created. The URL is always passed at creation, never as a separate navigate step. `active` follows the `focusNewTabs` setting (defaults to false, so tabs open in the background). In window mode, a `windows.create` failure with saved `webPilotWindowBounds` retries once without them. If a step after creation throws, the new window is closed so no orphan is left. Grouping and focus failures are non-fatal: the tab is kept and the result carries a `warning` such as `tab not grouped: ...`. Returns `{ tab_id, url, title, warning? }`.
 - `closeTab(params)` -- Closes a tab by ID.
-- `getTabs()` -- Returns all open tabs with their ID, URL, title, active state, window ID, and group ID.
+- `getTabs()` -- Returns all open tabs with their ID, URL, title, active state, window ID, and group ID. Also reports `pendingUrl`: the URL a still-loading tab is navigating to (undefined once committed).
 - `organizeTab(tabId)` -- Reads the `tabMode` setting from `chrome.storage.local` and routes to either `addTabToGroup(tabId)` (group mode, default) or `addTabToWindow(tabId)` (window mode). Called automatically when any command interacts with a tab.
 - `addTabToGroup(tabId)` -- Adds a tab to a cyan "WebPilot" tab group, creating the group if it does not exist.
 - `addTabToWindow(tabId)` -- Moves a tab to the dedicated WebPilot Chrome window if one already exists. Returns a failure if no WebPilot window has been created yet. Window creation happens exclusively in `createTab` when `tabMode` is set to `'window'` and no WebPilot window exists.
@@ -324,7 +331,7 @@ Settings and state are stored in `chrome.storage.local`:
 | `pendingPairingRequests` | array | `[]` | (legacy) Cached pending requests; no longer surfaced in the popup |
 | `webPilotWindowBounds` | object | null | Saved WebPilot window position/size |
 | `webpilot.installId` | string | UUID | Persistent install identity — survives `FORGET_CONFIG`; minted on first install |
-| `webpilot.profileId` | string | null | Bound Chrome profile directoryName |
+| `webpilot.profileId` | string | null | Bound Chrome profile directoryName; cleared to `null` when identify retries are exhausted |
 | `webpilot.knownProfiles` | array | `[]` | Profile choices for the picker, supplied by `identify_required` |
 
 `webpilot.installId` is intentionally **not** cleared on config resets (e.g. `FORGET_CONFIG`) so the server's `installId → profileId` mapping survives storage wipes. Any pre-1.2.0 `apiKey` value left in `chrome.storage.local` is purged on first startup after upgrade (one-time migration; the legacy transport key was retired 2026-05-17).
@@ -384,7 +391,7 @@ Error:
 
 The server binds each pending command to the WebSocket connection it was sent on; a response arriving on a different socket for the same `id` is rejected rather than resolved against the original caller.
 
-Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`.
+Keepalive: Extension sends `{"type":"ping"}` every 15 seconds, server responds with `{"type":"pong"}`. The ping keeps an open socket alive; if the worker is suspended anyway, the `webpilot-reconnect` alarm reconnects it.
 
 ## Permissions
 
@@ -393,6 +400,7 @@ From `packages/chrome-extension-unpacked/manifest.json`:
 | Permission | Purpose |
 |-----------|---------|
 | `storage` | Persist connection config (server URL, enabled state, installId, profileId) |
+| `alarms` | Schedule the `webpilot-reconnect` heartbeat that wakes the suspended service worker to reconnect |
 | `activeTab` | Access the currently active tab |
 | `tabs` | Query and manage all browser tabs |
 | `tabGroups` | Create and manage the WebPilot tab group |
