@@ -19,6 +19,16 @@ const DEFAULT_HTTP_URL = 'http://localhost:3456';
 const AUTO_CONNECT_INTERVAL_MS = 5000;
 // Slower retry when the server refuses us because another connection holds this profile.
 const CONNECTION_IN_USE_RETRY_MS = 30000;
+const DEFAULT_RETRY_MS = 5000;
+// chrome.alarms heartbeat. MV3 suspends the service worker after ~30s idle and
+// the setTimeout/setInterval retries die with it; alarms survive and wake it.
+const RECONNECT_ALARM_NAME = 'webpilot-reconnect';
+const RECONNECT_ALARM_PERIOD_MIN = 0.5;
+// Extension-specific close code: identification retries were exhausted.
+// Must stay in 4000-4999, and distinct from 4000 (replaced) and 4409 (in use).
+const CLOSE_CODE_IDENTIFY_FAILED = 4001;
+// Backoff between hello resends while the server answers identify_required.
+const IDENTIFY_RETRY_DELAYS_MS = [3000, 10000, 30000];
 
 // WebSocket connection state
 let wsConnection = null;
@@ -37,6 +47,16 @@ const KEEPALIVE_INTERVAL_MS = 15000;
 let helloAcked = false;
 const HELLO_TIMEOUT_MS = 8000;
 let helloTimeoutTimer = null;
+// Identify retry state (reset on hello_ack and on every socket close).
+let identifyAttempt = 0;
+let identifyRetryTimer = null;
+// Set when identify_timeout closes the socket itself, so onclose skips its own
+// retry scheduling (the identify backoff already scheduled one).
+let identifyReconnectPending = false;
+// Reconnect scheduling: one pending timer, plus a timestamp the alarm heartbeat
+// honors so it never connects ahead of a backoff (e.g. the 4409 refusal).
+let reconnectTimer = null;
+let nextRetryAt = 0;
 let config = {
   installId: null,
   serverUrl: null
@@ -48,6 +68,7 @@ chrome.storage.local.remove(['restrictedModeEnabled', 'whitelistedDomains']);
 // Extension lifecycle
 chrome.runtime.onInstalled.addListener(() => {
   console.log('WebPilot extension installed');
+  ensureReconnectAlarm();
   // Mint a persistent installId on first install so the server can map this
   // extension install to a Chrome profileId independently of
   // extension-storage state. Idempotent — only set if not already present.
@@ -56,6 +77,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  ensureReconnectAlarm();
   // Migration path: an extension installed before installIds shipped will
   // not have one. If we already know a profileId (i.e. the user has paired
   // before) backfill an installId now so subsequent connects benefit from
@@ -63,6 +85,100 @@ chrome.runtime.onStartup.addListener(() => {
   ensureInstallId();
   loadConfig();
 });
+
+/**
+ * Create the reconnect heartbeat alarm if it does not exist yet. Idempotent:
+ * safe to call at every worker load, install and startup.
+ */
+function ensureReconnectAlarm() {
+  try {
+    chrome.alarms.get(RECONNECT_ALARM_NAME, (alarm) => {
+      if (!alarm) {
+        chrome.alarms.create(RECONNECT_ALARM_NAME, { periodInMinutes: RECONNECT_ALARM_PERIOD_MIN });
+      }
+    });
+  } catch (e) {
+    console.log('[alarm] failed to ensure reconnect alarm: ' + (e && e.message));
+  }
+}
+
+// Top-level so the listener is registered when the alarm wakes a suspended worker.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm && alarm.name === RECONNECT_ALARM_NAME) {
+    reconnectTick().catch((e) => console.log('[alarm] reconnect tick failed: ' + (e && e.message)));
+  }
+});
+ensureReconnectAlarm();
+
+function isSocketLive() {
+  return !!wsConnection &&
+    (wsConnection.readyState === WebSocket.OPEN || wsConnection.readyState === WebSocket.CONNECTING);
+}
+
+/**
+ * Heartbeat: a freshly woken worker has default in-memory state, so re-read
+ * storage before deciding whether to reconnect.
+ */
+async function reconnectTick() {
+  if (isSocketLive()) return;
+  if (Date.now() < nextRetryAt) return; // backoff active (e.g. 4409)
+
+  const result = await new Promise((resolve) => {
+    chrome.storage.local.get(
+      ['enabled', 'serverUrl', 'manuallyDisconnected', 'webpilot.installId'],
+      (r) => resolve(r || {})
+    );
+  });
+  // Re-check: state may have changed while storage was read.
+  if (isSocketLive() || Date.now() < nextRetryAt) return;
+
+  isEnabled = result.enabled || false;
+  config.installId = result['webpilot.installId'] || null;
+  config.serverUrl = result.serverUrl || null;
+  manuallyDisconnected = result.manuallyDisconnected === true;
+
+  if (manuallyDisconnected) return;
+
+  if (config.installId && config.serverUrl) {
+    if (!isEnabled) return;
+    console.log('[alarm] heartbeat: not connected, reconnecting');
+    connectWebSocket();
+  } else if (!autoConnectInterval) {
+    console.log('[alarm] heartbeat: no config, attempting auto-connect');
+    attemptAutoConnect();
+  }
+}
+
+/**
+ * Schedule a single reconnect attempt, replacing any pending one, and record
+ * nextRetryAt so the alarm heartbeat respects the same backoff.
+ */
+function scheduleReconnect(delayMs) {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  nextRetryAt = Date.now() + delayMs;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (isEnabled && !manuallyDisconnected) {
+      connectWebSocket();
+    }
+  }, delayMs);
+}
+
+function clearReconnectSchedule() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  nextRetryAt = 0;
+}
+
+function resetIdentifyState() {
+  identifyAttempt = 0;
+  if (identifyRetryTimer) {
+    clearTimeout(identifyRetryTimer);
+    identifyRetryTimer = null;
+  }
+}
 
 /**
  * Ensure chrome.storage.local has a `webpilot.installId`. Generates one with
@@ -307,9 +423,10 @@ function handleConfigUpdate(newConfig) {
 
 // WebSocket connection
 function connectWebSocket() {
-  if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+  if (isSocketLive()) {
     return;
   }
+  clearReconnectSchedule();
 
   if (!config.serverUrl) {
     console.log('Server URL not configured');
@@ -340,9 +457,11 @@ function connectWebSocket() {
     // installId carries no agent power.
     wsUrl.searchParams.set('installId', config.installId || '');
 
-    wsConnection = new WebSocket(wsUrl.toString());
+    const ws = new WebSocket(wsUrl.toString());
+    wsConnection = ws;
 
-    wsConnection.onopen = () => {
+    ws.onopen = () => {
+      if (ws !== wsConnection) return; // stale socket
       console.log('[ws:open] WebSocket TCP/WS handshake complete — sending hello FIRST');
       // Per server protocol, the server gates ALL non-hello messages until
       // identification completes. The very first frame on this WS MUST be
@@ -355,6 +474,12 @@ function connectWebSocket() {
         clearTimeout(helloTimeoutTimer);
         helloTimeoutTimer = null;
       }
+      // Only the pending resend timer is cleared here; the attempt counter
+      // persists across identify_timeout reconnects (reset on hello_ack/close).
+      if (identifyRetryTimer) {
+        clearTimeout(identifyRetryTimer);
+        identifyRetryTimer = null;
+      }
       updateConnectionStatus('connecting', 'Identifying...', null);
       startKeepalive();
       refreshConnectionMetadata();
@@ -364,16 +489,32 @@ function connectWebSocket() {
       );
       // Watchdog: if hello_ack never arrives, surface to popup.
       helloTimeoutTimer = setTimeout(() => {
-        if (!helloAcked && wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+        helloTimeoutTimer = null;
+        if (ws !== wsConnection) return;
+        if (!helloAcked && ws.readyState === WebSocket.OPEN) {
           console.log(
             `[hello] timeout: hello_ack not received within ${HELLO_TIMEOUT_MS}ms`
           );
           updateConnectionStatus('error', 'Identification failed', 'identify_timeout');
+          // The server never registered this socket: drop it and reconnect,
+          // sharing the identify backoff counter.
+          const delay = nextIdentifyDelay();
+          if (delay === null) {
+            failIdentification(ws);
+          } else {
+            console.log(`[hello] identify_timeout: reconnecting in ${delay}ms`);
+            // Normal-code close; onclose must not also schedule its own retry.
+            // onclose keeps identifyAttempt in this case so the backoff advances.
+            identifyReconnectPending = true;
+            ws.close(1000, 'identify_timeout');
+            scheduleReconnect(delay);
+          }
         }
       }, HELLO_TIMEOUT_MS);
     };
 
-    wsConnection.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (ws !== wsConnection) return; // stale socket
       try {
         // Defensive: cap frame size and reject non-object payloads before
         // dispatch. Even though the WS is gated server-side to localhost
@@ -404,14 +545,15 @@ function connectWebSocket() {
         if (message.type === 'identify_required') {
           // Server cannot determine which profile this extension belongs to.
           // Store the known-profiles list and notify the popup to show a picker.
+          // The stored profileId is KEPT while we retry hello (the server may
+          // resolve it once gaiaEmail / profile state is ready); it is only
+          // cleared when the retries are exhausted.
           const knownProfiles = message.knownProfiles || [];
-          chrome.storage.local.set({
-            'webpilot.knownProfiles': knownProfiles,
-            'webpilot.profileId': null
-          });
+          chrome.storage.local.set({ 'webpilot.knownProfiles': knownProfiles });
           // The profile picker lives in the webapp's /pairings flow; the
           // extension just stashes the list and logs.
           console.log('[hello] identify_required received, ' + knownProfiles.length + ' known profile(s)');
+          scheduleIdentifyRetry(ws);
           return;
         }
 
@@ -422,6 +564,7 @@ function connectWebSocket() {
             clearTimeout(helloTimeoutTimer);
             helloTimeoutTimer = null;
           }
+          resetIdentifyState();
           // Persist the resolved profileId for future connects
           chrome.storage.local.set({ 'webpilot.profileId': message.profileId });
           // Now (and only now) is the WS safe to consider fully connected.
@@ -449,12 +592,16 @@ function connectWebSocket() {
       }
     };
 
-    wsConnection.onerror = (error) => {
+    ws.onerror = (error) => {
+      if (ws !== wsConnection) return; // stale socket
       console.error('WebSocket error:', error);
     };
 
-    wsConnection.onclose = (event) => {
+    ws.onclose = (event) => {
       console.log('[ws:close] WebSocket closed:', event.code, event.reason);
+      // A replaced/old socket closing must not null the current one or touch
+      // its timers (the server closes the previous socket with 4000 on replace).
+      if (ws !== wsConnection) return;
       wsConnection = null;
       helloAcked = false;
       if (helloTimeoutTimer) {
@@ -463,10 +610,22 @@ function connectWebSocket() {
       }
       stopKeepalive();
 
+      // identify_timeout closed this socket itself and already scheduled the
+      // backoff reconnect; keep the attempt counter, just drop the resend timer.
+      if (identifyReconnectPending) {
+        identifyReconnectPending = false;
+        if (identifyRetryTimer) {
+          clearTimeout(identifyRetryTimer);
+          identifyRetryTimer = null;
+        }
+        return;
+      }
+      resetIdentifyState();
+
       let errorMsg = null;
       let errorType = null;
       let shouldRetry = true;
-      let retryDelayMs = 5000;
+      let retryDelayMs = DEFAULT_RETRY_MS;
 
       if (event.code === 4409) {
         // Server refused: another live connection (different install) already
@@ -498,6 +657,12 @@ function connectWebSocket() {
           config.serverUrl = DEFAULT_SERVER_URL;
           chrome.storage.local.set({ serverUrl: DEFAULT_SERVER_URL });
         }
+      } else if (event.code === CLOSE_CODE_IDENTIFY_FAILED) {
+        // We closed this ourselves after exhausting identify retries.
+        errorMsg = 'Identification failed';
+        errorType = 'identify_failed';
+        shouldRetry = true;
+        retryDelayMs = DEFAULT_RETRY_MS;
       } else if (event.code === 1008 || event.reason === 'Unauthorized') {
         // Post-1.2.0 a 1008 from the extension WS endpoint means our installId
         // was missing or malformed on the upgrade URL — typically a stale
@@ -529,11 +694,7 @@ function connectWebSocket() {
       }
 
       if (shouldRetry && isEnabled && !manuallyDisconnected && config.serverUrl) {
-        setTimeout(() => {
-          if (isEnabled && !manuallyDisconnected) {
-            connectWebSocket();
-          }
-        }, retryDelayMs);
+        scheduleReconnect(retryDelayMs);
       }
     };
   } catch (e) {
@@ -593,8 +754,58 @@ async function sendHelloHandshake() {
   }
 }
 
+/** Next identify backoff delay (advances the shared counter), or null when exhausted. */
+function nextIdentifyDelay() {
+  if (identifyAttempt >= IDENTIFY_RETRY_DELAYS_MS.length) return null;
+  return IDENTIFY_RETRY_DELAYS_MS[identifyAttempt++];
+}
+
+/** Resend hello after the backoff delay; never stacks timers. */
+function scheduleIdentifyRetry(ws) {
+  // The server answered (identify_required), so the 8s no-reply watchdog no
+  // longer applies; the backoff below drives the rest.
+  if (helloTimeoutTimer) {
+    clearTimeout(helloTimeoutTimer);
+    helloTimeoutTimer = null;
+  }
+  if (identifyRetryTimer) {
+    clearTimeout(identifyRetryTimer);
+    identifyRetryTimer = null;
+  }
+  const delay = nextIdentifyDelay();
+  if (delay === null) {
+    failIdentification(ws);
+    return;
+  }
+  console.log(`[hello] resending hello in ${delay}ms (attempt ${identifyAttempt}/${IDENTIFY_RETRY_DELAYS_MS.length})`);
+  identifyRetryTimer = setTimeout(() => {
+    identifyRetryTimer = null;
+    if (ws !== wsConnection || helloAcked || ws.readyState !== WebSocket.OPEN) return;
+    sendHelloHandshake().catch((err) =>
+      console.log('[hello] handshake retry failed:', err && err.message)
+    );
+  }, delay);
+}
+
+/** Retries exhausted: clear the stored profileId and close so the normal reconnect path runs. */
+function failIdentification(ws) {
+  console.log('[hello] identify retries exhausted, clearing stored profileId and reconnecting');
+  chrome.storage.local.set({ 'webpilot.profileId': null });
+  resetIdentifyState();
+  if (ws === wsConnection && ws.readyState === WebSocket.OPEN) {
+    ws.close(CLOSE_CODE_IDENTIFY_FAILED, 'identify_failed');
+  }
+}
+
 function disconnectWebSocket() {
   stopKeepalive();
+  resetIdentifyState();
+  clearReconnectSchedule();
+  identifyReconnectPending = false;
+  if (helloTimeoutTimer) {
+    clearTimeout(helloTimeoutTimer);
+    helloTimeoutTimer = null;
+  }
   if (wsConnection) {
     console.log('Disconnecting WebSocket');
     wsConnection.onclose = null;
