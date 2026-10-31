@@ -272,6 +272,154 @@ test('workflow acting only on allowed sites -> succeeds, no false block', async 
   assert.ok(sentCommands.some((c) => c.cmd === 'click'), 'allowed click should dispatch');
 });
 
+// The other checkpoint-B primitives (#131 coverage): each blocked call returns
+// the same envelope and never reaches the extension.
+for (const [prim, cmd, args] of [
+  ['type', 'type', { tab_id: 8, text: 'hi' }],
+  ['scroll', 'scroll', { tab_id: 8, pixels: 100 }],
+  ['getAccessibilityTree', 'get_accessibility_tree', { tab_id: 8 }],
+]) {
+  test(`workflow ${prim} on a blocked tab -> blocked envelope at checkpoint B`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    seedAgentBlock('blocked.com');
+    currentWorkflow = {
+      parameters: {},
+      run: async ({ browser }) => {
+        await browser[prim](args);
+        return { done: true };
+      },
+    };
+    assertBlockedAtB(await runWorkflow());
+    assert.ok(!sentCommands.some((c) => c.cmd === cmd), `blocked ${prim} must not reach the extension`);
+    t.mock.timers.tick(5000);
+  });
+}
+
+// The extension drops mid-run. The outer gate (tab 7) already passed, so the
+// disconnect happens inside run(): the step fails closed with the
+// policy-unavailable envelope.
+test('workflow step after the extension disconnects -> site policy check failed', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      connected = false;
+      await browser.click({ tab_id: 7, x: 1, y: 1 });
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'site policy check failed');
+  assert.equal(body.reason, 'extension_disconnected');
+  assert.equal(body.tabId, 7);
+  assertNotFormatterError();
+  assert.ok(!sentCommands.some((c) => c.cmd === 'click'), 'click must not reach the extension');
+});
+
+test('workflow step without tab_id -> invalid_tab_id envelope', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      await browser.click({ x: 1, y: 1 });
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.error, 'site policy check failed');
+  assert.equal(body.reason, 'invalid_tab_id');
+  assertNotFormatterError();
+  assert.ok(!sentCommands.some((c) => c.cmd === 'click'), 'click must not reach the extension');
+});
+
+// A workflow that catches the block and carries on still succeeds, but the
+// response reports the refused step as policyBlocked.
+test('workflow that swallows a block -> ok:true with policyBlocked', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (_e) { /* carry on */ }
+      return { done: true };
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, undefined);
+  assert.equal(body.ok, true);
+  assert.equal(body.done, true);
+  assert.ok(body.policyBlocked, 'expected policyBlocked');
+  assert.equal(body.policyBlocked.error, 'site blocked by policy');
+  assert.equal(body.policyBlocked.domain, 'blocked.com');
+  assert.equal(body.policyBlocked.tabId, 8);
+  assertNotFormatterError();
+  t.mock.timers.tick(5000);
+});
+
+// The workflow re-wraps the block with `cause`: the envelope is found on the
+// cause chain.
+test('workflow that rethrows a block wrapped with cause -> blocked envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (err) {
+        throw new Error('wrapped', { cause: err });
+      }
+      return { done: true };
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  t.mock.timers.tick(5000);
+});
+
+// The workflow throws a fresh error without `cause`: the per-run tracker still
+// knows a step was blocked, so the run is reported as a policy outcome.
+test('workflow that rethrows a block without cause -> tracked blocked envelope', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      try {
+        await browser.click({ tab_id: 8, x: 1, y: 1 });
+      } catch (_e) {
+        throw new Error('step failed');
+      }
+      return { done: true };
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  t.mock.timers.tick(5000);
+});
+
+// Non-policy failures keep the existing formatter-error path.
+test('workflow that throws a plain error -> recorded as a formatter error', async () => {
+  currentWorkflow = {
+    parameters: {},
+    run: async () => {
+      throw new Error('selector not found');
+    },
+  };
+  const res = await runWorkflow();
+  const body = bodyOf(res);
+  assert.equal(res.result.isError, true);
+  assert.equal(body.ok, false);
+  assert.equal(body.error, 'selector not found');
+  assert.ok('diagnostics' in body, 'expected formatter diagnostics');
+  assert.equal(formatterLogCalls.recordError.length, 1, 'plain failure must be recorded');
+  assert.equal(formatterLogCalls.buildDiagnostics.length, 1);
+});
+
 // Helper: returns a handler (named for readability at call sites).
 function prime() {
   return makeHandler();
