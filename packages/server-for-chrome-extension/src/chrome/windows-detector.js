@@ -2,6 +2,7 @@
 
 const { execFile } = require('node:child_process');
 const { log, error } = require('./logger');
+const { ChromeDetectionError } = require('./detector');
 
 const FLAG = '--silent-debugger-extension-api';
 
@@ -36,14 +37,29 @@ function isBrowserParent(cmdLine) {
 }
 
 /**
+ * Parse the PowerShell JSON output into an array of raw process records.
+ * Throws on malformed JSON or a non-object/array payload.
+ */
+function parseProcessJson(text) {
+  const parsed = JSON.parse(text);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') return [parsed];
+  throw new Error('unexpected JSON shape: ' + typeof parsed);
+}
+
+/**
  * Runs `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'"` and
- * filters to browser-parent processes only. Returns:
+ * filters to browser-parent processes only. Resolves:
  *   [{ pid, commandLine, hasFlag, userDataDir, profileDirectory }]
+ * (`[]` means the scan succeeded and found no Chrome). If the scan itself
+ * fails (PowerShell error or unparseable output) it REJECTS with a
+ * ChromeDetectionError so callers can treat the state as "unknown" rather
+ * than "not running".
  */
 function detect() {
   log('windows-detector', 'starting detection');
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     // CRITICAL: join with newlines, not spaces. Earlier versions used
     // .join(' ') which collapsed the script into a single line — any PS `#`
     // comment then ran from the `#` all the way to the end of the script,
@@ -70,7 +86,7 @@ function detect() {
       if (err) {
         error('windows-detector', 'powershell failed', err);
         if (stderr) error('windows-detector', 'stderr', stderr);
-        resolve([]);
+        reject(new ChromeDetectionError('powershell process scan failed: ' + (err && err.message), { cause: err }));
         return;
       }
 
@@ -81,17 +97,15 @@ function detect() {
         return;
       }
 
-      let parsed;
+      let list;
       try {
-        parsed = JSON.parse(trimmed);
+        list = parseProcessJson(trimmed);
       } catch (e) {
         error('windows-detector', 'failed to parse PS JSON', e);
         log('windows-detector', 'raw stdout (truncated 500)', { snippet: trimmed.slice(0, 500) });
-        resolve([]);
+        reject(new ChromeDetectionError('could not parse powershell output: ' + e.message, { cause: e }));
         return;
       }
-
-      const list = Array.isArray(parsed) ? parsed : [parsed];
       log('windows-detector', 'enumerated chrome processes', { total: list.length, durationMs: duration });
 
       const out = [];
@@ -128,5 +142,6 @@ module.exports = {
   _extractUserDataDir: extractUserDataDir,
   _extractProfileDirectory: extractProfileDirectory,
   _isBrowserParent: isBrowserParent,
+  _parseProcessJson: parseProcessJson,
   FLAG,
 };

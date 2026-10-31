@@ -3,9 +3,25 @@
 const { log, error } = require('./logger');
 
 /**
+ * Thrown when a process scan FAILED (as opposed to succeeding with no Chrome
+ * found). Callers must treat this as "Chrome state unknown", never as
+ * "Chrome not running". Tagged with code 'CHROME_DETECTION_FAILED'.
+ */
+class ChromeDetectionError extends Error {
+  constructor(message, opts) {
+    super(message);
+    this.name = 'ChromeDetectionError';
+    this.code = 'CHROME_DETECTION_FAILED';
+    if (opts && opts.cause) this.cause = opts.cause;
+  }
+}
+
+/**
  * Dispatch to the platform-specific detector. Returns an array of:
  *   { pid, commandLine, hasFlag, userDataDir, profileDirectory }
  * for browser-parent processes only (those without --type= in their command line).
+ * An empty array means "scan succeeded, no Chrome". A failed scan REJECTS with
+ * a ChromeDetectionError (code 'CHROME_DETECTION_FAILED').
  */
 async function detectChromeBrowsers() {
   const platform = process.platform;
@@ -31,8 +47,9 @@ async function detectChromeBrowsers() {
     return result;
   } catch (e) {
     error('detector', 'detection failed', e);
-    return [];
+    if (e && e.code === 'CHROME_DETECTION_FAILED') throw e;
+    throw new ChromeDetectionError('detection failed: ' + (e && e.message), { cause: e });
   }
 }
 
-module.exports = { detectChromeBrowsers };
+module.exports = { detectChromeBrowsers, ChromeDetectionError };
