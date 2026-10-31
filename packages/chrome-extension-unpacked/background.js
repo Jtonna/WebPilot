@@ -276,6 +276,8 @@ function attemptAutoConnect() {
   clearAutoConnectInterval();
 
   doAutoConnectFetch().then((success) => {
+    // Concurrent callers (alarm tick, onStartup, 1008, FORGET_CONFIG) can each reach here; keep exactly one interval.
+    clearAutoConnectInterval();
     if (!success) {
       // Server not reachable, retry on interval
       console.log('Auto-connect failed, retrying every', AUTO_CONNECT_INTERVAL_MS, 'ms');
@@ -552,6 +554,8 @@ function connectWebSocket() {
 
     const ws = new WebSocket(wsUrl.toString());
     wsConnection = ws;
+    // A new socket supersedes any identify-timeout close still pending on the old one; its late onclose is dropped by the stale-socket guard and would never clear this flag.
+    identifyReconnectPending = false;
 
     ws.onopen = () => {
       if (ws !== wsConnection) return; // stale socket
