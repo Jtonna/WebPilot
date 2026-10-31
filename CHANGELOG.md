@@ -54,6 +54,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Log columns: Domain (sub-line: source · matched-domain · hit-count; `default` = "No rule (allowed by default)"), Agent (links to `/ui/agents/?agent=<key>`), Status (green = approved, red = blocked), Last seen, Action.
   - Agents page supports `?agent=<key>` query filter.
 - `Allow for this agent` requires a 4-character confirmation code (case-insensitive). Code regenerates on each open. (#119)
+- Chrome detection failures report an `unknown` state. The server aborts rather than spawning or closing Chrome on a guess. (#132)
+  - The manager re-verifies a cached "no flag" result (rate-limited to 5s) and prefers the flagged Chrome parent.
+  - The status API and dashboard show `unknown`, aborted and partial Chrome outcomes.
+- Restart-to-add-flag relaunches with `--restore-last-session` for active and required profiles. (#132)
+- `browser_get_tabs` includes `pendingUrl`. `browser_create_tab` returns `opened_by_chrome_launch` and passes through the extension's `warning`. (#132)
+- Extension manifest adds the `alarms` permission. (#132)
+- Daemon log file lines are prefixed with ISO-8601 timestamps. Terminal output is unchanged. (#132)
+- A second extension connection from a different install no longer displaces a live connection for the same profile; the server refuses it with close code `4409` (`connection_in_use`) and the extension retries after 30s. (#131)
+- A workflow primitive blocked by site policy now returns the standard blocked envelope (or `ok: true` plus `policyBlocked` when the workflow handled the block) instead of a generic error, and is no longer recorded as a formatter error. (#131)
 
 ### Removed
 - Unreachable "Override · Allowed / Blocked" popup pills and unused "Agent:" line. Popup shows global policy (Chrome profile only); per-agent rules moved to Site Policy page. (#105)
@@ -76,6 +85,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Broken installs recover on successful fetch.
 - Status API's `globalSiteBlocklist` adds `lastCheckedAt` and `lastCheckError` (in-memory since daemon start) to show failed or cache-served checks. (#101)
 - Modals center on viewport with full-page backdrop via portal into `document.body` (not triggering card). (#119)
+- `browser_create_tab` no longer opens a blank window when Chrome is running and the extension is slow or disconnected. (#132)
+  - One connect wait: 10s when Chrome is running, 15s after a launch or restart, with a 3s grace before spawning.
+  - Chrome launches with the target URL and the launched tab is found via `get_tabs`.
+  - Returns accurate errors for partial, timeout, unknown and abort outcomes instead of a misleading one.
+- Extension reconnects after the MV3 service worker sleeps, via a 30s `chrome.alarms` heartbeat. Identify retries at 3s/10s/30s replace sitting idle on `identify_required`. (#132)
+- Extension `create_tab` validates URLs up front, retries without stale window bounds, and no longer leaves an empty window behind. Non-fatal post-create failures return a `warning`. (#132)
 
 ## [1.1.8]
 
