@@ -302,7 +302,7 @@ Each formatter declares its workflows in `manifest.json` under `workflows[]` and
 
 **Returns:**
 - **Success:** `{ ok: true, ...result }`, where `result` is whatever the workflow's `run()` function returned.
-- **Runtime failure:** `{ ok: false, error: "<message>", diagnostics: {...} }` with `isError: true` set on the MCP response. The `diagnostics` object includes `phase`, `workflow`, `platform`, `tabId`, and error context.
+- **Runtime failure:** `{ ok: false, error: "<message>", diagnostics: {...} }` with `isError: true` set on the MCP response. The `diagnostics` object includes `phase`, `workflow`, `platform`, `tabId`, and error context. If the workflow earlier swallowed a site-policy block, the body also has `policyBlocked` (the first refused step's envelope body).
 - **Refused by site policy:** if a browser primitive the workflow calls is refused, the workflow stops and the response is the standard site-policy envelope ([Blocked by Site Policy](#blocked-by-site-policy) or [site policy check failed](#site-policy-check-failed)) with `isError: true` and no `diagnostics`.
 - **Refusal handled by the workflow:** if the workflow catches the block and finishes, the response is the normal `ok: true` result (no `isError`) plus a `policyBlocked` field holding the first refused step's envelope body:
 ```json
@@ -320,7 +320,28 @@ Each formatter declares its workflows in `manifest.json` under `workflows[]` and
   }
 }
 ```
-Check `policyBlocked` before trusting an `ok: true` result.
+Check `policyBlocked` on both `ok: true` and `ok: false` results. It means a step was refused, even if the workflow carried on.
+
+If the workflow swallowed the block and then failed for another reason, you get the real error and diagnostics, plus `policyBlocked`:
+```json
+{
+  "ok": false,
+  "error": "selector not found",
+  "diagnostics": {
+    "phase": "workflow",
+    "workflow": "send_message",
+    "platform": "discord",
+    "tabId": 123
+  },
+  "policyBlocked": {
+    "ok": false,
+    "error": "site blocked by policy",
+    "domain": "example.com",
+    "policySource": "agent_rule"
+  }
+}
+```
+(`isError: true` is set on the MCP response.)
 
 **Example (Discord — `send_message`):**
 ```
@@ -337,7 +358,7 @@ Internally this workflow fetches the formatted accessibility tree, locates the c
 
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
-- Site policy blocked → [Blocked by Site Policy](#blocked-by-site-policy). Returned when the outer `tab_id` is blocked, or when any primitive the workflow calls (including `browser_create_tab` to a new URL) is blocked. If the workflow swallows the block, the result is `ok: true` with `policyBlocked` instead.
+- Site policy blocked → [Blocked by Site Policy](#blocked-by-site-policy). Returned when the outer `tab_id` is blocked, or when any primitive the workflow calls (including `browser_create_tab` to a new URL) is blocked. If the workflow swallows the block, the result is `ok: true` with `policyBlocked`, or `ok: false` with `policyBlocked` if it then fails for another reason.
 - Site policy check failed → [site policy check failed](#site-policy-check-failed) (`invalid_tab_id`, `extension_disconnected`, `tab_url_unavailable`, `policy_error`, `invalid_url`). A policy evaluation that throws inside a workflow step fails closed with `policy_error`.
 - `Workflow not found: <workflow>` — Workflow does not exist or is not implemented (`implemented: false` in manifest).
 - `Invalid workflow parameters: ...` — Parameter types do not match the workflow declaration.
@@ -1281,7 +1302,7 @@ If the block happens on an existing tab (checkpoint B, any `TAB_ID_TOOLS` call, 
 
 **Solution:** Do not retry the call. On the checkpoint-B variant, the server closes the tab itself in `tabCloseInSeconds`; no cleanup action is needed. Ask the human to change the rule at `http://localhost:3456/ui/site-policy/` if the block is unwanted (see [Blocked response](./SITE_POLICY.md#blocked-response)).
 
-**In workflows:** a refused primitive inside `webpilot_run_workflow` returns this envelope directly, or as the `policyBlocked` field of an `ok: true` result if the workflow handled the error. See [webpilot_run_workflow](#webpilot_run_workflow).
+**In workflows:** a refused primitive inside `webpilot_run_workflow` returns this envelope directly. If the workflow handled the error, it appears as the `policyBlocked` field of the result instead (`ok: true`, or `ok: false` with the real error). See [webpilot_run_workflow](#webpilot_run_workflow).
 
 ### Site policy check failed
 

@@ -3,6 +3,7 @@
 const { test, describe, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 const Database = require('better-sqlite3');
 const express = require('express');
@@ -173,9 +174,41 @@ describe('popup auth', () => {
     assert.equal(body.connection, 'connected');
     assert.equal(body.profileId, 'Default');
     assert.equal(body.agent, null);
-    assert.match(body.serverUrl, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(body.serverUrl, 'http://127.0.0.1:1234');
     assert.equal(body.globalTierEnabled, true);
     assert.equal(body.currentTab, undefined);
+  });
+
+  test('serverUrl ignores a spoofed Host / X-Forwarded-Proto (#136)', async () => {
+    const { port: realPort } = server.address();
+    const body = await new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port: realPort,
+          path: '/api/popup/state',
+          method: 'GET',
+          headers: {
+            Host: 'evil.example:9',
+            'X-Forwarded-Proto': 'https',
+            'X-Install-Id': 'good',
+          },
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (c) => { data += c; });
+          res.on('end', () => {
+            try {
+              assert.equal(res.statusCode, 200);
+              resolve(JSON.parse(data));
+            } catch (e) { reject(e); }
+          });
+        }
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(body.serverUrl, 'http://127.0.0.1:1234');
   });
 });
 

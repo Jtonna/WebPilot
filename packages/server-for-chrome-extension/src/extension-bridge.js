@@ -55,6 +55,13 @@ function createExtensionBridge() {
         // ignore
       }
     }
+    if (prev && prev !== ws) {
+      // The replaced socket's close event will find no matching map entry (it
+      // now holds `ws`), so fail its in-flight commands here instead of
+      // letting them wait out the full command timeout. Runs for live and
+      // dead (CLOSING/CLOSED) prev alike, before the map swap.
+      _rejectPendingForSocket(prev, 'Extension connection replaced');
+    }
     ws._lastActivity = Date.now();
     connections.set(profileId, ws);
     console.log(
@@ -62,6 +69,27 @@ function createExtensionBridge() {
         `(total=${connections.size})`
     );
     return { ok: true };
+  }
+
+  // Reject and drop every pending command that was sent on `ws`. Strict match:
+  // entries without a recorded socket are never touched. Returns the count.
+  function _rejectPendingForSocket(ws, message) {
+    if (ws === undefined || ws === null) return 0;
+    let rejected = 0;
+    for (const [id, pending] of pendingCommands) {
+      if (pending.ws !== undefined && pending.ws === ws) {
+        clearTimeout(pending.timeout);
+        pendingCommands.delete(id);
+        pending.reject(new Error(message));
+        rejected += 1;
+      }
+    }
+    if (rejected > 0) {
+      console.log(
+        `[bridge] rejected ${rejected} pending command(s) on a socket: ${message}`
+      );
+    }
+    return rejected;
   }
 
   function clearConnection(profileIdOrWs) {
@@ -88,12 +116,16 @@ function createExtensionBridge() {
     }
 
     if (!removedProfileId) {
-      // Anonymous disconnect (WS that was never identified via hello). Nothing
-      // to clear, nothing to reject. DO NOT iterate other profiles' pending
-      // commands.
+      // No map entry matches this socket: it either never completed hello or
+      // was already replaced in the map. Only commands bound to this exact
+      // socket are rejected (defense in depth); DO NOT iterate other
+      // profiles' pending commands.
+      if (profileIdOrWs && typeof profileIdOrWs === 'object') {
+        _rejectPendingForSocket(profileIdOrWs, 'Extension disconnected');
+      }
       console.log(
-        '[bridge] clearConnection(ws): no matching profile, ignoring ' +
-          '(this WebSocket never completed hello)'
+        '[bridge] clearConnection: no matching profile entry, ignoring ' +
+          '(socket never completed hello or was already replaced)'
       );
       return;
     }

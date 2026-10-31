@@ -117,9 +117,9 @@ function mountPopupRoutes(app, { extensionInstalls, extensionBridge, broadcastUi
       }
     }
 
-    const proto = (req.headers && req.headers['x-forwarded-proto']) || 'http';
-    const hostHdr = (req.headers && req.headers.host) || `localhost:${port}`;
-    const serverUrl = `${proto}://${hostHdr}`;
+    // Always the loopback address: the popup is same-machine only, and the
+    // Host / X-Forwarded-Proto headers are client-controlled (#136).
+    const serverUrl = `http://127.0.0.1:${port}`;
 
     const body = {
       connection,

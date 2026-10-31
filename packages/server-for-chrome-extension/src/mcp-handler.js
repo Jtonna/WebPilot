@@ -1386,7 +1386,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * manifest schema.
    *
    * @param {string|null} apiKey  Resolved API key for the calling agent
-   * @param {{ envelope: object|null, kind: string|null }} [policyTracker]
+   * @param {{ envelope: object|null, kind: string|null, commandsSinceBlock: number }} [policyTracker]
    *   Per-run record of the FIRST site-policy outcome a primitive hit.
    *   webpilot_run_workflow creates a fresh one per request and reads it
    *   after `run()` settles; see _gate below.
@@ -1399,7 +1399,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    *   createTab: Function
    * }}
    */
-  function buildBrowserPrimitives(apiKey, policyTracker = { envelope: null, kind: null }) {
+  function buildBrowserPrimitives(apiKey, policyTracker = { envelope: null, kind: null, commandsSinceBlock: 0 }) {
     // Re-apply the site-policy gate for every browser primitive a workflow
     // invokes. Without this, workflow code reaches the internal `_browser*`
     // helpers directly — the gate in tools/call only fires for the OUTER
@@ -1418,6 +1418,14 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
     // still return the envelope when the workflow re-wraps the error without
     // `cause`, or report it as `policyBlocked` when the workflow swallows it.
     // Policy outcomes are never recorded as formatter errors.
+    //
+    // `policyTracker.commandsSinceBlock` counts extension commands dispatched
+    // after the first recorded outcome (every primitive that passes its gate,
+    // plus the ungated getTabs). The run_workflow catch uses it to tell a
+    // re-thrown block (nothing ran since) from an unrelated later failure
+    // (commands ran in between), so a swallowed block cannot mask a real
+    // formatter error. Residual: a pure-JS error thrown after a swallowed
+    // block with NO commands in between still reports as a policy block.
     const _gate = async (toolName, gateArgs) => {
       let blocked;
       let kind;
@@ -1453,28 +1461,42 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       throw err;
     };
 
+    // Call right after a gate passes, immediately before dispatching to the
+    // extension. Only counts once a block has been recorded.
+    const _noteDispatch = () => {
+      if (policyTracker.envelope) policyTracker.commandsSinceBlock++;
+    };
+
     return {
       getAccessibilityTree: async ({ tab_id, usePlatformOptimizer } = {}) => {
         await _gate('browser_get_accessibility_tree', { tab_id });
+        _noteDispatch();
         return _browserGetAccessibilityTree({ tab_id, usePlatformOptimizer }, apiKey);
       },
       click: async ({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor } = {}) => {
         await _gate('browser_click', { tab_id });
+        _noteDispatch();
         return _browserClick({ tab_id, ref, selector, x, y, button, clickCount, delay, showCursor }, apiKey);
       },
       type: async ({ tab_id, text, ref, selector, delay, pressEnter } = {}) => {
         await _gate('browser_type', { tab_id });
+        _noteDispatch();
         return _browserType({ tab_id, text, ref, selector, delay, pressEnter }, apiKey);
       },
       scroll: async ({ tab_id, ref, selector, pixels, direction, amount } = {}) => {
         await _gate('browser_scroll', { tab_id });
+        _noteDispatch();
         return _browserScroll({ tab_id, ref, selector, pixels, direction, amount }, apiKey);
       },
       // browser_get_tabs is site-agnostic and explicitly exempt in
       // _enforceSitePolicy; mirror that here and do not over-block.
-      getTabs: () => _browserGetTabs({}, apiKey),
+      getTabs: () => {
+        _noteDispatch();
+        return _browserGetTabs({}, apiKey);
+      },
       createTab: async ({ url } = {}) => {
         await _gate('browser_create_tab', { url });
+        _noteDispatch();
         return _browserCreateTab({ url }, apiKey);
       }
     };
@@ -2255,7 +2277,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
 
       // Fresh per request: records the first site-policy outcome any
       // workflow primitive hit during this run (see buildBrowserPrimitives).
-      const policyTracker = { envelope: null, kind: null };
+      const policyTracker = { envelope: null, kind: null, commandsSinceBlock: 0 };
 
       try {
         const result = await wf.run({
@@ -2278,8 +2300,15 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         // standard policy envelope (same shape as a direct tool call or a
         // blocked chain step) and do not record a formatter error. Look for
         // the envelope along the `cause` chain in case the workflow wrapped
-        // it; if it was re-thrown without `cause`, fall back to the run's
-        // tracked outcome.
+        // it. If it was re-thrown without `cause`, fall back to the run's
+        // tracked outcome ONLY when that is plausibly the cause of this
+        // error: no extension command was sent after the block, or the
+        // message still says the step was blocked by site policy. Otherwise
+        // the workflow swallowed the block and later failed for an unrelated
+        // reason, so take the normal formatter-error path and attach the
+        // tracked block as `policyBlocked`. Residual (accepted): a pure-JS
+        // error thrown after a swallowed block with no commands in between
+        // still reports as a policy block.
         let policyEnvelope = null;
         for (let e = err, depth = 0; e && depth < 5; e = e.cause, depth++) {
           if (e.__sitePolicyEnvelope) {
@@ -2287,7 +2316,14 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
             break;
           }
         }
-        if (!policyEnvelope) policyEnvelope = policyTracker.envelope;
+        if (
+          !policyEnvelope &&
+          policyTracker.envelope &&
+          (policyTracker.commandsSinceBlock === 0 ||
+            /workflow step blocked by site policy/.test(String(err && err.message)))
+        ) {
+          policyEnvelope = policyTracker.envelope;
+        }
         if (policyEnvelope) {
           console.warn(`[mcp:workflow] ${platform}/${workflow} stopped by site policy: ${err.message}`);
           return policyEnvelope;
@@ -2307,8 +2343,14 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         }
         const diagnostics = formatterLogs.buildDiagnostics(incident, platform);
         console.warn(`[mcp:workflow] ${platform}/${workflow} failed: ${err.message}`);
+        const failBody = { ok: false, error: err.message, diagnostics };
+        if (policyTracker.envelope) {
+          try {
+            failBody.policyBlocked = JSON.parse(policyTracker.envelope.content[0].text);
+          } catch (_e) { /* envelope bodies are always JSON; ignore if not */ }
+        }
         return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: false, error: err.message, diagnostics }) }],
+          content: [{ type: 'text', text: JSON.stringify(failBody) }],
           isError: true
         };
       }
