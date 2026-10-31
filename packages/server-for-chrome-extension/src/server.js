@@ -18,6 +18,7 @@ const { mountPopupRoutes } = require('./popup-routes');
 const { upsertGlobalUserRule, clearGlobalUserRule } = require('./global-user-rules');
 const notificationsSettings = require('./notifications-settings');
 const { createChromeManager, readProfiles } = require('./chrome');
+const { scanForInstallId, isValidExtensionId } = require('./chrome/install-scan');
 const {
   isLoopbackRemote,
   evaluateLoopbackAccess,
@@ -1474,7 +1475,11 @@ function mountWebUiRoutes(app, deps) {
  *   1) client-supplied profileId — only if it matches a real local profile
  *   2) installId -> profileId mapping (validated against local profiles)
  *   3) gaiaEmail match against Local State
- *   4) inference by exclusion
+ *   4) install scan (#138; the plan's "step 2b") — the installId found in
+ *      exactly one profile's `Local Extension Settings/<extensionId>/`
+ *      storage, and that profile exists in Local State. Needs a valid
+ *      `message.extensionId`; 0 or several matches fall through.
+ *   5) inference by exclusion
  * Returns { profileId, via } on success or { profileId: null } to signal the
  * caller should reply with identify_required.
  *
@@ -1484,6 +1489,9 @@ function mountWebUiRoutes(app, deps) {
  * @param {object} message the parsed hello frame
  * @param {{ readProfiles: Function, userDataDir: string|null,
  *           getConnectedProfiles: Function, getProfileForInstall: Function,
+ *           scanInstallProfile?: (installId: string, extensionId: string) =>
+ *             ({ matches: string[], scanned?: number, skipped?: number,
+ *                truncated?: boolean }|null),
  *           installId?: string|null, log?: Function }} deps
  *   `installId` is the upgrade-validated value; it takes precedence over
  *   `message.installId`.
@@ -1495,6 +1503,7 @@ function resolveHelloProfile(message, deps) {
     userDataDir,
     getConnectedProfiles,
     getProfileForInstall,
+    scanInstallProfile,
     installId: validatedInstallId,
     log = console.log,
   } = deps;
@@ -1564,7 +1573,39 @@ function resolveHelloProfile(message, deps) {
     }
   }
 
-  // 4) Inference by exclusion.
+  // 4) Install scan (#138, "step 2b"): find the profile whose extension
+  //    storage holds this installId. Only an unambiguous hit that names a real
+  //    local profile binds; 0 / several matches or a throw fall through.
+  const extensionId = isValidExtensionId(message.extensionId) ? message.extensionId : null;
+  if (
+    typeof scanInstallProfile === 'function' &&
+    typeof installId === 'string' && installId.length > 0 &&
+    extensionId
+  ) {
+    try {
+      const scan = scanInstallProfile(installId, extensionId);
+      const matches = scan && Array.isArray(scan.matches) ? scan.matches : [];
+      log(
+        `[extension-bridge] install-scan: ${matches.length} match(es), ` +
+          `scanned ${(scan && scan.scanned) || 0}, skipped ${(scan && scan.skipped) || 0}` +
+          `${scan && scan.truncated ? ', truncated' : ''}${scan && scan.cached ? ' (cached)' : ''}`
+      );
+      if (matches.length === 1) {
+        const profiles = readProfilesFn(userDataDir);
+        if (profiles.some((p) => p.directoryName === matches[0])) {
+          log(`[extension-bridge] resolved profileId="${matches[0]}" from install scan`);
+          return { profileId: matches[0], via: 'install_scan' };
+        }
+        log(
+          `[extension-bridge] install-scan match is not a known local profile; falling through`
+        );
+      }
+    } catch (e) {
+      log(`[extension-bridge] install-scan failed: ${e.message}`);
+    }
+  }
+
+  // 5) Inference by exclusion.
   try {
     const profiles = readProfilesFn(userDataDir);
     const connectedProfileIds = new Set(getConnectedProfiles());
@@ -1878,15 +1919,34 @@ function createServer({ port, host: initialHost = '127.0.0.1', publicHost: initi
           //   2) installId -> profileId mapping (validated against local
           //      profiles; survives extension storage being cleared)
           //   3) gaiaEmail match against Local State
-          //   4) inference by exclusion
-          //   5) identify_required (picker fallback)
-          const resolution = resolveHelloProfile(message, {
-            readProfiles,
-            userDataDir: chromeManager.userDataDir,
-            getConnectedProfiles: () => extensionBridge.getConnectedProfiles(),
-            getProfileForInstall: (id) => extensionInstalls.getProfileForInstall(id),
-            installId: ws._installId,
-          });
+          //   4) install scan — the installId found in exactly one profile's
+          //      extension storage (needs a valid hello.extensionId; #138)
+          //   5) inference by exclusion
+          //   6) identify_required — the extension popup shows its profile
+          //      picker and answers with a fresh hello carrying profileId
+          const helloExtensionId = isValidExtensionId(message.extensionId)
+            ? message.extensionId
+            : null;
+          if (message.extensionId !== undefined && !helloExtensionId) {
+            console.log('[extension-bridge] hello carried an invalid extensionId — ignoring it');
+          }
+          const resolution = resolveHelloProfile(
+            { ...message, extensionId: helloExtensionId },
+            {
+              readProfiles,
+              userDataDir: chromeManager.userDataDir,
+              getConnectedProfiles: () => extensionBridge.getConnectedProfiles(),
+              getProfileForInstall: (id) => extensionInstalls.getProfileForInstall(id),
+              scanInstallProfile: (installId, extensionId) =>
+                scanForInstallId({
+                  userDataDir: chromeManager.userDataDir,
+                  profileDirs: readProfiles(chromeManager.userDataDir).map((p) => p.directoryName),
+                  extensionId,
+                  installId,
+                }),
+              installId: ws._installId,
+            }
+          );
           let resolvedProfileId = resolution.profileId;
 
           if (!resolvedProfileId) {
