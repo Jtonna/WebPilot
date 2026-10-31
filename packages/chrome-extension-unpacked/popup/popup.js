@@ -1,10 +1,11 @@
 /* WebPilot popup — status-and-escape-hatch panel.
  *
- * Four components:
+ * Five components:
  *   1. Connection dot + label
  *   2. Current tab domain + state pill
  *   3. Block/Allow toggle (global rule for the domain)
  *   4. Open dashboard link
+ *   5. Profile picker (replaces the tab section while the profile is unmatched)
  *
  * All admin lives in the webapp (`/ui/`). The popup reads installId +
  * server URL from chrome.storage (written by background.js' auto-connect
