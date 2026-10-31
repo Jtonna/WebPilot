@@ -2334,7 +2334,12 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       const detectedFormatter = formatterManager.getFormatterNameForUrl(args.url);
       const createdTabId = responseObj.tab_id ?? responseObj.tabId ?? responseObj.id ?? null;
       if (detectedFormatter) {
-        responseObj.warning = `Platform '${detectedFormatter}' detected on the URL you opened. Call webpilot_get_formatter_info({platform: '${detectedFormatter}', tab_id: ${createdTabId}}) before interacting.`;
+        const formatterWarning = `Platform '${detectedFormatter}' detected on the URL you opened. Call webpilot_get_formatter_info({platform: '${detectedFormatter}', tab_id: ${createdTabId}}) before interacting.`;
+        // Keep the extension's own non-fatal create_tab warning (e.g. "tab not
+        // grouped") instead of overwriting it.
+        responseObj.warning = typeof responseObj.warning === 'string' && responseObj.warning
+          ? `${responseObj.warning}; ${formatterWarning}`
+          : formatterWarning;
       }
       return {
         content: [{ type: 'text', text: JSON.stringify(responseObj, null, 2) }]

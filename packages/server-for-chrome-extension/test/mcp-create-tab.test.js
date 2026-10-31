@@ -59,13 +59,15 @@ let connected;
 let getTabsImpl;
 let ensureCalls;
 let ensureImpl;
+let createTabImpl;
+let formatterName;
 
 const fakeBridge = {
   isConnected: () => connected,
   sendCommand: async (profileId, cmd, args) => {
     sent.push({ profileId, cmd, args });
     if (cmd === 'get_tabs') return getTabsImpl();
-    if (cmd === 'create_tab') return { tab_id: 99, url: args.url, title: '' };
+    if (cmd === 'create_tab') return createTabImpl(args);
     return {};
   },
 };
@@ -76,7 +78,7 @@ const fakeChromeManager = {
   },
 };
 const fm = {
-  getFormatterNameForUrl: () => null,
+  getFormatterNameForUrl: () => formatterName,
   formatTree: (_url, nodes) => nodes,
   getWorkflow: () => null,
 };
@@ -112,6 +114,8 @@ beforeEach(() => {
   ensureCalls = [];
   getTabsImpl = async () => [];
   ensureImpl = async () => ({ action: 'noop', launched: [], urlLaunched: false, connected: true });
+  createTabImpl = async (args) => ({ tab_id: 99, url: args.url, title: '' });
+  formatterName = null;
 });
 
 afterEach(() => {
@@ -267,4 +271,27 @@ test('other tools: disconnected message points at Chrome or browser_create_tab',
     errorOf(res),
     "No browser instance connected for profile 'Default'. Open Chrome on that profile, or call browser_create_tab to launch it."
   );
+});
+
+test('extension create_tab warning is passed through to the agent', async () => {
+  createTabImpl = async (args) => ({ tab_id: 99, url: args.url, title: '', warning: 'tab not grouped: boom' });
+  const body = bodyOf(await createTab('https://example.com/a'));
+  assert.equal(body.tab_id, 99);
+  assert.equal(body.warning, 'tab not grouped: boom');
+});
+
+test('extension warning is kept alongside the formatter-detected warning', async () => {
+  formatterName = 'reddit';
+  createTabImpl = async (args) => ({ tab_id: 99, url: args.url, title: '', warning: 'tab not grouped: boom' });
+  const body = bodyOf(await createTab('https://example.com/a'));
+  assert.match(body.warning, /^tab not grouped: boom; Platform 'reddit' detected/);
+});
+
+test('launched-tab result carries no stale warning, only the formatter one when detected', async () => {
+  formatterName = 'reddit';
+  ensureImpl = async () => ({ action: 'launch', launched: [], urlLaunched: true, connected: true });
+  getTabsImpl = async () => [{ id: 7, url: 'https://example.com/a', title: 'x', active: true }];
+  const body = bodyOf(await createTab('https://example.com/a'));
+  assert.equal(body.tab_id, 7);
+  assert.match(body.warning, /^Platform 'reddit' detected.*tab_id: 7/);
 });
