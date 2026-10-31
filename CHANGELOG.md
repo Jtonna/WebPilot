@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `GET /api/ui/site-policy/events`: paginated read API for the log (filter by agent, decision). Returns whether the domain can be targeted by a per-agent rule and the agent's current rule for it. (#103)
 - `POST /api/ui/agents/:agentId/site-events/allow` and `.../revoke`: create a per-agent allow or block rule for a logged domain. Revoke always creates a block for that agent only and never deletes an allow rule (a same-domain per-agent allow is overwritten in place). (#103)
 - WebSocket event `site_policy_events_changed`: emitted when a row is created, its decision flips, the deciding rule/source changes, or retention removes rows (not on every hit). (#103)
+- Popup profile picker for when the server can't match the Chrome profile. Suggested profiles come first, in-use profiles are disabled, and picking an already-registered profile asks for confirmation. (#138)
+- `reidentify` message from popup to background. (#138)
+- Dashboard and Profiles hint for an extension waiting to be matched, including the "Match the waiting extension" setup modal variant. (#138)
 
 ### Changed
 - Site rules stored per tier: per-agent, global user, signed global blocklist. User rules no longer mask signed blocklist entries; removing a user rule restores signed-list behavior. (#102)
@@ -63,6 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Daemon log file lines are prefixed with ISO-8601 timestamps. Terminal output is unchanged. (#132)
 - A second extension connection from a different install no longer displaces a live connection for the same profile; the server refuses it with close code `4409` (`connection_in_use`) and the extension retries after 30s. (#131)
 - A workflow primitive blocked by site policy now returns the standard blocked envelope (or `ok: true` plus `policyBlocked` when the workflow handled the block) instead of a generic error, and is no longer recorded as a formatter error. (#131)
+- The server identifies a new extension install by scanning that Chrome profile's extension storage for the install ID (read-only, size-capped) before falling back to inference by exclusion. (#138)
+- `hello` carries `extensionId`. (#138)
+- `identify_required` profiles carry `connected` and `registered`. (#138)
+- `/api/ui/status` adds `pendingIdentification.count`. The UI broadcasts `identification_pending_changed`. (#138)
 
 ### Removed
 - Unreachable "Override · Allowed / Blocked" popup pills and unused "Agent:" line. Popup shows global policy (Chrome profile only); per-agent rules moved to Site Policy page. (#105)
@@ -91,6 +98,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Returns accurate errors for partial, timeout, unknown and abort outcomes instead of a misleading one.
 - Extension reconnects after the MV3 service worker sleeps, via a 30s `chrome.alarms` heartbeat. Identify retries at 3s/10s/30s replace sitting idle on `identify_required`. (#132)
 - Extension `create_tab` validates URLs up front, retries without stale window bounds, and no longer leaves an empty window behind. Non-fatal post-create failures return a `warning`. (#132)
+- A new Chrome profile with no Google account no longer gets stuck on "Install ID not recognized by server" when another signed-out profile is closed. (#138)
 
 ## [1.1.8]
 
