@@ -99,6 +99,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Extension reconnects after the MV3 service worker sleeps, via a 30s `chrome.alarms` heartbeat. Identify retries at 3s/10s/30s replace sitting idle on `identify_required`. (#132)
 - Extension `create_tab` validates URLs up front, retries without stale window bounds, and no longer leaves an empty window behind. Non-fatal post-create failures return a `warning`. (#132)
 - A new Chrome profile with no Google account no longer gets stuck on "Install ID not recognized by server" when another signed-out profile is closed. (#138)
+- A workflow error raised after a swallowed site-policy block is no longer masked by the policy envelope. The real error is returned with `policyBlocked` attached and recorded as a formatter error. (#133)
+- Commands in flight on a replaced extension socket are rejected immediately with "Extension connection replaced" instead of waiting out the 30s timeout. (#134)
+- `/connect` `sseUrl` and `/api/popup/state` `serverUrl` are always loopback, and the extension rewrites a stale non-loopback stored `serverUrl` to `ws://localhost:<port>`. (#136)
 
 ## [1.1.8]
 
