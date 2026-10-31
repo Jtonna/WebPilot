@@ -1,6 +1,1 @@
-[
-  {
-    "issue": 131,
-    "body": "Sub-tasks (approved plan):\n1. Bridge refuses connection takeover (setConnection returns result; accepts when no prev, prev closed, same installId, prev idle >45s, or same socket re-hello)\n2. Hello handler: stamp activity on every message, check takeover first, close refused socket with 4409 connection_in_use\n3. Takeover tests\n4. Extension: clear status + slower retry on 4409\n5. Workflow site-policy blocks return the standard blocked envelope (or ok:true + policyBlocked when the workflow caught the block); policy blocks excluded from formatter health\n6. #114 test coverage (type/scroll/getAccessibilityTree, mid-run disconnect, missing tab_id, swallowed block, cause chain, health)\nNote: real envelope fields are tabWillCloseAt / tabCloseInSeconds (issue text had willCloseAt/closeInSeconds)."
-  }
-]
+[]
