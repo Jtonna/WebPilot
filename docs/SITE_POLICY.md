@@ -70,9 +70,9 @@ The gate `_enforceSitePolicy` runs after auth and before dispatch, in the `tools
 - **Workflows**: the outer `webpilot_run_workflow` call is gated at Checkpoint B on its own `tab_id`, but a workflow's code calls the browser primitives (`createTab`, `click`, `type`, `scroll`, `getAccessibilityTree`) handed to it by `buildBrowserPrimitives` directly, server-side, bypassing `tools/call`. Each of those primitives re-runs `_enforceSitePolicy` before dispatch: `createTab` at Checkpoint A on its `url`, the tab-scoped primitives at Checkpoint B on their `tab_id`. `getTabs` is unguarded, mirroring the `browser_get_tabs` exemption.
   - A blocked primitive **throws**, so the workflow stops at that step. `webpilot_run_workflow` still returns the standard envelope instead of a failed step. That envelope is either the [blocked response](#blocked-response) (with `tabId`, `tabWillCloseAt` and `tabCloseInSeconds` for a Checkpoint B tab) or `site policy check failed` with a `reason`.
   - A `policy_error` thrown inside the primitive's gate is treated as blocked.
-  - The handler looks for the envelope on the error or its `cause` chain (up to 5 levels). If the workflow re-threw without `cause`, it falls back to the first policy outcome tracked during the run.
-  - If the workflow catches the block and finishes, the result is `ok: true` plus `policyBlocked`, which holds the envelope body of the run's first policy outcome.
-  - Policy outcomes are never recorded as formatter errors, and no diagnostics are attached.
+  - The handler looks for the envelope on the error or its `cause` chain (up to 5 levels). If it finds none, it falls back to the run's first tracked policy outcome, but only if no extension command was sent after the block, or the re-thrown message still contains `workflow step blocked by site policy`. `getTabs` counts as a command.
+  - If the workflow catches the block and finishes, the result is `ok: true` plus `policyBlocked`, which holds the envelope body of the run's first policy outcome. If it catches the block and then fails for an unrelated reason, the result is `ok: false` with `error` and `diagnostics`, plus `policyBlocked`. A pure-JS error thrown after a swallowed block, with no commands in between, is still reported as a policy block.
+  - A policy envelope returned on its own is never recorded as a formatter error and carries no `diagnostics`. The `ok: false` plus `policyBlocked` case is recorded and does carry `diagnostics`.
 
 ### Checked and exempt tools
 
@@ -80,7 +80,7 @@ The gate `_enforceSitePolicy` runs after auth and before dispatch, in the `tools
 |---|---|---|
 | `browser_create_tab` | yes | Checkpoint A |
 | `browser_click`, `browser_type`, `browser_scroll`, `browser_get_accessibility_tree`, `browser_inject_script`, `browser_execute_js` | yes | Checkpoint B |
-| `webpilot_run_workflow` | yes | Checkpoint B on its own `tab_id`, **and** each internal browser primitive the workflow calls is gated again (`buildBrowserPrimitives`). A blocked primitive returns the policy envelope (or `policyBlocked` if the workflow swallowed it). See [Where the gate runs](#where-the-gate-runs). |
+| `webpilot_run_workflow` | yes | Checkpoint B on its own `tab_id`, **and** each internal browser primitive the workflow calls is gated again (`buildBrowserPrimitives`). A blocked primitive returns the policy envelope. See [Where the gate runs](#where-the-gate-runs) for swallowed blocks. |
 | Each step inside `browser_request_chain` | yes | Gated again as its own tool |
 | `browser_get_tabs`, `browser_close_tab`, the outer `browser_request_chain` call | no | Explicitly exempt (the exempt-tool branch of `_enforceSitePolicy`) |
 | `request_pairing`, `check_pairing_status`, `webpilot_get_formatter_info`, `webpilot_reload_formatters`, `webpilot_dev_get_formatter_logs`, `webpilot_dev_reload_extension` | no | Not listed, so they fall through the gate (the end of `_enforceSitePolicy`) |
@@ -97,7 +97,7 @@ Built by `_buildBlockedResponse` and returned with `isError: true`:
 
 Checkpoint B adds `tabId`, `tabWillCloseAt` (an ISO timestamp) and `tabCloseInSeconds: 5`. Checkpoint A has none of these fields because the tab was never opened.
 
-The same envelope is what `webpilot_run_workflow` returns when a workflow primitive is blocked. If the workflow swallows the block, it appears as `policyBlocked` in an `ok: true` result.
+The same envelope is what `webpilot_run_workflow` returns when a workflow primitive is blocked. If the workflow swallows the block, it appears as `policyBlocked` in the result. See [Where the gate runs](#where-the-gate-runs).
 
 When the gate cannot reach a verdict it returns a different envelope, built by `_buildPolicyUnavailableResponse`, also with `isError: true`:
 
@@ -115,7 +115,7 @@ Since #100, the gate fails closed: when a checked tool's verdict cannot be reach
 |---|---|---|
 | `policy_error` | Any exception thrown by the gate. Message: `Site policy could not be evaluated: <err>. Request blocked.` | the `tools/call` gate |
 | `policy_error` | Any exception thrown by the gate for a chain step. Message ends `Step blocked.` The envelope becomes that step's result, and the chain continues | the `browser_request_chain` step loop |
-| `policy_error` | Any exception thrown by the gate for a workflow primitive. It is treated as blocked, and `webpilot_run_workflow` returns the envelope (or `policyBlocked` if the workflow swallowed it). Message ends `Step blocked.` | `buildBrowserPrimitives` (`_gate`) |
+| `policy_error` | Any exception thrown by the gate for a workflow primitive. It is treated as blocked, and `webpilot_run_workflow` returns the envelope (see [Where the gate runs](#where-the-gate-runs) for swallowed blocks). Message ends `Step blocked.` | `buildBrowserPrimitives` (`_gate`) |
 | `invalid_url` | Checkpoint A with a non-string `url` (`url must be a string`) | `_enforceSitePolicy` (Checkpoint A branch) |
 | `invalid_tab_id` | Checkpoint B with a missing `tab_id` (`tab_id is required`) or a non-integer one, including numeric strings (`tab_id must be an integer (got <type>: <value>)`) | `_enforceSitePolicy` (Checkpoint B branch) |
 | `extension_disconnected` | Checkpoint B when the extension is disconnected (`No browser instance connected for profile '<profileId>'. Open Chrome on that profile, or call browser_create_tab to launch it.`) | `_enforceSitePolicy` (Checkpoint B branch) |
