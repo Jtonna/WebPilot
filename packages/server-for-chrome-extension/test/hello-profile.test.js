@@ -69,6 +69,52 @@ describe('resolveHelloProfile — client-supplied profileId (#129)', () => {
     assert.equal(r.profileId, null);
   });
 
+  // #131: the installId validated at WS upgrade wins over the hello claim, so
+  // a client cannot borrow another install's profile mapping by naming it in
+  // hello, and resolution keys off the same identity that gets persisted.
+  const ambiguousProfiles = () => [
+    { directoryName: 'Default', gaiaEmail: null },
+    { directoryName: 'Other', gaiaEmail: null },
+  ];
+
+  test('upgrade-validated installId takes precedence over the hello installId', () => {
+    const map = { 'victim-install': 'Default', 'own-install': 'Other' };
+    const r = resolveHelloProfile(
+      { installId: 'victim-install' },
+      deps({
+        readProfiles: ambiguousProfiles,
+        getProfileForInstall: (id) => map[id] || null,
+        installId: 'own-install',
+      })
+    );
+    assert.equal(r.profileId, 'Other');
+    assert.equal(r.via, 'installId');
+  });
+
+  test('a hello installId naming another install cannot resolve when the validated one is unmapped', () => {
+    const r = resolveHelloProfile(
+      { installId: 'victim-install' },
+      deps({
+        readProfiles: ambiguousProfiles,
+        getProfileForInstall: (id) => (id === 'victim-install' ? 'Default' : null),
+        installId: 'own-install',
+      })
+    );
+    assert.equal(r.profileId, null);
+  });
+
+  test('validated installId resolves even when hello omits it (storage cleared)', () => {
+    const r = resolveHelloProfile(
+      { installId: null },
+      deps({
+        readProfiles: ambiguousProfiles,
+        getProfileForInstall: (id) => (id === 'own-install' ? 'Other' : null),
+        installId: 'own-install',
+      })
+    );
+    assert.equal(r.profileId, 'Other');
+  });
+
   test('gaiaEmail resolves when no profileId/installId', () => {
     const r = resolveHelloProfile({ gaiaEmail: 'ALICE@example.com' }, deps());
     assert.equal(r.profileId, 'Profile 1');
