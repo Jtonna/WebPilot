@@ -1168,7 +1168,10 @@ function mountWebUiRoutes(app, deps) {
       console.log(
         `[ui-api:chrome:restart] requiredProfiles=${JSON.stringify(requiredProfiles)}`
       );
-      const result = await chromeManager.ensureReady(requiredProfiles);
+      // waitForConnect:false — the dashboard must not block on the extension's
+      // connect wait; it re-polls /api/ui/status afterwards. No url: this is
+      // a plain restart, not a tab open.
+      const result = await chromeManager.ensureReady(requiredProfiles, { waitForConnect: false });
       const status = (await chromeManager.getStatus()) || {};
       // 'abort' (incl. reason 'chrome_state_unknown') is a failed outcome even
       // though the request itself was handled; 'partial' means windows opened
