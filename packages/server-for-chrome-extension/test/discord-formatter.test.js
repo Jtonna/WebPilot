@@ -357,9 +357,9 @@ describe('discord formatter: navigation links and DMs', () => {
     assert.strictEqual(r.totalUnread, 3);
   });
 
-  test('totalUnread is null without a badge group', () => {
+  test('totalUnread is 0 without a badge group', () => {
     const none = formatDiscord(dmListNodes().nodes);
-    assert.strictEqual(none.totalUnread, null);
+    assert.strictEqual(none.totalUnread, 0);
   });
 
   test('dm_conversation exposes dms, dmCount, totalUnread and Navigation', () => {

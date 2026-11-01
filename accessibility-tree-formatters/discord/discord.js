@@ -482,7 +482,7 @@ module.exports = function formatDiscord(nodes) {
   // Sum of "N unread messages" badges in the DM badge group, or null.
   function extractTotalUnread() {
     var g = getSidebar().dmGroup;
-    if (!g) return null;
+    if (!g) return 0;
     var total = 0;
     var stack = children(g).slice();
     while (stack.length) {
