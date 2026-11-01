@@ -223,6 +223,57 @@ async function expandCollapsedFolders(ctx) {
   return { tree, pending: false, warnings };
 }
 
+/** Member names listed by an unnamed folder, or [] for a named one. */
+function unnamedFolderMembers(folderName) {
+  const m = /^\(unnamed:\s*([\s\S]*?)\)$/.exec(String(folderName || '').trim());
+  let body = m ? m[1] : null;
+  if (body === null) {
+    const raw = String(folderName || '');
+    if (!/, folder$/i.test(raw)) return [];
+    body = raw.replace(/,\s*folder$/i, '');
+  }
+  return body
+    .replace(/…/g, '')
+    .split(/,\s*/)
+    .map((x) => x.trim())
+    .filter((x) => x && x !== '...');
+}
+
+/**
+ * Expand collapsed folders one at a time until `target` resolves to a server
+ * (or ambiguously). Unnamed folders listing the target come first, then the
+ * rest in sidebar order. Re-fetches before every click, never re-collapses.
+ * Returns { tree, pending }.
+ */
+async function expandFoldersUntilFound(ctx, target, tree) {
+  const q = normalize(target);
+  const tried = new Set();
+  for (;;) {
+    const collapsed = foldersOf(tree).filter((f) => f.expanded === false && !tried.has(f.name));
+    if (collapsed.length === 0) return { tree, pending: false };
+    const hinted = (f) =>
+      q && unnamedFolderMembers(f.name).some((n) => {
+        const nn = normalize(n);
+        return nn === q || nn.includes(q);
+      });
+    const f = collapsed.find(hinted) || collapsed[0];
+    tried.add(f.name);
+    if (remaining(ctx) <= 0) return { tree, pending: true };
+    tree = await fetchTree(ctx);
+    let cur = foldersOf(tree).find((x) => x.name === f.name);
+    if (!cur || cur.expanded !== false || !cur.ref) continue;
+    await safeClick(ctx.browser, { ref: cur.ref, tab_id: ctx.tabId });
+    for (;;) {
+      await pollWait(ctx);
+      tree = await fetchTree(ctx);
+      cur = foldersOf(tree).find((x) => x.name === f.name);
+      if (!cur || cur.expanded !== false) break;
+      if (remaining(ctx) <= 0) return { tree, pending: true };
+    }
+    if (resolveServer(serversOf(tree), target).kind !== 'none') return { tree, pending: false };
+  }
+}
+
 async function getTabUrl(ctx) {
   const tabs = await ctx.browser.getTabs();
   const list = Array.isArray(tabs) ? tabs : (tabs && tabs.tabs) || [];
@@ -321,7 +372,7 @@ module.exports = {
     description:
       'Open a Discord server by name. Matches the exact name first, then ignoring case, emoji and punctuation, ' +
       'then a unique partial name; ambiguous or unknown names return an error listing close matches. ' +
-      'Expands collapsed folders if the server is not visible. Returns { serverId, channelId, name, url, verified }, ' +
+      'If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified }, ' +
       'or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; ' +
       'a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.',
     parameters: {
@@ -345,7 +396,7 @@ module.exports = {
       let tree = await fetchTree(ctx);
       let res = resolveServer(serversOf(tree), target);
       if (res.kind === 'none' && foldersOf(tree).some((f) => f.expanded === false)) {
-        const r = await expandCollapsedFolders(ctx);
+        const r = await expandFoldersUntilFound(ctx, target, tree);
         tree = r.tree;
         if (r.pending) {
           return { pending: true, message: PENDING_MESSAGE, name: target, lastUrl: null };
@@ -435,7 +486,7 @@ module.exports = {
       return {
         dms,
         dmCount: dms.length,
-        totalUnread: tree.totalUnread == null ? null : tree.totalUnread
+        totalUnread: tree.totalUnread == null ? 0 : tree.totalUnread
       };
     }
   }

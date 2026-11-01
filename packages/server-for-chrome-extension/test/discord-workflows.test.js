@@ -320,6 +320,51 @@ test('open_server: unknown name with collapsed folder still throws after expandi
   assert.strictEqual(st.folders[0].expanded, true);
 });
 
+
+test('open_server: expands only as many folders as needed', async () => {
+  const st = serverState(['Alpha', { name: 'InB', folder: 'B' }], {
+    folders: [{ name: 'A', expanded: false }, { name: 'B', expanded: false }, { name: 'C', expanded: false }]
+  });
+  const ids = { Alpha: ['1', '10'], InB: ['5', '50'] };
+  const env = makeEnv(st, { onClick: navClick(ids) });
+  const r = await run('open_server', env, { name: 'InB', timeoutMs: 3000 });
+  assert.strictEqual(r.serverId, '5');
+  const folderClicks = env.clicks.filter((c) => /-f-/.test(c.ref || ''));
+  assert.strictEqual(folderClicks.length, 2);
+  assert.ok(folderClicks[0].ref.includes('-f-A'));
+  assert.ok(folderClicks[1].ref.includes('-f-B'));
+  assert.strictEqual(st.folders[2].expanded, false);
+  assert.deepStrictEqual(env.stale, []);
+});
+
+test('open_server: unnamed folder listing the target is tried first', async () => {
+  const un = '(unnamed: Foo, Rustland…)';
+  const st = serverState(['Alpha', { name: 'Rustland', folder: un }], {
+    folders: [{ name: 'A', expanded: false }, { name: un, expanded: false }]
+  });
+  const ids = { Alpha: ['1', '10'], Rustland: ['6', '60'] };
+  const env = makeEnv(st, { onClick: navClick(ids) });
+  const r = await run('open_server', env, { name: 'rust', timeoutMs: 3000 });
+  assert.strictEqual(r.serverId, '6');
+  const folderClicks = env.clicks.filter((c) => /-f-/.test(c.ref || ''));
+  assert.strictEqual(folderClicks.length, 1);
+  assert.ok(folderClicks[0].ref.includes('-f-(unnamed'));
+  assert.strictEqual(st.folders[0].expanded, false);
+});
+
+test('open_server: not found after all folders lists close matches', async () => {
+  const st = serverState(['Alpha', { name: 'Beta', folder: 'A' }], {
+    folders: [{ name: 'A', expanded: false }, { name: 'B', expanded: false }]
+  });
+  const env = makeEnv(st, { onClick: navClick(IDS) });
+  await assert.rejects(run('open_server', env, { name: 'Nope', timeoutMs: 3000 }), (e) => {
+    assert.match(e.message, /matches no server/);
+    assert.match(e.message, /Close matches/);
+    return true;
+  });
+  assert.ok(st.folders.every((f) => f.expanded === true));
+});
+
 // ---------------------------------------------------------------- check_sidebar
 
 test('check_sidebar: expands only collapsed folders and never re-clicks expanded ones', async () => {
@@ -409,7 +454,7 @@ test('check_dm_list: no click when already on @me', async () => {
   const env = makeEnv(baseState({ pageType: 'dm_list' }));
   const r = await run('check_dm_list', env, { timeoutMs: 1000 });
   assert.strictEqual(env.clicks.length, 0);
-  assert.deepStrictEqual(r, { dms: [], dmCount: 0, totalUnread: null });
+  assert.deepStrictEqual(r, { dms: [], dmCount: 0, totalUnread: 0 });
 });
 
 test('check_dm_list: pending when home navigation never lands', async () => {
