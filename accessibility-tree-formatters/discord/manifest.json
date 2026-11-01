@@ -18,6 +18,44 @@
           "description": "The message text to send."
         }
       }
+    },
+    {
+      "name": "check_sidebar",
+      "description": "List Discord servers in the left sidebar (name, ref, mentions, unread, inFolder) and folders. Expands collapsed server folders by default so their servers are listed (folders are left expanded). Works on any Discord page. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar again or get the tree) before retrying.",
+      "parameters": {
+        "expandFolders": {
+          "type": "boolean",
+          "description": "Expand collapsed server folders so their servers are listed (default true)."
+        },
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
+        }
+      }
+    },
+    {
+      "name": "open_server",
+      "description": "Open a Discord server by name. Matching tolerates differences in case, emoji and punctuation, and accepts a unique partial name; ambiguous or unknown names return an error listing close matches. Expands collapsed folders if the server is not visible. Returns { serverId, channelId, name, url, verified }, or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
+      "parameters": {
+        "name": {
+          "type": "string",
+          "description": "Server name (case, emoji and punctuation are ignored; unique partial names work)."
+        },
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
+        }
+      }
+    },
+    {
+      "name": "check_dm_list",
+      "description": "List Discord direct messages and group DMs (name, ref, type, status, unread, members, muted) with dmCount and totalUnread. Navigates to Home first if a server is showing. Message previews are not available. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
+      "parameters": {
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
+        }
+      }
     }
   ]
 }
