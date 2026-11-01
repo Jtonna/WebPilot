@@ -14,6 +14,7 @@ import {
   generateRippleCode,
   generateCursorRemoveCode
 } from '../utils/cursor.js';
+import { quadBounds, visibleCenter, CLIP_RECT_FUNCTION } from '../utils/click-geometry.js';
 import { generateViewportCheckCode, animateScroll, calculateScrollDelta, scrollElementIntoView } from '../utils/scroll.js';
 
 /**
@@ -122,6 +123,14 @@ export async function click(params) {
         throw new Error(`Ref "${ref}" not found. Fetch accessibility tree first.`);
       }
 
+      // Bring the node into view inside its nearest scroll container(s) first.
+      // getBoxModel ignores container clipping, so without this a node on the
+      // edge of a scrolled sidebar yields a center at/over the clipped edge
+      // (y:0) and the click misses. Best-effort: failures fall through.
+      await chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', {
+        backendNodeId: backendNodeId
+      }).catch(() => {});
+
       const boxModel = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', {
         backendNodeId: backendNodeId
       });
@@ -130,9 +139,38 @@ export async function click(params) {
         throw new Error(`Element for ref "${ref}" no longer exists in DOM`);
       }
 
-      const quad = boxModel.model.content;
-      x = Math.round((quad[0] + quad[2] + quad[4] + quad[6]) / 4);
-      y = Math.round((quad[1] + quad[3] + quad[5] + quad[7]) / 4);
+      // Click the visible part of the box (clipped by scroll containers and
+      // the viewport), not the raw center. Re-read after layout settles.
+      let clip = null;
+      let box = boxModel.model.content;
+      try {
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId });
+        if (resolved?.object?.objectId) {
+          const clipRes = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+            objectId: resolved.object.objectId,
+            functionDeclaration: CLIP_RECT_FUNCTION,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          clip = clipRes?.result?.value || null;
+          const settled = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId });
+          if (settled?.model) box = settled.model.content;
+        }
+      } catch (e) {
+        // Fall back to the unclipped box below.
+      }
+
+      const center = visibleCenter(quadBounds(box), clip, viewport);
+      if (center) {
+        x = center.x;
+        y = center.y;
+      } else {
+        // Nothing visible: keep the raw center so the existing off-screen
+        // scroll path below can still handle it.
+        const b = quadBounds(box);
+        x = Math.round((b.left + b.right) / 2);
+        y = Math.round((b.top + b.bottom) / 2);
+      }
     }
 
     // Resolve selector to coordinates
@@ -156,7 +194,7 @@ export async function click(params) {
       if (evalResult.result?.value?.error) {
         throw new Error(evalResult.result.value.error);
       }
-      if (!evalResult.result?.value?.x) {
+      if (!Number.isFinite(evalResult.result?.value?.x)) {
         throw new Error('Failed to get element coordinates');
       }
 
