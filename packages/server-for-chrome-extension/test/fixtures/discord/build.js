@@ -178,6 +178,55 @@ Builder.prototype.navLinks = function (parent, links) {
   return out;
 };
 
+// --- Server channel header / member list -----------------------------------
+
+// Live structure: region "Channel header" holding a title heading and sibling
+// buttons (no toolbar ancestor). opts.toggle: 'Show' | 'Hide' | null (omit the
+// toggle, as before the toolbar has rendered). opts.noBackend drops the
+// toggle's backendDOMNodeId. Returns { region, toggle }.
+Builder.prototype.channelHeader = function (parent, opts) {
+  opts = opts || {};
+  const region = this.add(parent, 'region', 'Channel header');
+  const title = this.add(region, 'heading', 'Alpha Guild: general', { props: { level: '1' } });
+  this.text(title, 'Alpha Guild');
+  for (const nm of ['Threads', 'Notification Settings', 'Pinned Messages']) {
+    this.add(region, 'button', nm, { props: { focusable: true, expanded: false } });
+  }
+  let toggle = null;
+  if (opts.toggle) {
+    toggle = this.add(region, 'button', opts.toggle + ' Member List', { props: { focusable: true } });
+    if (opts.noBackend) delete toggle.backendDOMNodeId;
+  }
+  return { region: region, toggle: toggle };
+};
+
+// Members panel. groups: [{ name, count, text?, members: [[displayName, status], ...] }].
+// `text` overrides the heading text. Each heading carries a StaticText child
+// with the same text, as in the live tree (the "duplicate" in the raw outline).
+// Returns { panel, list, headings, items }.
+Builder.prototype.membersPanel = function (parent, groups) {
+  const wrapper = this.add(parent, 'generic', 'Members list for general (channel)', { props: { focusable: true } });
+  const panel = this.add(wrapper, 'complementary', 'Members list for general (channel)');
+  const ph = this.add(panel, 'heading', 'Members list for general (channel)', { props: { level: '2' } });
+  this.text(ph, 'Members list for general (channel)');
+  const list = this.add(panel, 'list', 'Members', { props: { focusable: true } });
+  const headings = [];
+  const items = [];
+  for (const g of groups) {
+    const t = g.text || g.name + ', ' + g.count + (g.count === 1 ? ' member' : ' members');
+    const h = this.add(list, 'heading', t, { props: { level: '3' } });
+    this.text(h, t);
+    headings.push(h);
+    for (const m of g.members || []) {
+      const li = this.add(list, 'listitem', '', { props: { focusable: true, level: '1', expanded: false } });
+      this.add(li, 'image', m[0].toLowerCase() + ', ' + (m[1] || 'Online'));
+      this.text(li, m[0]);
+      items.push(li);
+    }
+  }
+  return { panel: panel, list: list, headings: headings, items: items };
+};
+
 Builder.prototype.build = function () {
   return this.nodes;
 };

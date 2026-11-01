@@ -417,3 +417,126 @@ describe('discord formatter: performance', () => {
     assert.strictEqual(r.dmCount, 200);
   });
 });
+
+// --- Member list toggle and totals -------------------------------------------
+
+// Server channel page with an optional channel header toggle and members
+// panel. opts: { toggle: 'Show'|'Hide'|null, noBackend, groups, decoy }
+function memberListPage(opts) {
+  opts = opts || {};
+  const b = new Builder('https://discord.com/channels/800000000000000001/800000000000000002', 'general | Alpha Guild');
+  const sb = b.sidebar();
+  fillSidebar(b, sb);
+  let decoy = null;
+  if (opts.decoy) decoy = b.add(sb.nav, 'button', 'Show Member List', { props: { focusable: true } });
+  const header = b.channelHeader(b.root, { toggle: opts.toggle, noBackend: opts.noBackend });
+  const panel = opts.groups ? b.membersPanel(b.root, opts.groups) : null;
+  return { nodes: b.build(), header: header, panel: panel, decoy: decoy };
+}
+
+const TWO_GROUPS = [
+  { name: 'Owner', count: 1, members: [['Alice', 'Online']] },
+  { name: 'Online', count: 40, members: [['Bob', 'Idle'], ['Carol', 'Do Not Disturb']] },
+];
+
+describe('discord formatter: member list toggle and totals', () => {
+  test('panel closed: Show line, memberListOpen false, ref resolves, no totals', () => {
+    const fx = memberListPage({ toggle: 'Show' });
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.memberListOpen, false);
+    assert.match(r.memberListToggleRef, /^e\d+$/);
+    assert.ok(r.tree.split('\n').includes('[' + r.memberListToggleRef + '] Show Member List (button)'));
+    assert.strictEqual(r.refs[r.memberListToggleRef], fx.header.toggle.backendDOMNodeId);
+    assert.strictEqual(r.memberCount, 0);
+    assert.strictEqual(r.memberTotal, 0);
+    assert.deepStrictEqual(r.groups, []);
+    assert.ok(!r.tree.includes('--- Members ---'));
+  });
+
+  test('toggle line sits right after the header line', () => {
+    const r = formatDiscord(memberListPage({ toggle: 'Show' }).nodes);
+    const lines = r.tree.split('\n');
+    assert.strictEqual(lines[0].split(' | ')[0], 'Discord');
+    assert.match(lines[1], /^\[e\d+\] Show Member List \(button\)$/);
+  });
+
+  test('panel open: Hide line, totals from group headers, memberCount = rendered rows', () => {
+    const fx = memberListPage({ toggle: 'Hide', groups: TWO_GROUPS });
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.memberListOpen, true);
+    assert.ok(r.tree.includes('[' + r.memberListToggleRef + '] Hide Member List (button)'));
+    assert.strictEqual(r.refs[r.memberListToggleRef], fx.header.toggle.backendDOMNodeId);
+    assert.deepStrictEqual(r.groups, [{ name: 'Owner', count: 1 }, { name: 'Online', count: 40 }]);
+    assert.strictEqual(r.memberTotal, 41);
+    assert.strictEqual(r.memberCount, 3);
+    assert.ok(r.memberTotal > r.memberCount);
+    const members = section(r.tree, 'Members');
+    assert.ok(members.some((l) => /Bob \(Idle\)$/.test(l)));
+  });
+
+  test('singular "1 member" header is parsed', () => {
+    const r = formatDiscord(memberListPage({
+      toggle: 'Hide',
+      groups: [{ name: 'Solo', count: 1, members: [['Dan', 'Online']] }],
+    }).nodes);
+    assert.deepStrictEqual(r.groups, [{ name: 'Solo', count: 1 }]);
+    assert.strictEqual(r.memberTotal, 1);
+  });
+
+  test('role names with a comma or a slash keep the full name', () => {
+    const r = formatDiscord(memberListPage({
+      toggle: 'Hide',
+      groups: [
+        { name: 'Foo, Bar', count: 3, members: [['Eve', 'Online']] },
+        { name: 'Gadget Maker / Partners', count: 1, members: [['Fay', 'Idle']] },
+      ],
+    }).nodes);
+    assert.deepStrictEqual(r.groups, [
+      { name: 'Foo, Bar', count: 3 },
+      { name: 'Gadget Maker / Partners', count: 1 },
+    ]);
+    assert.strictEqual(r.memberTotal, 4);
+  });
+
+  test('a heading and its StaticText twin are counted once', () => {
+    const fx = memberListPage({ toggle: 'Hide', groups: [{ name: 'Mods', count: 5 }] });
+    const r = formatDiscord(fx.nodes);
+    assert.deepStrictEqual(r.groups, [{ name: 'Mods', count: 5 }]);
+    assert.strictEqual(r.memberTotal, 5);
+    assert.strictEqual(r.tree.split('\n').filter((l) => l === '  Mods, 5 members').length, 1);
+  });
+
+  test('decoy Show Member List button in the server sidebar is ignored', () => {
+    const fx = memberListPage({ toggle: 'Show', decoy: true });
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.refs[r.memberListToggleRef], fx.header.toggle.backendDOMNodeId);
+    assert.notStrictEqual(r.refs[r.memberListToggleRef], fx.decoy.backendDOMNodeId);
+    // decoy alone: no toggle at all
+    const r2 = formatDiscord(memberListPage({ decoy: true }).nodes);
+    assert.strictEqual(r2.memberListToggleRef, null);
+    assert.strictEqual(r2.memberListOpen, null);
+  });
+
+  test('toggle without a backendDOMNodeId does not throw', () => {
+    const r = formatDiscord(memberListPage({ toggle: 'Show', noBackend: true }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.memberListToggleRef, null);
+    assert.ok(!/Member List \(button\)/.test(r.tree));
+  });
+
+  test('no toggle and no members region: memberListOpen and ref are null', () => {
+    const r = formatDiscord(memberListPage({}).nodes);
+    assert.strictEqual(r.memberListOpen, null);
+    assert.strictEqual(r.memberListToggleRef, null);
+    assert.strictEqual(r.memberTotal, 0);
+    assert.deepStrictEqual(r.groups, []);
+  });
+
+  test('no toggle but a members region infers open', () => {
+    const r = formatDiscord(memberListPage({ groups: TWO_GROUPS }).nodes);
+    assert.strictEqual(r.memberListOpen, true);
+    assert.strictEqual(r.memberListToggleRef, null);
+    assert.strictEqual(r.memberTotal, 41);
+  });
+});
