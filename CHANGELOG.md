@@ -78,6 +78,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - Discord DM list counted Friends, Shop, Quests and Nitro links as DMs. (#148)
+- Extension ref clicks missed or hit the wrong element when the target sat at the edge of a scrolled container or the layout shifted mid-click. Clicks now scroll the node into view, aim at the centre of its visible part, and refuse to click if another element covers the point. (#148)
 - Tab switching: no reload, no "Connecting…" splash. Links navigate in-app. Splash shows only until first connection. Side menu highlights current page. (#121)
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
 - fix(server): guard schema migration 001 against the missing `config` table on a brand-new database. (#96)
