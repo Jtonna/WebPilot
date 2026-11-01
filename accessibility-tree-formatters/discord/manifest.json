@@ -35,11 +35,11 @@
     },
     {
       "name": "open_server",
-      "description": "Open a Discord server by name. Matching tolerates differences in case, emoji and punctuation, and accepts a unique partial name; ambiguous or unknown names return an error listing close matches. Expands collapsed folders if the server is not visible. Returns { serverId, channelId, name, url, verified }, or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
+      "description": "Open a Discord server by name. Matches the exact name first, then ignoring case, emoji and punctuation, then a unique partial name; ambiguous or unknown names return an error listing close matches. Expands collapsed folders if the server is not visible. Returns { serverId, channelId, name, url, verified }, or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
       "parameters": {
         "name": {
           "type": "string",
-          "description": "Server name (case, emoji and punctuation are ignored; unique partial names work)."
+          "description": "Server name (exact match first, then ignoring case/emoji/punctuation, then a unique partial name)."
         },
         "timeoutMs": {
           "type": "number",
