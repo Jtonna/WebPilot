@@ -1,10 +1,10 @@
 {
   "name": "discord",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "match": "discord.com",
   "source": "remote",
   "description": "Discord chat — exposes channels, members, message stream, and the composer for DMs and server channels.",
-  "notes": "Routes by URL: discord.com/channels/@me is the DM list, /@me/<id> is a DM conversation, /<serverId>/<channelId> is a server channel. DM conversation header renders as `Discord | <DisplayName> (@<username>) (DM)` when both are available (e.g. `Discord | Jtonna (@notboosted) (DM)`), so agents can recognize that the display name and account handle refer to the same person; the response also exposes `recipientUsername` and `recipientDisplayName` as separate fields. The composer renders as `[eN] Message @<recipient> textbox` for DMs or `[eN] Message #<channel> textbox` for server channels, preserving the discriminating prefix so workflows can tell composers apart from the formatted tree alone. Boolean ARIA properties (checked/selected/expanded) are normalized from CDP's stringy 'true'/'false' values into real booleans so consumers can use === true safely. Transient UI elements — right-click context menus, the server-name dropdown in the channel list's upper-left, the Create Channel dialog, \"+\" buttons next to categories, and empty new categories — don't appear in the accessibility tree until interacted with. To see them, use browser_click on the affordance to summon it, then re-fetch the accessibility tree. The server-name dropdown specifically opens when clicked and contains server settings, channel creation, and role management options; it's invisible until the click summons it. Right-clicking a message exposes context actions (reactions, edit, delete, copy ID, copy link) that are not visible in the default tree — use browser_click with right-button or platform workflows to surface them. When you need raw transient UI without re-clicking to summon it, pass `usePlatformOptimizer: false` to browser_get_accessibility_tree to bypass the formatter and inspect the raw CDP tree; use this sparingly as it's noisier.",
+  "notes": "Routes by URL: discord.com/channels/@me is the DM list, /@me/<id> is a DM conversation, /<serverId>/<channelId> is a server channel. DM conversation header renders as `Discord | <DisplayName> (@<username>) (DM)` when both are available (e.g. `Discord | Jtonna (@notboosted) (DM)`), so agents can recognize that the display name and account handle refer to the same person; the response also exposes `recipientUsername` and `recipientDisplayName` as separate fields. The composer renders as `[eN] Message @<recipient> textbox` for DMs or `[eN] Message #<channel> textbox` for server channels, preserving the discriminating prefix so workflows can tell composers apart from the formatted tree alone. Boolean ARIA properties (checked/selected/expanded) are normalized from CDP's stringy 'true'/'false' values into real booleans so consumers can use === true safely. Transient UI elements — right-click context menus, the server-name dropdown in the channel list's upper-left, the Create Channel dialog, \"+\" buttons next to categories, and empty new categories — don't appear in the accessibility tree until interacted with. To see them, use browser_click on the affordance to summon it, then re-fetch the accessibility tree. The server-name dropdown specifically opens when clicked and contains server settings, channel creation, and role management options; it's invisible until the click summons it. Right-clicking a message exposes context actions (reactions, edit, delete, copy ID, copy link) that are not visible in the default tree — use browser_click with right-button or platform workflows to surface them. When you need raw transient UI without re-clicking to summon it, pass `usePlatformOptimizer: false` to browser_get_accessibility_tree to bypass the formatter and inspect the raw CDP tree; use this sparingly as it's noisier. Every page type also appends two sidebar sections after the page content. `--- Navigation ---` lists Friends, Shop, Nitro Home and Quests as `[eN] Name`. `--- Servers ---` lists the server sidebar: `[eN] Name`, plus `(unread)`, `(N mentions)` / `(1 mention)` and `, voice active` when applicable; folders render as `[eN] Folder: X (collapsed|expanded[, N mentions])` with expanded children indented, and unnamed folders as `Folder: (unnamed: A, B)`. Server and Navigation refs are clickable (server refs point at the focusable icon node). Caveat: servers inside a COLLAPSED folder are not in the tree at all, and a collapsed folder shows aggregate mentions only, not plain unread; call `check_sidebar` to expand folders and see them. The old `--- Server Notifications ---` section no longer exists. Extra response fields on all pages: `serverCount`, `servers[{name,ref,mentions,unread,inFolder}]`, `folders[{name,ref,expanded,mentions}]`; on `@me` pages also `dms[{name,ref,type,status,unread,members,muted}]`, `dmCount`, `totalUnread` (a number on `@me` pages, 0 when nothing is unread; real DMs only, Friends/Shop/Quests/Nitro are not counted). Workflows: `check_sidebar({expandFolders?=true, timeoutMs?})` returns `{servers, folders, serverCount, warnings?}` and leaves expanded folders open; `open_server({name, timeoutMs?})` returns `{serverId, channelId, name, url, verified}` (or `alreadyOpen: true`), matches an exact name first, then ignoring case/emoji/punctuation, then a unique partial name, and throws listing close matches when the name matches nothing or several servers; `check_dm_list({timeoutMs?})` returns `{dms, dmCount, totalUnread}` and has NO message previews (open a DM to read it). All three share a total deadline (default 42000 ms, max 45000); on expiry they return `{pending: true, message, ...}` because Discord clicks on background tabs can apply late, so re-read state (get the tree or call `check_sidebar`) before retrying, never blindly repeat the click. Intended flow to post in a server: `open_server({name})`, read the resulting `server_channel` tree (channels, members), then `send_message` to post.",
   "errorHandling": {
     "fallbackToRawTree": true
   },
@@ -16,6 +16,44 @@
         "text": {
           "type": "string",
           "description": "The message text to send."
+        }
+      }
+    },
+    {
+      "name": "check_sidebar",
+      "description": "List Discord servers in the left sidebar (name, ref, mentions, unread, inFolder) and folders. Expands collapsed server folders by default so their servers are listed (folders are left expanded). Works on any Discord page. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar again or get the tree) before retrying.",
+      "parameters": {
+        "expandFolders": {
+          "type": "boolean",
+          "description": "Expand collapsed server folders so their servers are listed (default true)."
+        },
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
+        }
+      }
+    },
+    {
+      "name": "open_server",
+      "description": "Open a Discord server by name. Matches the exact name first, then ignoring case, emoji and punctuation, then a unique partial name; ambiguous or unknown names return an error listing close matches. If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified }, or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
+      "parameters": {
+        "name": {
+          "type": "string",
+          "description": "Server name (exact match first, then ignoring case/emoji/punctuation, then a unique partial name)."
+        },
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
+        }
+      }
+    },
+    {
+      "name": "check_dm_list",
+      "description": "List Discord direct messages and group DMs (name, ref, type, status, unread, members, muted) with dmCount and totalUnread. Navigates to Home first if a server is showing. Message previews are not available. If it returns pending:true it timed out; a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.",
+      "parameters": {
+        "timeoutMs": {
+          "type": "number",
+          "description": "Overall time budget in ms (default 42000, clamped to 1000..45000)."
         }
       }
     }

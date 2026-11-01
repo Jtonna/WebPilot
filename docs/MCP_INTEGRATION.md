@@ -354,6 +354,8 @@ webpilot_run_workflow(
 → { "ok": true, "sent": true, "composerRef": "e42" }
 ```
 
+Discord also provides the sidebar workflows `check_sidebar`, `open_server` and `check_dm_list`. These accept an optional `timeoutMs` (default 42000, clamped to 1000..45000). After that deadline they return `{ pending: true, message, ... }` instead of throwing. A late click may still apply, so re-read state (for example with `check_sidebar` or the accessibility tree) before retrying.
+
 Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name: 'Message textbox' })`, clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
 
 **Errors:**
@@ -893,8 +895,9 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 - `Either selector, ref, or x,y coordinates are required` - No click target provided
 - `Ref "eX" not found. Fetch accessibility tree first.` - Ref doesn't exist in stored refs
 - `Element for ref "eX" no longer exists in DOM` - Page changed since tree fetch
+- `Ref "eX" is covered by or has moved from (x,y); refusing to click a different element. Re-fetch the accessibility tree and try again.` - Ref clicks only. Another element was at the click point, even after one recompute
 - `Element not found: <selector>` - CSS selector matched nothing
-- `Element has no dimensions` - Matched element is hidden or zero-size
+- `Element has no dimensions` - CSS selector matched an element with zero width and height (selector clicks only)
 - `button must be left, right, or middle` - Invalid button value
 - `Element no longer exists after scroll. Re-fetch accessibility tree and try again.` - Element could not be re-identified after auto-scroll
 - `Another debugger is already attached to this tab` - Close DevTools first
@@ -910,7 +913,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
 **Auto-scroll & Element Re-identification:**
 
 If the target element is off-screen, the click handler automatically:
-1. Scrolls the page smoothly to bring the element into view
+1. Scrolls the element into view (nearest scroll container first, then the page smoothly if it is still off-screen)
 2. Waits 150ms for the page to settle (React re-renders, lazy loading, etc.)
 3. Verifies the element is still valid after scroll
 4. Re-identifies the element if it was recycled (common in virtualized lists)
@@ -928,6 +931,15 @@ The click handler solves this with **ancestry-based re-identification**:
 - The click then proceeds with the new correct coordinates
 
 This happens automatically - agents just call `browser_click(ref="e16")` and the handler manages scroll + re-identification transparently.
+
+**Click targeting and verification (ref clicks):**
+
+Before moving the mouse, the handler calls `DOM.scrollIntoViewIfNeeded`, which scrolls the nearest scroll container. It then waits one animation frame and re-reads the element's box.
+
+- The box is clipped to the viewport and to every ancestor that clips overflow. The click lands on the centre of the visible part. If nothing is visible, it falls back to the raw centre.
+- The point is re-resolved right before the mouse is pressed, because layout can shift while the cursor moves.
+- The handler checks that the topmost element at that point (`elementFromPoint`) is the target or one of its descendants. On a mismatch it recomputes once, then fails with a "covered by or has moved" error instead of clicking another element.
+- If the check can't run, the click proceeds.
 
 ---
 

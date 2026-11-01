@@ -32,6 +32,7 @@ background.js (service worker)
     |     mouse-state.js   Per-tab virtual cursor position
     |     cursor.js        Visual cursor animation (SVG + particles)
     |     scroll.js        Scroll animation and viewport helpers
+    |     click-geometry.js Visible-area geometry for ref clicks
     |     timing.js        Weighted random delays
     |
     +-- accessibility-storage.js Ref-to-backendNodeId mapping
@@ -138,6 +139,8 @@ CDP mouse simulation with human-like cursor movement.
 - Dispatches `Input.dispatchMouseEvent` (mouseMoved, mousePressed, mouseReleased) along the path
 - Shows a visual SVG cursor with RGB glow animation and particle burst on click
 - Auto-scrolls off-screen elements into view before clicking, checking for scrollable containers first (using a temporary `data-webpilot-scroll-target` attribute to bridge CDP node resolution and in-page JavaScript), then falling back to window scrolling
+- For refs, calls `DOM.scrollIntoViewIfNeeded`, waits one frame and re-reads the box. The click lands on the centre of the part visible inside the viewport and overflow-clipping ancestors (`utils/click-geometry.js`), falling back to the raw box centre
+- Re-resolves the point right before `mousePressed` and verifies with `elementFromPoint` that the hit target is the node or a descendant. It recomputes once, then throws `Ref "eN" is covered by or has moved from (x,y)...`. If the check can't run, the click proceeds
 - Re-identifies elements after scroll using ancestry context (handles virtualized DOM recycling)
 - Tracks last cursor position per tab so subsequent clicks start from where the previous one ended
 
@@ -211,6 +214,15 @@ Scroll animation utilities.
 - `calculateScrollDuration(scrollDelta)` -- Returns animation duration based on distance (50ms per 50px for window scrolls).
 - `scrollElementIntoView(target, elementExpression)` -- Walks up the DOM from the target element looking for scrollable ancestor containers (`overflow-y: auto|scroll` with `scrollHeight > clientHeight`). If found, scrolls within that container at 75ms per 50px. Used by both click.js and the scroll handler for container scrolling.
 - `generateScrollIntoViewCode(selector)` -- Generates JavaScript code to scroll an element into view within its scrollable container.
+
+### `utils/click-geometry.js`
+
+Pure geometry helpers for ref clicks. `DOM.getBoxModel` ignores clipping by scroll containers, so these clip the box to the visible area first.
+
+- `quadBounds(quad)` -- Axis-aligned bounds `{left, top, right, bottom}` of a CDP quad.
+- `intersectRects(a, b)` -- Intersection of two rects, or `null` if they don't overlap.
+- `visibleCenter(box, clip, viewport)` -- Centre of the part of `box` inside the viewport and the optional `clip` rect. Returns `null` if nothing is visible.
+- `CLIP_RECT_FUNCTION` -- Function source for `Runtime.callFunctionOn`. After one animation frame, it returns the intersection of the bounding rects of all ancestors that clip overflow, or `null`.
 
 ### `utils/timing.js`
 

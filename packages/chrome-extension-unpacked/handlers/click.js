@@ -14,6 +14,7 @@ import {
   generateRippleCode,
   generateCursorRemoveCode
 } from '../utils/cursor.js';
+import { quadBounds, visibleCenter, CLIP_RECT_FUNCTION } from '../utils/click-geometry.js';
 import { generateViewportCheckCode, animateScroll, calculateScrollDelta, scrollElementIntoView } from '../utils/scroll.js';
 
 /**
@@ -122,17 +123,9 @@ export async function click(params) {
         throw new Error(`Ref "${ref}" not found. Fetch accessibility tree first.`);
       }
 
-      const boxModel = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', {
-        backendNodeId: backendNodeId
-      });
-
-      if (!boxModel || !boxModel.model) {
-        throw new Error(`Element for ref "${ref}" no longer exists in DOM`);
-      }
-
-      const quad = boxModel.model.content;
-      x = Math.round((quad[0] + quad[2] + quad[4] + quad[6]) / 4);
-      y = Math.round((quad[1] + quad[3] + quad[5] + quad[7]) / 4);
+      const pt = await resolveRefPoint(target, backendNodeId, viewport, ref);
+      x = pt.x;
+      y = pt.y;
     }
 
     // Resolve selector to coordinates
@@ -156,7 +149,7 @@ export async function click(params) {
       if (evalResult.result?.value?.error) {
         throw new Error(evalResult.result.value.error);
       }
-      if (!evalResult.result?.value?.x) {
+      if (!Number.isFinite(evalResult.result?.value?.x)) {
         throw new Error('Failed to get element coordinates');
       }
 
@@ -412,6 +405,28 @@ export async function click(params) {
     // Mouse press — race against detach + stall, because Discord-style SPAs
     // can swap the document on mousedown AND backlog the renderer.
     phaseLog('press');
+
+    // Layout can shift between the tree fetch / box read and the press (the
+    // WindMouse path takes hundreds of ms; Discord animates folder toggles).
+    // Re-read the box right before pressing and verify the hit target is the
+    // node (or a descendant). Recompute once on mismatch, then fail clearly
+    // rather than click whatever now sits under the stale point.
+    if (ref && backendNodeId && !detached) {
+      let ok = false;
+      for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+        const pt = await resolveRefPoint(target, backendNodeId, viewport, ref);
+        if (pt.x !== x || pt.y !== y) {
+          x = pt.x;
+          y = pt.y;
+          await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        }
+        ok = await hitsNode(target, backendNodeId, x, y);
+      }
+      if (!ok) {
+        throw new Error(`Ref "${ref}" is covered by or has moved from (${x},${y}); refusing to click a different element. Re-fetch the accessibility tree and try again.`);
+      }
+    }
+
     if (!detached) {
       await safeCdp(
         chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
@@ -496,6 +511,66 @@ export async function click(params) {
     };
   } finally {
     chrome.debugger.onDetach.removeListener(onDetach);
+  }
+}
+
+/**
+ * Scroll a ref's node into view (nearest scroll containers), re-read its box
+ * after layout settles and return the center of its visible part.
+ */
+async function resolveRefPoint(target, backendNodeId, viewport, ref) {
+  // Best-effort: failures fall through. getBoxModel ignores container
+  // clipping, so scroll first and clip below.
+  await chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { backendNodeId }).catch(() => {});
+
+  const boxModel = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId });
+  if (!boxModel || !boxModel.model) {
+    throw new Error(`Element for ref "${ref}" no longer exists in DOM`);
+  }
+
+  let clip = null;
+  let box = boxModel.model.content;
+  try {
+    const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId });
+    if (resolved?.object?.objectId) {
+      const clipRes = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+        objectId: resolved.object.objectId,
+        functionDeclaration: CLIP_RECT_FUNCTION,
+        awaitPromise: true,
+        returnByValue: true
+      });
+      clip = clipRes?.result?.value || null;
+      const settled = await chrome.debugger.sendCommand(target, 'DOM.getBoxModel', { backendNodeId });
+      if (settled?.model) box = settled.model.content;
+    }
+  } catch (e) {
+    // Fall back to the unclipped box.
+  }
+
+  const b = quadBounds(box);
+  const center = visibleCenter(b, clip, viewport);
+  // Nothing visible: keep the raw center so the off-screen scroll path can run.
+  return center || { x: Math.round((b.left + b.right) / 2), y: Math.round((b.top + b.bottom) / 2) };
+}
+
+/**
+ * True if the topmost element at (x,y) is the node or one of its descendants.
+ * Fails open (true) if the check itself cannot run.
+ */
+async function hitsNode(target, backendNodeId, x, y) {
+  try {
+    const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { backendNodeId });
+    const objectId = resolved?.object?.objectId;
+    if (!objectId) return true;
+    const res = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function(x, y) { const h = document.elementFromPoint(x, y); return !!h && (h === this || this.contains(h)); }',
+      arguments: [{ value: x }, { value: y }],
+      returnByValue: true
+    });
+    return res?.result?.value !== false;
+  } catch (e) {
+    return true;
   }
 }
 

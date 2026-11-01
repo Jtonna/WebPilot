@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Discord formatter: `--- Servers ---` sidebar section (with folders) and `--- Navigation ---` section, plus workflows `check_sidebar`, `open_server` and `check_dm_list`. (#148)
 - Site policy event log: one row per agent + domain (domain only, no path). (#103)
   - Repeat checks update a hit count and last-seen time.
   - Verdict changes update in place (no history rows).
@@ -21,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Dashboard and Profiles hint for an extension waiting to be matched, including the "Match the waiting extension" setup modal variant. (#138)
 
 ### Changed
+- Discord formatter: `--- Server Notifications ---` replaced by `--- Servers ---`. (#148)
 - Site rules stored per tier: per-agent, global user, signed global blocklist. User rules no longer mask signed blocklist entries; removing a user rule restores signed-list behavior. (#102)
 - Global toggle disables the whole global tier (signed blocklist + global user rules). Users with toggle off find global user rules inactive until re-enabled. Per-agent rules unaffected. (#102)
 - Renamed: (#102)
@@ -75,6 +77,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Unreachable "Override · Allowed / Blocked" popup pills and unused "Agent:" line. Popup shows global policy (Chrome profile only); per-agent rules moved to Site Policy page. (#105)
 
 ### Fixed
+- Discord DM list counted Friends, Shop, Quests and Nitro links as DMs. (#148)
+- Extension ref clicks missed or hit the wrong element when the target sat at the edge of a scrolled container or the layout shifted mid-click. Clicks now scroll the node into view, aim at the centre of its visible part, and refuse to click if another element covers the point. (#148)
 - Tab switching: no reload, no "Connecting…" splash. Links navigate in-app. Splash shows only until first connection. Side menu highlights current page. (#121)
 - fix(extension): remove orphaned client-side whitelist gate — site-policy enforcement is now server-side only (`mcp-handler.js` + `site-policy.js:isAllowed`). Fixes regression introduced 2026-05-17 (commit `4009982`) where new installs and cleared chrome.storage triggered block-all with no in-extension UI to recover. (#80)
 - fix(server): guard schema migration 001 against the missing `config` table on a brand-new database. (#96)
