@@ -77,6 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Unreachable "Override · Allowed / Blocked" popup pills and unused "Agent:" line. Popup shows global policy (Chrome profile only); per-agent rules moved to Site Policy page. (#105)
 
 ### Fixed
+- Formatter auto-update now delivers the Discord 1.2.0 formatter (top-level formatter manifest version bumped; it was left at 3). (#150)
 - Discord DM list counted Friends, Shop, Quests and Nitro links as DMs. (#148)
 - Extension ref clicks missed or hit the wrong element when the target sat at the edge of a scrolled container or the layout shifted mid-click. Clicks now scroll the node into view, aim at the centre of its visible part, and refuse to click if another element covers the point. (#148)
 - Tab switching: no reload, no "Connecting…" splash. Links navigate in-app. Splash shows only until first connection. Side menu highlights current page. (#121)
