@@ -199,12 +199,21 @@ test('open_server: ambiguous substring and ambiguous normalization both throw', 
   await assert.rejects(run('open_server', env, { name: 'team', timeoutMs: 1000 }), /several servers/);
 
   const env2 = makeEnv(serverState(['we build', '{ we build }']));
-  await assert.rejects(run('open_server', env2, { name: 'we build', timeoutMs: 1000 }), (e) => {
+  await assert.rejects(run('open_server', env2, { name: 'WE BUILD!', timeoutMs: 1000 }), (e) => {
     assert.match(e.message, /several servers/);
     assert.ok(e.message.includes('"we build"') && e.message.includes('"{ we build }"'));
     return true;
   });
   assert.strictEqual(env2.clicks.length, 0);
+});
+
+test('open_server: exact raw match wins over equal normalized names', async () => {
+  const ids = { '{ we build }': ['7', '70'], 'we build': ['8', '80'] };
+  for (const [typed, expected] of [['{ we build }', '{ we build }'], ['we build', 'we build']]) {
+    const env = makeEnv(serverState(['we build', '{ we build }']), { onClick: navClick(ids) });
+    const r = await run('open_server', env, { name: typed, timeoutMs: 1000 });
+    assert.strictEqual(r.name, expected);
+  }
 });
 
 test('open_server: ambiguity lists at most 5 close matches', async () => {

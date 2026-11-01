@@ -123,26 +123,38 @@ function closeMatches(servers, q, limit = 5) {
     .map((m) => m.name);
 }
 
+/** NFKC + lowercase + whitespace collapse only; keeps punctuation and emoji. */
+function rawKey(s) {
+  return String(s == null ? '' : s).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 /**
- * Resolve a server by name: exact normalized match first, then a unique
- * substring match. Returns { kind: 'ok'|'none'|'ambiguous', server, error }.
+ * Resolve a server by name. Each step runs only if the previous found nothing:
+ * 1. exact raw match (NFKC + lowercase, punctuation/emoji kept),
+ * 2. exact normalized match,
+ * 3. unique substring match.
+ * Returns { kind: 'ok'|'none'|'ambiguous', server, error }.
  * Never silently picks among several candidates.
  */
 function resolveServer(servers, name) {
   const list = Array.isArray(servers) ? servers : [];
   const q = normalize(name);
-  const exact = list.filter((s) => normalize(s.name) === q);
-  if (exact.length === 1) return { kind: 'ok', server: exact[0] };
-  let kind;
-  let hits;
-  if (exact.length > 1) {
-    kind = 'ambiguous';
-    hits = exact;
-  } else {
-    const subs = q ? list.filter((s) => normalize(s.name).includes(q)) : [];
-    if (subs.length === 1) return { kind: 'ok', server: subs[0] };
-    kind = subs.length > 1 ? 'ambiguous' : 'none';
-    hits = subs;
+  const rq = rawKey(name);
+  let kind = 'none';
+  let hits = [];
+  const steps = [
+    () => (rq ? list.filter((s) => rawKey(s.name) === rq) : []),
+    () => list.filter((s) => normalize(s.name) === q),
+    () => (q ? list.filter((s) => normalize(s.name).includes(q)) : []),
+  ];
+  for (const step of steps) {
+    const found = step();
+    if (found.length === 1) return { kind: 'ok', server: found[0] };
+    if (found.length > 1) {
+      kind = 'ambiguous';
+      hits = found;
+      break;
+    }
   }
   const pool = hits.length ? hits : list;
   const candidates = pool.length ? closeMatches(pool, q) : [];
