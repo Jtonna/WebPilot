@@ -177,122 +177,437 @@ module.exports = function formatDiscord(nodes) {
     return ref;
   }
 
-  // --- Extract DM sidebar items ---
-  // Returns an array of objects: { line, unread }
-  function extractDmList() {
-    const items = [];
-
-    // DM links are inside a navigation region whose name contains "direct message(s)"
-    // Link name pattern: "unread, Username (direct message)" or "Username (direct message)"
-    var dmLinks = findNodes(function (node) {
-      var r = role(node);
-      if (r !== 'link') return false;
-      var n = name(node);
-      if (!n) return false;
-      // DM sidebar links contain "(direct message)" in their name
-      if (n.toLowerCase().includes('(direct message)')) return true;
-      // Also check ancestor for Direct Messages context
-      return hasAncestor(node, function (anc) {
-        var ancName = name(anc).toLowerCase();
-        return ancName.includes('direct message') || ancName.includes('direct messages');
-      }, 10);
-    });
-
-    if (dmLinks.length === 0) {
-      // Fallback: look for list items that look like DM entries
-      var listItems = findNodes(function (node) {
-        var r = role(node);
-        return r === 'listitem' || r === 'option';
-      });
-
-      for (var li = 0; li < listItems.length; li++) {
-        var item = listItems[li];
-        var text = name(item).trim();
-        if (!text) continue;
-        if (text.match(/^#/) || text.length < 2) continue;
-
-        var itemDesc = descendants(item);
-        var unread = false;
-        var msgCount = '';
-        for (var di = 0; di < itemDesc.length; di++) {
-          var dt = name(itemDesc[di]).toLowerCase();
-          if (dt.includes('unread') || dt.match(/\d+\s*message/)) {
-            unread = true;
-            var mc = dt.match(/(\d+)\s*message/);
-            if (mc) msgCount = mc[1];
-          }
-        }
-
-        var ref = addRef(item);
-        var line = ref ? '[' + ref + '] ' : '';
-        line += text;
-        if (unread) {
-          line += ' (unread';
-          if (msgCount) line += ', ' + msgCount + ' messages';
-          line += ')';
-        }
-        items.push({ line: line, unread: unread });
+  // --- Sidebar scan (pure: no refs are assigned here) ---
+  // The "Servers sidebar" navigation region holds the home icon, the DM
+  // badge group, server icons and server folders. It is scanned once; every
+  // later consumer (channel-list exclusion, Elements fallback, Servers
+  // section) shares the result.
+  var sidebarCache = null;
+  function getSidebar() {
+    if (sidebarCache) return sidebarCache;
+    var navNode = null;
+    for (var i = 0; i < nodes.length; i++) {
+      if (role(nodes[i]) === 'navigation' && /servers sidebar/i.test(name(nodes[i]))) {
+        navNode = nodes[i];
+        break;
       }
-    } else {
-      for (var idx = 0; idx < dmLinks.length; idx++) {
-        var link = dmLinks[idx];
-        var rawText = name(link).trim();
-        if (!rawText) continue;
-
-        var lower = rawText.toLowerCase();
-        var isUnread = false;
-        var badgeCount = '';
-
-        // Check for "unread" prefix in link name: "unread, Username (direct message)"
-        // or "N unread messages" pattern
-        if (lower.startsWith('unread') || lower.match(/\d+\s*unread/)) {
-          isUnread = true;
-          var countMatch = lower.match(/(\d+)\s*unread/);
-          if (countMatch) badgeCount = countMatch[1];
+    }
+    var ids = new Set();   // every node id inside the sidebar
+    var order = [];        // preorder, excluding the DM badge group subtree
+    var dmGroup = null;
+    if (navNode) {
+      var stack = [{ node: navNode, inDm: false }];
+      while (stack.length) {
+        var top = stack.pop();
+        var cur = top.node;
+        var inDm = top.inDm;
+        ids.add(cur.nodeId);
+        if (!inDm && role(cur) === 'group' && name(cur).trim() === 'Direct Messages') {
+          dmGroup = cur;
+          inDm = true;
         }
+        if (!inDm) order.push(cur);
+        var kids = children(cur);
+        for (var k = kids.length - 1; k >= 0; k--) {
+          stack.push({ node: kids[k], inDm: inDm });
+        }
+      }
+    }
+    sidebarCache = { nav: navNode, ids: ids, order: order, dmGroup: dmGroup };
+    return sidebarCache;
+  }
 
-        // Check ONLY immediate children for badge count (not deep descendants)
-        // Deep descendant scanning picks up false positives from activity counts (+1), member counts, etc.
-        var directKids = children(link);
-        for (var di2 = 0; di2 < directKids.length; di2++) {
-          var d = directKids[di2];
-          var dn = name(d).trim();
-          // Badge elements are typically small numeric nodes at the link level
-          if (dn.match(/^\d+$/) && role(d) === 'StaticText') {
-            var num = parseInt(dn, 10);
-            if (num > 0 && num < 1000) {
-              isUnread = true;
-              badgeCount = dn;
+  function isInSidebar(node) {
+    return getSidebar().ids.has(node.nodeId);
+  }
+
+  var SIDEBAR_SKIP_NAMES = {
+    'add a server': true, 'discover': true, 'download apps': true,
+    'new': true, 'direct messages': true
+  };
+
+  // Walk up (ignored nodes included) from a name StaticText to the nearest
+  // focusable, non-ignored ancestor. Aborts at folder treeitems, the tree
+  // and groups so folder labels never count as servers. Also reports the
+  // enclosing folder treeitem, if any.
+  function findFocusableAncestor(node) {
+    var cur = byId.get(node.parentId);
+    var hops = 0;
+    var target = null;
+    while (cur && hops < 60) {
+      var r = role(cur);
+      if (!target) {
+        if (r === 'treeitem' || r === 'tree' || r === 'navigation' || r === 'group') return null;
+        if (!isIgnored(cur) && propValue(cur, 'focusable') === true) target = cur;
+      } else if (r === 'treeitem') {
+        return { node: target, folderNode: cur };
+      } else if (r === 'navigation') {
+        break;
+      }
+      cur = byId.get(cur.parentId);
+      hops++;
+    }
+    return target ? { node: target, folderNode: null } : null;
+  }
+
+  var VOICE_SUFFIX_RE = /(?:,\s*)?(?:(?:Screenshare|Camera|Video|Stream)\s+active\s*)*(?:Voice call|Video call|Stage|Voice)\s+active\s*$/i;
+
+  // Look for the plain (non-prefixed) name StaticText in the sibling branch
+  // of the per-server wrapper. Returns '' if none is acceptable.
+  function findPlainServerName(focusNode, rest) {
+    var child = focusNode;
+    var cur = byId.get(focusNode.parentId);
+    var hops = 0;
+    while (cur && hops < 14) {
+      var r = role(cur);
+      if (r === 'group' || r === 'tree' || r === 'treeitem' || r === 'navigation') break;
+      var best = '';
+      var kids = children(cur);
+      for (var k = 0; k < kids.length; k++) {
+        if (kids[k] === child) continue;
+        var stack = [kids[k]];
+        while (stack.length) {
+          var n = stack.pop();
+          if (role(n) === 'StaticText') {
+            var t = name(n).trim();
+            if (t && t.length > best.length && rest.indexOf(t) === 0 &&
+                (rest.length === t.length || rest.charAt(t.length) === ',') &&
+                (rest === t || !/^\d+$/.test(t))) {
+              best = t;
             }
+            continue;
           }
+          var nk = children(n);
+          for (var q = 0; q < nk.length; q++) stack.push(nk[q]);
         }
+      }
+      if (best) return best;
+      child = cur;
+      cur = byId.get(cur.parentId);
+      hops++;
+    }
+    return '';
+  }
 
-        // Clean up the display name:
-        // Remove "unread, " prefix and "(direct message)" suffix
-        var cleanName = rawText
-          .replace(/^unread,?\s*/i, '')
-          .replace(/\s*\(direct message\)\s*/gi, '')
-          .replace(/,?\s*\d+\s*messages?\s*/i, '')
-          .replace(/\(unread\)/i, '')
-          .trim();
+  function parseServerText(focusNode, text) {
+    var unread = false;
+    var mentions = 0;
+    var rest = text;
+    var m = rest.match(/^Unread messages,\s*([\s\S]*)$/i);
+    if (m) {
+      unread = true;
+      rest = m[1];
+    } else {
+      m = rest.match(/^(\d+)\s+mentions?,\s*([\s\S]*)$/i);
+      if (m) {
+        mentions = parseInt(m[1], 10);
+        unread = true;
+        rest = m[2];
+      }
+    }
+    var voice = false;
+    var display;
+    var plain = findPlainServerName(focusNode, rest);
+    if (plain) {
+      display = plain;
+      if (rest.length > plain.length && /active/i.test(rest.slice(plain.length))) voice = true;
+    } else {
+      display = rest;
+      if (VOICE_SUFFIX_RE.test(display)) {
+        voice = true;
+        display = display.replace(VOICE_SUFFIX_RE, '');
+      }
+    }
+    return { name: display.trim(), unread: unread, mentions: mentions, voice: voice };
+  }
 
-        var ref2 = addRef(link);
-        var line2 = ref2 ? '[' + ref2 + '] ' : '';
-        line2 += cleanName;
-        if (isUnread) {
-          line2 += ' (';
-          if (badgeCount) {
-            line2 += badgeCount + ' unread';
-          } else {
-            line2 += 'unread';
-          }
-          line2 += ')';
+  // Text of a folder treeitem: first StaticText outside its server group.
+  function folderText(node) {
+    var kids = children(node);
+    for (var k = 0; k < kids.length; k++) {
+      if (role(kids[k]) === 'group') continue;
+      var stack = [kids[k]];
+      while (stack.length) {
+        var n = stack.pop();
+        if (role(n) === 'StaticText') {
+          var t = name(n).trim();
+          if (t) return t;
         }
-        items.push({ line: line2, unread: isUnread });
+        var nk = children(n);
+        for (var q = nk.length - 1; q >= 0; q--) stack.push(nk[q]);
+      }
+    }
+    return name(node).trim();
+  }
+
+  function parseFolderText(text) {
+    var cut = text.indexOf(', folder');
+    var head = cut >= 0 ? text.slice(0, cut) : text;
+    var tail = cut >= 0 ? text.slice(cut + ', folder'.length) : '';
+    var mentions = 0;
+    var mm = tail.match(/(\d+)\s+unread\s+mentions?/i);
+    if (mm) mentions = parseInt(mm[1], 10);
+    var unread = !mentions && /unread/i.test(tail);
+    var unnamed = /\.\.\.$/.test(head) || head.indexOf(', ') >= 0;
+    var displayName;
+    if (unnamed) {
+      var parts = head.split(/,\s*/).filter(function (p) { return p && p !== '...'; });
+      var shown = parts.slice(0, 3).join(', ');
+      var more = parts.length > 3 || /\.\.\.$/.test(head);
+      displayName = '(unnamed: ' + shown + (more ? '…' : '') + ')';
+    } else {
+      displayName = head.trim();
+    }
+    return { name: displayName, mentions: mentions, unread: unread };
+  }
+
+  var sidebarItemsCache = null;
+  // Returns ordered entries: { kind: 'folder'|'server', ... }. Refs are
+  // assigned later by assignSidebarRefs() so ordering of refs is controlled.
+  function scanSidebarItems() {
+    if (sidebarItemsCache) return sidebarItemsCache;
+    var sb = getSidebar();
+    var entries = [];
+    var folderByNodeId = {};
+    var seenFocus = new Set();
+    for (var i = 0; i < sb.order.length; i++) {
+      var node = sb.order[i];
+      var r = role(node);
+      if (r === 'treeitem' && /folder/i.test(name(node))) {
+        var parsed = parseFolderText(folderText(node));
+        var f = {
+          kind: 'folder', node: node, name: parsed.name, mentions: parsed.mentions,
+          unread: parsed.unread, expanded: false, ref: null, childCount: 0
+        };
+        folderByNodeId[node.nodeId] = f;
+        entries.push(f);
+      } else if (r === 'StaticText' && !isIgnored(node)) {
+        var text = name(node).trim();
+        if (!text) continue;
+        var fa = findFocusableAncestor(node);
+        if (!fa) continue;
+        if (seenFocus.has(fa.node.nodeId)) continue;
+        seenFocus.add(fa.node.nodeId);
+        if (SIDEBAR_SKIP_NAMES[name(fa.node).trim().toLowerCase()]) continue;
+        if (SIDEBAR_SKIP_NAMES[text.toLowerCase()]) continue;
+        var info = parseServerText(fa.node, text);
+        if (!info.name) continue;
+        var folder = fa.folderNode ? (folderByNodeId[fa.folderNode.nodeId] || null) : null;
+        if (folder) folder.childCount++;
+        entries.push({
+          kind: 'server', node: fa.node, name: info.name, mentions: info.mentions,
+          unread: info.unread, voice: info.voice, folder: folder, ref: null
+        });
+      }
+    }
+    // Expanded state: presence of servers inside the folder wins over the
+    // (possibly lagging) property.
+    for (var e = 0; e < entries.length; e++) {
+      var en = entries[e];
+      if (en.kind !== 'folder') continue;
+      if (en.childCount > 0) {
+        en.expanded = true;
+      } else {
+        var hasGroup = children(en.node).some(function (c) { return role(c) === 'group'; });
+        en.expanded = hasGroup ? propValue(en.node, 'expanded') === true : false;
+      }
+    }
+    sidebarItemsCache = entries;
+    return entries;
+  }
+
+  var sidebarRefsAssigned = false;
+  function assignSidebarRefs() {
+    if (sidebarRefsAssigned) return;
+    sidebarRefsAssigned = true;
+    var entries = scanSidebarItems();
+    for (var i = 0; i < entries.length; i++) {
+      entries[i].ref = addRef(entries[i].node);
+    }
+  }
+
+  function extractServers() {
+    assignSidebarRefs();
+    return scanSidebarItems().filter(function (e) { return e.kind === 'server'; });
+  }
+
+  function extractFolders() {
+    assignSidebarRefs();
+    return scanSidebarItems().filter(function (e) { return e.kind === 'folder'; });
+  }
+
+  var NAV_LINK_PATHS = {
+    '/channels/@me': true, '/shop': true, '/store': true, '/quest-home': true
+  };
+  var navLinksCache = null;
+  // Friends / Shop / Nitro Home / Quests links. These are NOT DMs.
+  function extractNavLinks() {
+    if (navLinksCache) return navLinksCache;
+    var result = [];
+    var seen = {};
+    var links = findNodes(function (node) { return role(node) === 'link'; });
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i];
+      var url = propValue(link, 'url');
+      if (typeof url !== 'string') continue;
+      var m = url.match(/^https?:\/\/(?:[\w-]+\.)?discord\.com(\/[^?#]*?)\/?(?:[?#].*)?$/);
+      if (!m || !NAV_LINK_PATHS[m[1]]) continue;
+      var raw = name(link).trim();
+      if (!raw || seen[m[1]]) continue;
+      seen[m[1]] = true;
+      var label = raw;
+      var isNew = false;
+      var nm = raw.match(/^(.*?)\s+NEW$/);
+      if (nm) { label = nm[1]; isNew = true; }
+      result.push({ node: link, label: label + (isNew ? ' (new)' : ''), ref: null });
+    }
+    navLinksCache = result;
+    return result;
+  }
+
+  // Nodes owned by the sidebar sections (not content): the sidebar subtree,
+  // nav links and DM links.
+  var sidebarOwnedCache = null;
+  function isSidebarOwned(node) {
+    if (!sidebarOwnedCache) {
+      sidebarOwnedCache = new Set();
+      var nl = extractNavLinks();
+      for (var i = 0; i < nl.length; i++) sidebarOwnedCache.add(nl[i].node.nodeId);
+      var dl = scanDms();
+      for (var j = 0; j < dl.length; j++) sidebarOwnedCache.add(dl[j].node.nodeId);
+    }
+    return isInSidebar(node) || sidebarOwnedCache.has(node.nodeId);
+  }
+
+  // Sum of "N unread messages" badges in the DM badge group, or null.
+  function extractTotalUnread() {
+    var g = getSidebar().dmGroup;
+    if (!g) return null;
+    var total = 0;
+    var stack = children(g).slice();
+    while (stack.length) {
+      var n = stack.pop();
+      if (role(n) === 'StaticText') {
+        var m = name(n).match(/(\d+)\s+unread\s+messages?/i);
+        if (m) total += parseInt(m[1], 10);
+      }
+      var nk = children(n);
+      for (var q = 0; q < nk.length; q++) stack.push(nk[q]);
+    }
+    return total;
+  }
+
+  // Append Navigation + Servers sections. Called AFTER page content so
+  // content ref numbers stay stable. Returns extras for the result object.
+  function appendSidebarSections(lines) {
+    var navLinks = extractNavLinks();
+    if (navLinks.length > 0) {
+      for (var n = 0; n < navLinks.length; n++) navLinks[n].ref = addRef(navLinks[n].node);
+      lines.push('');
+      lines.push('--- Navigation ---');
+      for (var nl = 0; nl < navLinks.length; nl++) {
+        lines.push((navLinks[nl].ref ? '[' + navLinks[nl].ref + '] ' : '') + navLinks[nl].label);
       }
     }
 
+    assignSidebarRefs();
+    var entries = scanSidebarItems();
+    lines.push('');
+    lines.push('--- Servers ---');
+    if (entries.length === 0) {
+      lines.push('(No servers found)');
+    }
+    var serverList = [];
+    var folderList = [];
+    for (var i = 0; i < entries.length; i++) {
+      var en = entries[i];
+      var prefix = en.ref ? '[' + en.ref + '] ' : '';
+      if (en.kind === 'folder') {
+        var fFlags = [en.expanded ? 'expanded' : 'collapsed'];
+        if (en.mentions) fFlags.push(en.mentions + (en.mentions === 1 ? ' mention' : ' mentions'));
+        else if (en.unread) fFlags.push('unread');
+        lines.push(prefix + 'Folder: ' + en.name + ' (' + fFlags.join(', ') + ')');
+        folderList.push({ name: en.name, ref: en.ref, expanded: en.expanded, mentions: en.mentions });
+      } else {
+        var flags = [];
+        if (en.mentions) flags.push(en.mentions + (en.mentions === 1 ? ' mention' : ' mentions'));
+        else if (en.unread) flags.push('unread');
+        if (en.voice) flags.push('voice active');
+        lines.push((en.folder ? '  ' : '') + prefix + en.name + (flags.length ? ' (' + flags.join(', ') + ')' : ''));
+        serverList.push({
+          name: en.name, ref: en.ref, mentions: en.mentions, unread: en.unread,
+          inFolder: en.folder ? en.folder.name : null
+        });
+      }
+    }
+    return { serverCount: serverList.length, servers: serverList, folders: folderList };
+  }
+
+  // --- Extract DM sidebar items ---
+  // Real DMs are links named "[unread, ]<name> (direct message)[, status]" or
+  // "[unread, ]<name> (group message), N Members[, Muted]". Nav links such as
+  // Friends/Shop/Quests are NOT DMs.
+  var dmsCache = null;
+  function scanDms() {
+    if (dmsCache) return dmsCache;
+    var result = [];
+    var links = findNodes(function (node) {
+      return role(node) === 'link' && /\((?:direct|group) message\)/i.test(name(node));
+    });
+    for (var i = 0; i < links.length; i++) {
+      var raw = name(links[i]).trim();
+      var m = raw.match(/^((?:\d+\s+)?unread,\s*)?([\s\S]*)\s\((direct|group) message\)([\s\S]*)$/i);
+      if (!m) continue;
+      var tail = m[4] || '';
+      var type = m[3].toLowerCase() === 'group' ? 'group' : 'dm';
+      var status = null;
+      var sm = tail.match(/,\s*(Online|Idle|Do Not Disturb)\b/i);
+      if (sm) {
+        var sv = sm[1].toLowerCase();
+        status = sv === 'online' ? 'online' : (sv === 'idle' ? 'idle' : 'dnd');
+      }
+      var mem = tail.match(/,\s*(\d+)\s+Members?\b/i);
+      result.push({
+        node: links[i],
+        name: m[2].trim(),
+        type: type,
+        status: status,
+        unread: !!m[1],
+        members: mem ? parseInt(mem[1], 10) : null,
+        muted: /,\s*Muted\b/i.test(tail),
+        ref: null
+      });
+    }
+    dmsCache = result;
+    return result;
+  }
+
+  // Returns an array of objects: { line, unread, dm } (one per real DM)
+  function extractDmList() {
+    var dms = scanDms();
+    var items = [];
+    for (var idx = 0; idx < dms.length; idx++) {
+      var dm = dms[idx];
+      if (!dm.ref) dm.ref = addRef(dm.node);
+      var line = dm.ref ? '[' + dm.ref + '] ' : '';
+      line += dm.name;
+      if (dm.unread) line += ' (unread)';
+      items.push({ line: line, unread: dm.unread, dm: dm });
+    }
     return items;
+  }
+
+  function dmExtras(items) {
+    return {
+      dms: items.map(function (it) {
+        var d = it.dm;
+        return {
+          name: d.name, ref: d.ref, type: d.type, status: d.status,
+          unread: d.unread, members: d.members, muted: d.muted
+        };
+      }),
+      totalUnread: extractTotalUnread()
+    };
   }
 
   // --- Extract messages ---
@@ -892,6 +1207,8 @@ module.exports = function formatDiscord(nodes) {
       if (r !== 'treeitem' && r !== 'link' && r !== 'listitem') return false;
       var n = name(node).trim().toLowerCase();
       if (!n) return false;
+      // Servers sidebar (folders, server icons) is reported by the Servers section
+      if (isInSidebar(node)) return false;
       // Must be in a sidebar/navigation area
       var inNav = hasAncestor(node, function (anc) {
         var ancName = name(anc).toLowerCase();
@@ -1180,35 +1497,6 @@ module.exports = function formatDiscord(nodes) {
     }
 
     return members;
-  }
-
-  // --- Extract server notifications from sidebar ---
-  function extractServerNotifications() {
-    var notifications = [];
-    // Server treeitems in the sidebar often have "N mentions, ServerName" pattern
-    var serverItems = findNodes(function (node) {
-      var r = role(node);
-      if (r !== 'treeitem') return false;
-      var n = name(node).trim();
-      // Match patterns like "2 mentions, GetZenith" or servers with unread
-      return n.match(/\d+\s*mention/) || false;
-    });
-
-    for (var i = 0; i < serverItems.length; i++) {
-      var item = serverItems[i];
-      var itemName = name(item).trim();
-      var mentionMatch = itemName.match(/(\d+)\s*mentions?,\s*(.+)/);
-      if (mentionMatch) {
-        var ref = addRef(item);
-        notifications.push({
-          ref: ref,
-          server: mentionMatch[2].trim(),
-          mentions: parseInt(mentionMatch[1], 10)
-        });
-      }
-    }
-
-    return notifications;
   }
 
   // --- Extract profile sidebar (DM conversations and server profiles) ---
@@ -2034,12 +2322,20 @@ module.exports = function formatDiscord(nodes) {
       lines.push('[' + ref + '] ' + (name(textbox).trim() || 'Search'));
     }
 
+    var sidebar = appendSidebarSections(lines);
+    var dmx = dmExtras(dmItems);
+
     return {
       tree: lines.join('\n'),
       elementCount: refCounter - 1,
       refs: refs,
       pageType: 'dm_list',
-      dmCount: dmItems.length
+      dmCount: dmItems.length,
+      dms: dmx.dms,
+      totalUnread: dmx.totalUnread,
+      serverCount: sidebar.serverCount,
+      servers: sidebar.servers,
+      folders: sidebar.folders
     };
   }
 
@@ -2150,11 +2446,20 @@ module.exports = function formatDiscord(nodes) {
       renderDialog(lines, dialogData);
     }
 
+    var sidebar = appendSidebarSections(lines);
+    var dmx = dmExtras(allDmItems);
+
     return {
       tree: lines.join('\n'),
       elementCount: refCounter - 1,
       refs: refs,
       pageType: 'dm_conversation',
+      dmCount: allDmItems.length,
+      dms: dmx.dms,
+      totalUnread: dmx.totalUnread,
+      serverCount: sidebar.serverCount,
+      servers: sidebar.servers,
+      folders: sidebar.folders,
       recipient: recipient.username || recipient.displayName || '',
       recipientUsername: recipient.username,
       recipientDisplayName: recipient.displayName,
@@ -2171,20 +2476,6 @@ module.exports = function formatDiscord(nodes) {
     if (chanInfo.channelName) header += ' | ' + chanInfo.channelName;
     lines.push(header);
     lines.push('');
-
-    // Server notifications (mentions in other servers)
-    var serverNotifs = extractServerNotifications();
-    if (serverNotifs.length > 0) {
-      lines.push('--- Server Notifications ---');
-      for (var ni = 0; ni < serverNotifs.length; ni++) {
-        var notif = serverNotifs[ni];
-        var nLine = '';
-        if (notif.ref) nLine += '[' + notif.ref + '] ';
-        nLine += notif.server + ' (' + notif.mentions + ' mentions)';
-        lines.push(nLine);
-      }
-      lines.push('');
-    }
 
     // Server channels sidebar
     var sidebarChannels = extractServerChannels();
@@ -2304,11 +2595,16 @@ module.exports = function formatDiscord(nodes) {
       }
     }
 
+    var sidebar = appendSidebarSections(lines);
+
     var result = {
       tree: lines.join('\n'),
       elementCount: refCounter - 1,
       refs: refs,
       pageType: 'server_channel',
+      serverCount: sidebar.serverCount,
+      servers: sidebar.servers,
+      folders: sidebar.folders,
       serverName: chanInfo.serverName,
       channelName: chanInfo.channelName,
       messageCount: messageData.filter(function (m) { return m.type === 'message'; }).length,
@@ -2361,6 +2657,7 @@ module.exports = function formatDiscord(nodes) {
       lines.push(formatComposerLine(ref, textbox));
     }
 
+    // refCounter only holds content refs here; sidebar sections come after
     if (refCounter === 1) {
       lines.push('--- Elements ---');
       var interactiveRoles = new Set([
@@ -2371,6 +2668,7 @@ module.exports = function formatDiscord(nodes) {
       for (var ni = 0; ni < nodes.length; ni++) {
         var node = nodes[ni];
         if (isIgnored(node)) continue;
+        if (isSidebarOwned(node)) continue;
         var r = role(node);
         if (!interactiveRoles.has(r)) continue;
         var n = name(node).trim();
@@ -2381,11 +2679,16 @@ module.exports = function formatDiscord(nodes) {
       }
     }
 
+    var sidebar = appendSidebarSections(lines);
+
     return {
       tree: lines.join('\n'),
       elementCount: refCounter - 1,
       refs: refs,
-      pageType: 'unknown'
+      pageType: 'unknown',
+      serverCount: sidebar.serverCount,
+      servers: sidebar.servers,
+      folders: sidebar.folders
     };
   }
 
