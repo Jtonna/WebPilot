@@ -10,6 +10,10 @@ const workflows = require(path.join(DIR, 'workflows.js'));
 const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8'));
 
 const TAB = 7;
+// Mirrors PENDING_MESSAGE in workflows.js (not exported).
+const PENDING_MESSAGE =
+  'Timed out waiting for Discord; a late click may still apply — re-read state ' +
+  '(e.g. call check_sidebar or get the tree) before retrying.';
 const GUILD_URL = (g, c) => `https://discord.com/channels/${g}/${c}`;
 
 /**
@@ -50,7 +54,8 @@ function makeEnv(state, opts = {}) {
           mentions: 0
         })),
         dms: state.dms || [],
-        totalUnread: state.totalUnread === undefined ? null : state.totalUnread
+        totalUnread: state.totalUnread === undefined ? null : state.totalUnread,
+        ...memberFields(state, env, g)
       };
     },
     async getTabs() {
@@ -69,6 +74,21 @@ function makeEnv(state, opts = {}) {
     }
   };
   return env;
+}
+
+// Member-list fields of the fake tree. state.member = { open, count, total,
+// toggleAfter } where the toggle is absent (and memberListOpen null) for the
+// first `toggleAfter` fetches, like a toolbar that has not rendered yet.
+function memberFields(state, env, g) {
+  const m = state.member;
+  if (!m) return {};
+  const present = m.open || env.fetches > (m.toggleAfter || 0);
+  return {
+    memberListToggleRef: present ? `g${g}-member-toggle` : null,
+    memberListOpen: m.open ? true : (present ? false : null),
+    memberCount: m.open ? m.count || 0 : 0,
+    memberTotal: m.open ? m.total || 0 : 0
+  };
 }
 
 function run(name, env, params = {}, tabId = TAB) {
@@ -462,4 +482,75 @@ test('check_dm_list: pending when home navigation never lands', async () => {
   const r = await run('check_dm_list', env, { timeoutMs: 1000 });
   assert.strictEqual(r.pending, true);
   assert.strictEqual(r.pageType, 'server_channel');
+});
+
+// ---------------------------------------------------------------- open_member_list
+
+function memberState(member, extra = {}) {
+  return baseState({
+    url: GUILD_URL('800000000000000001', '800000000000000002'),
+    pageType: 'server_channel',
+    serverName: 'Alpha Guild',
+    member,
+    ...extra
+  });
+}
+
+const opensOnClick = async (args, state) => {
+  if (/member-toggle$/.test(args.ref || '')) state.member.open = true;
+};
+
+test('open_member_list: declared in the manifest', () => {
+  assert.ok(manifest.workflows.some((w) => w.name === 'open_member_list'));
+  assert.strictEqual(typeof workflows.open_member_list.run, 'function');
+});
+
+test('open_member_list: already open is a no-op', async () => {
+  const env = makeEnv(memberState({ open: true, count: 3, total: 41 }));
+  const r = await run('open_member_list', env, { timeoutMs: 1000 });
+  assert.strictEqual(env.clicks.length, 0);
+  assert.deepStrictEqual(r, { ok: true, opened: false, memberListOpen: true, memberCount: 3, memberTotal: 41 });
+});
+
+test('open_member_list: closed panel gets exactly one click', async () => {
+  const env = makeEnv(memberState({ open: false, count: 3, total: 41 }), { onClick: opensOnClick });
+  const r = await run('open_member_list', env, { timeoutMs: 3000 });
+  assert.strictEqual(env.clicks.length, 1);
+  assert.strictEqual(env.stale.length, 0);
+  assert.deepStrictEqual(r, { ok: true, opened: true, memberListOpen: true, memberCount: 3, memberTotal: 41 });
+});
+
+test('open_member_list: waits for a late toggle, then clicks once', async () => {
+  const env = makeEnv(memberState({ open: false, count: 2, total: 2, toggleAfter: 3 }), { onClick: opensOnClick });
+  const r = await run('open_member_list', env, { timeoutMs: 5000 });
+  assert.strictEqual(env.clicks.length, 1);
+  assert.ok(env.fetches > 3);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.opened, true);
+});
+
+test('open_member_list: clicked but never opens is pending, still one click', async () => {
+  const env = makeEnv(memberState({ open: false }), { onClick: async () => {} });
+  const r = await run('open_member_list', env, { timeoutMs: 1000 });
+  assert.strictEqual(env.clicks.length, 1);
+  assert.strictEqual(r.pending, true);
+  assert.strictEqual(r.message, PENDING_MESSAGE);
+  assert.strictEqual(r.memberListOpen, false);
+});
+
+test('open_member_list: toggle that never appears returns ok:false', async () => {
+  const env = makeEnv(memberState({ open: false, toggleAfter: 1e9 }), { onClick: opensOnClick });
+  const r = await run('open_member_list', env, { timeoutMs: 1000 });
+  assert.strictEqual(env.clicks.length, 0);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /toggle not found/);
+});
+
+test('open_member_list: non-server page fails immediately', async () => {
+  const env = makeEnv(baseState({ pageType: 'dm_conversation' }));
+  const r = await run('open_member_list', env, { timeoutMs: 1000 });
+  assert.strictEqual(env.clicks.length, 0);
+  assert.strictEqual(env.fetches, 1);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.pageType, 'dm_conversation');
 });

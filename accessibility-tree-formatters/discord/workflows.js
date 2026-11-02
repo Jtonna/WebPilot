@@ -489,5 +489,76 @@ module.exports = {
         totalUnread: tree.totalUnread == null ? 0 : tree.totalUnread
       };
     }
+  },
+
+  open_member_list: {
+    description:
+      'Open the member list panel on a Discord server channel page. Does nothing (no click) if the panel is ' +
+      'already open. Waits up to the time budget for the channel toolbar to render (it can take about 9s after ' +
+      'the page opens), clicks the "Show Member List" toggle exactly once, and waits for the panel to open. ' +
+      'Returns { ok, opened, memberListOpen, memberCount, memberTotal }, where memberCount is the rendered rows ' +
+      'and memberTotal the sum of the group headers. Returns { ok: false, reason } on a non-server page or when ' +
+      'the toggle is never found. If it returns pending:true the toggle was clicked but the panel is not ' +
+      'confirmed open; re-read state (get the tree) and do NOT click again, a second click closes the panel.',
+    parameters: {
+      timeoutMs: TIMEOUT_PARAM
+    },
+    async run({ params, browser, tabId }) {
+      if (typeof tabId !== 'number') {
+        throw new Error('open_member_list requires tab_id (number).');
+      }
+      const ctx = makeCtx(params, browser, tabId);
+      const counts = (t) => ({ memberCount: t.memberCount || 0, memberTotal: t.memberTotal || 0 });
+      let tree = await fetchTree(ctx);
+      if (!tree || tree.pageType !== 'server_channel') {
+        return { ok: false, reason: 'not a server channel', pageType: tree && tree.pageType };
+      }
+      if (tree.memberListOpen === true) {
+        return { ok: true, opened: false, memberListOpen: true, ...counts(tree) };
+      }
+      // Wait for the toolbar toggle to render.
+      while (!tree.memberListToggleRef && tree.memberListOpen !== true) {
+        if (remaining(ctx) <= 0) {
+          return { ok: false, reason: 'member list toggle not found' };
+        }
+        await pollWait(ctx);
+        tree = await fetchTree(ctx);
+        if (!tree || tree.pageType !== 'server_channel') {
+          return { ok: false, reason: 'not a server channel', pageType: tree && tree.pageType };
+        }
+      }
+      if (tree.memberListOpen === true) {
+        return { ok: true, opened: false, memberListOpen: true, ...counts(tree) };
+      }
+      // Fresh refs right before the single click.
+      tree = await fetchTree(ctx);
+      if (tree && tree.memberListOpen === true) {
+        return { ok: true, opened: false, memberListOpen: true, ...counts(tree) };
+      }
+      if (!tree || !tree.memberListToggleRef) {
+        return { ok: false, reason: 'member list toggle not found' };
+      }
+      // Exactly one click: a second click would close the panel again.
+      await safeClick(browser, { ref: tree.memberListToggleRef, tab_id: tabId });
+      for (;;) {
+        await pollWait(ctx);
+        tree = await fetchTree(ctx);
+        if (tree && tree.memberListOpen === true) break;
+        if (remaining(ctx) <= 0) {
+          return {
+            pending: true,
+            message: PENDING_MESSAGE,
+            memberListOpen: tree ? tree.memberListOpen : null
+          };
+        }
+      }
+      // Short grace period for member rows to render.
+      const graceEnd = Math.min(ctx.deadline, Date.now() + 1500);
+      while ((tree.memberCount || 0) === 0 && Date.now() < graceEnd) {
+        await sleep(Math.min(500, Math.max(0, graceEnd - Date.now())));
+        tree = await fetchTree(ctx);
+      }
+      return { ok: true, opened: true, memberListOpen: true, ...counts(tree) };
+    }
   }
 };
