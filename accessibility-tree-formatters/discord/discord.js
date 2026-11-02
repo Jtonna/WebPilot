@@ -1419,6 +1419,27 @@ module.exports = function formatDiscord(nodes) {
     return { username: username, displayName: displayName };
   }
 
+  // Parse "Name, N members" / "Name, 1 member" group headers. Only
+  // matching headers count. Role names may themselves contain commas.
+  function parseMemberGroups(memberData) {
+    var groups = [];
+    for (var gi = 0; gi < memberData.length; gi++) {
+      if (memberData[gi].type !== 'role') continue;
+      var gm = /^(.*?),\s*(\d+)\s+members?$/i.exec(memberData[gi].name);
+      if (gm) groups.push({ name: gm[1].trim(), count: parseInt(gm[2], 10) });
+    }
+    return groups;
+  }
+
+  // Find the "Show Member List" / "Hide Member List" toolbar button.
+  function findMemberListToggle() {
+    return findNode(function (node) {
+      return role(node) === 'button' &&
+        /^(Show|Hide) Member List$/i.test(name(node).trim()) &&
+        !isSidebarOwned(node);
+    });
+  }
+
   // --- Extract member list ---
   function extractMemberList() {
     var members = [];
@@ -2475,6 +2496,19 @@ module.exports = function formatDiscord(nodes) {
     if (chanInfo.serverName) header += ' | ' + chanInfo.serverName;
     if (chanInfo.channelName) header += ' | ' + chanInfo.channelName;
     lines.push(header);
+
+    // Member list toggle (present whether the panel is open or closed)
+    var memberToggle = findMemberListToggle();
+    var memberListToggleRef = null;
+    var memberListOpen = null;
+    if (memberToggle) {
+      memberListToggleRef = addRef(memberToggle);
+      var isHide = /^Hide/i.test(name(memberToggle).trim());
+      memberListOpen = isHide;
+      if (memberListToggleRef) {
+        lines.push('[' + memberListToggleRef + '] ' + (isHide ? 'Hide' : 'Show') + ' Member List (button)');
+      }
+    }
     lines.push('');
 
     // Server channels sidebar
@@ -2545,6 +2579,15 @@ module.exports = function formatDiscord(nodes) {
 
     // Member list
     var memberData = extractMemberList();
+    if (memberListOpen === null) {
+      // No toggle button: an existing members region means the panel is open.
+      var membersRegion = findNode(function (node) {
+        return role(node) === 'complementary' && name(node).toLowerCase().includes('members');
+      });
+      if (membersRegion) memberListOpen = true;
+    }
+    var memberGroups = parseMemberGroups(memberData);
+    var memberTotal = memberGroups.reduce(function (sum, g) { return sum + g.count; }, 0);
     if (memberData.length > 0) {
       lines.push('');
       lines.push('--- Members ---');
@@ -2609,7 +2652,11 @@ module.exports = function formatDiscord(nodes) {
       channelName: chanInfo.channelName,
       messageCount: messageData.filter(function (m) { return m.type === 'message'; }).length,
       channelCount: sidebarChannels.length,
-      memberCount: memberData.filter(function (m) { return m.type === 'member'; }).length
+      memberCount: memberData.filter(function (m) { return m.type === 'member'; }).length,
+      memberTotal: memberTotal,
+      groups: memberGroups,
+      memberListToggleRef: memberListToggleRef,
+      memberListOpen: memberListOpen
     };
 
     if (dialogData && dialogData.type === 'settings') {
