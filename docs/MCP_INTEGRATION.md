@@ -354,7 +354,7 @@ webpilot_run_workflow(
 → { "ok": true, "sent": true, "composerRef": "e42" }
 ```
 
-Discord also provides the sidebar workflows `check_sidebar`, `open_server` and `check_dm_list`. These accept an optional `timeoutMs` (default 42000, clamped to 1000..45000). After that deadline they return `{ pending: true, message, ... }` instead of throwing. A late click may still apply, so re-read state (for example with `check_sidebar` or the accessibility tree) before retrying.
+Discord also provides the sidebar workflows `check_sidebar`, `open_server` and `check_dm_list`, plus `open_member_list`, which opens the member list panel on a server channel page (it does nothing if the panel is already open). These accept an optional `timeoutMs` (default 42000, clamped to 1000..45000). After that deadline they return `{ pending: true, message, ... }` instead of throwing. A late click may still apply, so re-read state (for example with `check_sidebar` or the accessibility tree) before retrying. After a `pending` from `open_member_list`, check `memberListOpen` in the tree before clicking `memberListToggleRef`: the toggle closes the panel if it is already open.
 
 Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name: 'Message textbox' })`, clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
 
