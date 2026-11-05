@@ -227,6 +227,39 @@ Builder.prototype.membersPanel = function (parent, groups) {
   return { panel: panel, list: list, headings: headings, items: items };
 };
 
+// --- Promo / shop modal -----------------------------------------------------
+
+// Discord promo modal as seen live: an UNNAMED dialog under ignored generic
+// wrappers (no named landmark between it and RootWebArea).
+// opts: { headings: string[], buttons: string[], named?: string,
+//   withClose?: boolean (default true), textbox?: boolean, tabpanel?: boolean,
+//   wrapperNamedRegion?: boolean (wrap in a named region instead) }.
+// Returns { dialog, closeBtn, buttons }.
+Builder.prototype.promoDialog = function (parent, opts) {
+  opts = opts || {};
+  const wrapper = opts.wrapperNamedRegion
+    ? this.add(parent, 'region', 'Some Panel')
+    : this.add(parent, 'generic', '', { ignored: true });
+  const dialog = this.add(wrapper, 'dialog', opts.named || '', { props: { focusable: true } });
+  this.add(dialog, 'log', '');
+  this.add(dialog, 'log', '');
+  let closeBtn = null;
+  if (opts.withClose !== false) {
+    closeBtn = this.add(dialog, 'button', 'Close', { props: { focusable: true } });
+  }
+  for (const h of opts.headings || []) {
+    this.add(dialog, 'heading', h, { props: { level: '1' } });
+    this.text(dialog, h + ' description text.');
+  }
+  const buttons = [];
+  for (const nm of opts.buttons || []) {
+    buttons.push(this.add(dialog, 'button', nm, { props: { focusable: true } }));
+  }
+  if (opts.textbox) this.add(dialog, 'textbox', 'Message', { props: { focusable: true } });
+  if (opts.tabpanel) this.add(dialog, 'tabpanel', 'Overview');
+  return { dialog: dialog, closeBtn: closeBtn, buttons: buttons };
+};
+
 Builder.prototype.build = function () {
   return this.nodes;
 };
