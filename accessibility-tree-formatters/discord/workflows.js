@@ -401,7 +401,8 @@ module.exports = {
     description:
       'Open a Discord server by name. Matches the exact name first, then ignoring case, emoji and punctuation, ' +
       'then a unique partial name; ambiguous or unknown names return an error listing close matches. ' +
-      'If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified }, ' +
+      'If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified } ' +
+      '(channelId may be null when Discord lands on a server-only URL; read the tree\'s channelId extra), ' +
       'or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; ' +
       'a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.',
     parameters: {
