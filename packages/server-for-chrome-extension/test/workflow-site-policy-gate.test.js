@@ -552,12 +552,14 @@ async function treeWith(resolveImpl) {
     }
     return origSend(p, cmd, args, opts);
   };
+  fakeBridge.notify = () => {};
   fm.formatTree = () => resolvableFormatted();
   try {
     return bodyOf(await callTool(makeHandler(), "browser_get_accessibility_tree", { tab_id: 7 }));
   } finally {
     fakeBridge.sendCommand = origSend;
     fm.formatTree = origFmt;
+    delete fakeBridge.notify;
   }
 }
 
