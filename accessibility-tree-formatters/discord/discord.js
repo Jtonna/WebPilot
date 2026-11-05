@@ -17,6 +17,12 @@
  *   [eN] Message #<channel> textbox     (server channel)
  * preserving the discriminating prefix so workflows can disambiguate
  * multiple composers from the formatted tree alone.
+ *
+ * Blocking popups: an UNNAMED root-level modal dialog with a Close button
+ * (shop/promo modals) renders as a "--- BLOCKING POPUP: <name> ---" block
+ * right after the title line (its Close button always gets the first ref),
+ * and every result carries hasBlockingDialog plus, when true, blockingDialog
+ * { name, closeRef, buttons: [{ref, text}], headings }.
  */
 
 module.exports = function formatDiscord(nodes) {
@@ -166,6 +172,27 @@ module.exports = function formatDiscord(nodes) {
     return null;
   }
 
+  // True when `node` reaches RootWebArea through only ignored or unnamed
+  // generic/none/presentation wrappers and no landmark / dialog / form.
+  var ROOT_DIALOG_BLOCKERS = new Set([
+    'region', 'main', 'navigation', 'complementary', 'banner', 'contentinfo', 'dialog', 'form'
+  ]);
+  function isRootLevelDialog(node) {
+    var current = node;
+    for (var depth = 0; depth < 30; depth++) {
+      if (!current.parentId) return false;
+      var parent = byId.get(current.parentId);
+      if (!parent) return false;
+      var pr = role(parent);
+      if (pr === 'RootWebArea') return true;
+      var wrapper = isIgnored(parent) ||
+        ((pr === 'generic' || pr === 'none' || pr === 'presentation') && !name(parent).trim());
+      if (!wrapper && ROOT_DIALOG_BLOCKERS.has(pr)) return false;
+      current = parent;
+    }
+    return false;
+  }
+
   // --- Ref management ---
   const refs = {};
   let refCounter = 1;
@@ -175,6 +202,96 @@ module.exports = function formatDiscord(nodes) {
     const ref = 'e' + refCounter++;
     refs[ref] = node.backendDOMNodeId;
     return ref;
+  }
+
+  // --- Blocking popup (unnamed promo/shop modal) ---
+  // Runs once, before any other addRef call, so the popup's Close button is
+  // always e1. Populates the four vars below; the page formatters splice
+  // popupBlock right after their title line.
+  var popupBlock = [];
+  var popupNodeIds = new Set();
+  var popupRefBase = 1;
+  var blockingDialog = null;
+
+  var POPUP_DISQUALIFIERS = new Set(['tabpanel', 'textbox', 'textarea', 'searchbox', 'combobox']);
+
+  // Document-order (preorder) descendants. descendants() visits the node's
+  // direct children last-first, so it cannot be used where order matters.
+  function preorderDescendants(node) {
+    var result = [];
+    (function walk(n) {
+      var kids = children(n);
+      for (var i = 0; i < kids.length; i++) {
+        result.push(kids[i]);
+        walk(kids[i]);
+      }
+    })(node);
+    return result;
+  }
+
+  function detectBlockingDialog() {
+    var dialogs = findNodes(function (node) {
+      return role(node) === 'dialog' && !name(node).trim();
+    });
+    for (var di = 0; di < dialogs.length; di++) {
+      var dialog = dialogs[di];
+      if (!isRootLevelDialog(dialog)) continue;
+      var desc = preorderDescendants(dialog);
+      var closeBtn = null;
+      var disqualified = false;
+      for (var i = 0; i < desc.length; i++) {
+        var dn = desc[i];
+        if (POPUP_DISQUALIFIERS.has(role(dn))) { disqualified = true; break; }
+        if (!closeBtn && !isIgnored(dn) && role(dn) === 'button' &&
+            name(dn).trim().toLowerCase() === 'close') {
+          closeBtn = dn;
+        }
+      }
+      if (disqualified || !closeBtn || !closeBtn.backendDOMNodeId) continue;
+
+      var headings = [];
+      var otherButtons = [];
+      var seen = new Set();
+      for (var j = 0; j < desc.length; j++) {
+        var d = desc[j];
+        if (isIgnored(d) || seen.has(d.nodeId)) continue;
+        seen.add(d.nodeId);
+        var dr = role(d);
+        if (dr === 'heading') {
+          var ht = name(d).trim();
+          if (ht) headings.push(ht);
+        } else if (dr === 'button' && d !== closeBtn) {
+          otherButtons.push(d);
+        }
+      }
+
+      var closeRef = addRef(closeBtn);
+      var buttons = [{ ref: closeRef, text: 'Close' }];
+      for (var k = 0; k < otherButtons.length; k++) {
+        var bref = addRef(otherButtons[k]);
+        if (bref) buttons.push({ ref: bref, text: name(otherButtons[k]).trim() });
+      }
+
+      var dialogName = headings.length ? headings[0] : 'Dialog';
+      popupBlock.push('--- BLOCKING POPUP: ' + dialogName + ' ---');
+      popupBlock.push('A modal dialog is covering the page. Clicking or running workflows on any ' +
+        'other elements will not work until the dialog is closed. Close it by clicking [' +
+        closeRef + '] Close, then re-fetch the accessibility tree before doing anything else.');
+      for (var bi = 0; bi < buttons.length; bi++) {
+        popupBlock.push('[' + buttons[bi].ref + '] ' + buttons[bi].text + ' (button)');
+      }
+      if (headings.length) popupBlock.push('Headings: ' + headings.join(' | '));
+
+      popupNodeIds.add(dialog.nodeId);
+      for (var p = 0; p < desc.length; p++) popupNodeIds.add(desc[p].nodeId);
+      popupRefBase = refCounter;
+      blockingDialog = { name: dialogName, closeRef: closeRef, buttons: buttons, headings: headings };
+      return;
+    }
+  }
+
+  function pushPopupBlock(lines) {
+    for (var i = 0; i < popupBlock.length; i++) lines.push(popupBlock[i]);
   }
 
   // --- Sidebar scan (pure: no refs are assigned here) ---
@@ -2320,6 +2437,7 @@ module.exports = function formatDiscord(nodes) {
   function formatDmList() {
     var lines = [];
     lines.push('Discord | Direct Messages');
+    pushPopupBlock(lines);
     lines.push('');
 
     var dmItems = extractDmList();
@@ -2377,6 +2495,7 @@ module.exports = function formatDiscord(nodes) {
     }
 
     lines.push('Discord | ' + headerLabel + ' (DM)');
+    pushPopupBlock(lines);
     lines.push('');
 
     // Only show UNREAD DMs in the sidebar — read conversations clutter the
@@ -2496,6 +2615,7 @@ module.exports = function formatDiscord(nodes) {
     if (chanInfo.serverName) header += ' | ' + chanInfo.serverName;
     if (chanInfo.channelName) header += ' | ' + chanInfo.channelName;
     lines.push(header);
+    pushPopupBlock(lines);
 
     // Member list toggle (present whether the panel is open or closed)
     var memberToggle = findMemberListToggle();
@@ -2671,6 +2791,7 @@ module.exports = function formatDiscord(nodes) {
     var lines = [];
     var info = detectUrl();
     lines.push('Discord | ' + (info.title || 'Unknown Page'));
+    pushPopupBlock(lines);
     lines.push('');
 
     var messageData = extractMessages();
@@ -2704,8 +2825,9 @@ module.exports = function formatDiscord(nodes) {
       lines.push(formatComposerLine(ref, textbox));
     }
 
-    // refCounter only holds content refs here; sidebar sections come after
-    if (refCounter === 1) {
+    // refCounter only holds content refs here (plus any blocking-popup refs,
+    // which popupRefBase accounts for); sidebar sections come after
+    if (refCounter === popupRefBase) {
       lines.push('--- Elements ---');
       var interactiveRoles = new Set([
         'link', 'button', 'textbox', 'textarea', 'searchbox',
@@ -2716,13 +2838,14 @@ module.exports = function formatDiscord(nodes) {
         var node = nodes[ni];
         if (isIgnored(node)) continue;
         if (isSidebarOwned(node)) continue;
+        if (popupNodeIds.has(node.nodeId)) continue;
         var r = role(node);
         if (!interactiveRoles.has(r)) continue;
         var n = name(node).trim();
         if (!n || n.length < 2) continue;
         var ref2 = addRef(node);
         lines.push('[' + ref2 + '] ' + r + ': ' + n);
-        if (refCounter > 80) break;
+        if (refCounter > popupRefBase + 79) break;
       }
     }
 
@@ -2746,14 +2869,23 @@ module.exports = function formatDiscord(nodes) {
   var url = findDiscordUrl();
   var page = detectPageType(url);
 
+  detectBlockingDialog();
+
+  var result;
   switch (page.type) {
     case 'dm_list':
-      return formatDmList();
+      result = formatDmList();
+      break;
     case 'dm_conversation':
-      return formatDmConversation();
+      result = formatDmConversation();
+      break;
     case 'server_channel':
-      return formatServerChannel();
+      result = formatServerChannel();
+      break;
     default:
-      return formatUnknown();
+      result = formatUnknown();
   }
+  result.hasBlockingDialog = !!blockingDialog;
+  if (blockingDialog) result.blockingDialog = blockingDialog;
+  return result;
 };
