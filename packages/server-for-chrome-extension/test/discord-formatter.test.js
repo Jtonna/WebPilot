@@ -71,10 +71,12 @@ function dmListNodes(opts) {
   const navLinks = b.navLinks(nav, [FRIENDS, SHOP, NITRO, QUESTS]);
   const dms = b.dmLinks(nav, DM_LINKS);
   const search = b.add(b.root, 'searchbox', 'Find or start a conversation');
+  if (opts.popup) b.promoDialog(b.root, opts.popup);
   return { nodes: b.build(), refs: refs, navLinks: navLinks, dms: dms, search: search };
 }
 
-function dmConversationNodes() {
+function dmConversationNodes(opts) {
+  opts = opts || {};
   const b = new Builder('https://discord.com/channels/@me/900000000000000099', 'Discord | @alice');
   const sb = b.sidebar({ dmBadges: ['Alice Example , 2 unread messages', 'Bob Example , 3 unread messages'] });
   const refs = fillSidebar(b, sb);
@@ -82,10 +84,12 @@ function dmConversationNodes() {
   const navLinks = b.navLinks(nav, [FRIENDS, SHOP, NITRO, QUESTS]);
   const dms = b.dmLinks(nav, DM_LINKS);
   const tb = b.add(b.root, 'textbox', 'Message @alice');
+  if (opts.popup) b.promoDialog(b.root, opts.popup);
   return { nodes: b.build(), refs: refs, navLinks: navLinks, dms: dms, textbox: tb };
 }
 
-function serverChannelNodes() {
+function serverChannelNodes(opts) {
+  opts = opts || {};
   const b = new Builder('https://discord.com/channels/800000000000000001/800000000000000002', 'general | Alpha Guild');
   const sb = b.sidebar();
   const refs = fillSidebar(b, sb);
@@ -98,13 +102,19 @@ function serverChannelNodes() {
   const chLink = b.add(chItem, 'link', 'general (text channel)', {
     props: { focusable: true, url: 'https://discord.com/channels/800000000000000001/800000000000000002' },
   });
+  if (opts.popup) b.promoDialog(b.root, opts.popup);
   return { nodes: b.build(), refs: refs, chLink: chLink };
 }
 
-function unknownNodes() {
+function unknownNodes(opts) {
+  opts = opts || {};
   const b = new Builder('https://discord.com/store', 'Discord | Store');
   const sb = b.sidebar();
   const refs = fillSidebar(b, sb);
+  if (opts.pageLink) {
+    b.add(b.root, 'link', opts.pageLink, { props: { focusable: true, url: 'https://discord.com/store/skus/1' } });
+  }
+  if (opts.popup) b.promoDialog(b.root, opts.popup);
   return { nodes: b.build(), refs: refs };
 }
 
@@ -538,5 +548,119 @@ describe('discord formatter: member list toggle and totals', () => {
     assert.strictEqual(r.memberListOpen, true);
     assert.strictEqual(r.memberListToggleRef, null);
     assert.strictEqual(r.memberTotal, 41);
+  });
+});
+
+// --- Blocking promo dialog (#156) --------------------------------------------
+
+const PROMO = {
+  headings: ['NEW IN THE SHOP: PROFILE FRAMES', 'Complete Your Look', 'Gift and Wishlist'],
+  buttons: ['Browse Frames'],
+};
+const PROMO_INSTRUCTION = 'A modal dialog is covering the page. Clicking or running workflows on any '
+  + 'other elements will not work until the dialog is closed. Close it by clicking [e1] Close, then '
+  + 're-fetch the accessibility tree before doing anything else.';
+
+function withPopupOpts(popup) {
+  return { popup: Object.assign({}, PROMO, popup || {}) };
+}
+
+describe('discord formatter: blocking promo dialog', () => {
+  const pages = [
+    ['dm_list', dmListNodes],
+    ['dm_conversation', dmConversationNodes],
+    ['server_channel', serverChannelNodes],
+    ['unknown', unknownNodes],
+  ];
+
+  pages.forEach(function (pg) {
+    test(pg[0] + ': popup block renders first with Close as e1', () => {
+      const r = formatDiscord(pg[1](withPopupOpts()).nodes);
+      assert.strictEqual(r.pageType, pg[0]);
+      const lines = r.tree.split('\n');
+      assert.match(lines[0], /^Discord/);
+      assert.strictEqual(lines[1], '--- BLOCKING POPUP: NEW IN THE SHOP: PROFILE FRAMES ---');
+      assert.strictEqual(lines[2], PROMO_INSTRUCTION);
+      const headers = lines.filter((l) => /^--- .* ---$/.test(l));
+      assert.strictEqual(headers[0], '--- BLOCKING POPUP: NEW IN THE SHOP: PROFILE FRAMES ---');
+      assert.ok(lines.includes('[e1] Close (button)'));
+      assert.ok(lines.includes('[e2] Browse Frames (button)'));
+      assert.ok(lines.includes('Headings: NEW IN THE SHOP: PROFILE FRAMES | Complete Your Look | Gift and Wishlist'));
+      assert.strictEqual(r.hasBlockingDialog, true);
+      assert.deepStrictEqual(r.blockingDialog, {
+        name: 'NEW IN THE SHOP: PROFILE FRAMES',
+        closeRef: 'e1',
+        buttons: [{ ref: 'e1', text: 'Close' }, { ref: 'e2', text: 'Browse Frames' }],
+        headings: ['NEW IN THE SHOP: PROFILE FRAMES', 'Complete Your Look', 'Gift and Wishlist'],
+      });
+      // Servers is still the last section
+      assert.strictEqual(headers[headers.length - 1], '--- Servers ---');
+    });
+
+    test(pg[0] + ': no popup leaves the tree unchanged and flags false', () => {
+      const r = formatDiscord(pg[1]().nodes);
+      assert.strictEqual(r.hasBlockingDialog, false);
+      assert.strictEqual(r.blockingDialog, undefined);
+      assert.ok(!r.tree.includes('BLOCKING POPUP'));
+      assert.strictEqual(r.tree.split('\n')[1], '');
+    });
+  });
+
+  test('no popup: DM refs still start at e1', () => {
+    const r = formatDiscord(dmListNodes().nodes);
+    assert.deepStrictEqual(r.dms.map((d) => d.ref), ['e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7']);
+  });
+
+  test('popup + server_channel: no node receives two refs, e1 is the Close button', () => {
+    const fx = serverChannelNodes(withPopupOpts());
+    const r = formatDiscord(fx.nodes);
+    const backends = Object.values(r.refs);
+    assert.strictEqual(new Set(backends).size, backends.length, 'a node got two refs');
+    const closeNode = fx.nodes.find((n) => n.role.value === 'button' && n.name.value === 'Close');
+    assert.strictEqual(r.refs.e1, closeNode.backendDOMNodeId);
+  });
+
+  test('named dialog keeps the existing --- <name> --- rendering, no blocking flag', () => {
+    const r = formatDiscord(serverChannelNodes(withPopupOpts({ named: 'Jtonna' })).nodes);
+    assert.ok(r.tree.split('\n').includes('--- Jtonna ---'));
+    assert.strictEqual(r.hasBlockingDialog, false);
+    assert.ok(!r.tree.includes('BLOCKING POPUP'));
+  });
+
+  test('unknown page: Elements fallback still fires when only popup refs exist', () => {
+    const r = formatDiscord(unknownNodes(Object.assign({ pageLink: 'Some Store Item' }, withPopupOpts())).nodes);
+    assert.strictEqual(r.hasBlockingDialog, true);
+    const els = section(r.tree, 'Elements');
+    assert.ok(els, 'Elements section expected');
+    assert.ok(els.some((l) => /link: Some Store Item$/.test(l)));
+    assert.ok(!els.some((l) => /Close|Browse Frames/.test(l)));
+    const backends = Object.values(r.refs);
+    assert.strictEqual(new Set(backends).size, backends.length);
+  });
+
+  const rejections = [
+    ['dialog with a textbox', { textbox: true }],
+    ['dialog with a tabpanel', { tabpanel: true }],
+    ['dialog without a Close button', { withClose: false }],
+    ['dialog nested under a named region', { wrapperNamedRegion: true }],
+  ];
+  rejections.forEach(function (c) {
+    test('rejected: ' + c[0], () => {
+      const r = formatDiscord(dmListNodes(withPopupOpts(c[1])).nodes);
+      assert.strictEqual(r.hasBlockingDialog, false);
+      assert.strictEqual(r.blockingDialog, undefined);
+      assert.ok(!r.tree.includes('BLOCKING POPUP'));
+    });
+  });
+
+  test('headings are optional: name falls back to Dialog, Headings line omitted', () => {
+    const r = formatDiscord(dmListNodes({ popup: { headings: [], buttons: ['Got It'] } }).nodes);
+    const lines = r.tree.split('\n');
+    assert.strictEqual(lines[1], '--- BLOCKING POPUP: Dialog ---');
+    assert.ok(lines.includes('[e1] Close (button)'));
+    assert.ok(lines.includes('[e2] Got It (button)'));
+    assert.ok(!lines.some((l) => /^Headings:/.test(l)));
+    assert.strictEqual(r.blockingDialog.name, 'Dialog');
+    assert.deepStrictEqual(r.blockingDialog.headings, []);
   });
 });
