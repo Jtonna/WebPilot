@@ -11,6 +11,10 @@
  *   - DM Conversation: discord.com/channels/@me/<id>
  *   - Server Channel:  discord.com/channels/<serverId>/<channelId>
  *
+ * Server-only /channels/<serverId> URLs are routed as server channels when a
+ * channel is rendered (Channel header region or "<name> (channel)" main
+ * landmark); otherwise they fall back to the unknown-page formatter.
+ *
  * Composer rendering: the message composer is a textbox whose accessible
  * name discriminates the conversation. It renders as
  *   [eN] Message @<recipient> textbox   (DM)
@@ -129,6 +133,9 @@ module.exports = function formatDiscord(nodes) {
     if (parts.length >= 2) {
       return { type: 'server_channel', params: { serverId: parts[0], channelId: parts[1] } };
     }
+    if (parts[0]) {
+      return { type: 'server_root', params: { serverId: parts[0] } };
+    }
     return { type: 'unknown', params: {} };
   }
 
@@ -146,6 +153,17 @@ module.exports = function formatDiscord(nodes) {
       if (!isIgnored(node) && predicate(node)) return node;
     }
     return null;
+  }
+
+  // True when the page renders a channel: Discord shows one on server-only
+  // URLs, which carry no channel segment.
+  function channelRendered() {
+    return !!findNode(function (node) {
+      var r = role(node);
+      var n = name(node);
+      return (r === 'region' && n === 'Channel header') ||
+        (r === 'main' && n.endsWith(' (channel)'));
+    });
   }
 
   function hasAncestor(node, predicate, maxDepth) {
@@ -2607,7 +2625,8 @@ module.exports = function formatDiscord(nodes) {
     };
   }
 
-  function formatServerChannel() {
+  function formatServerChannel(params) {
+    params = params || {};
     var lines = [];
     var chanInfo = extractChannelInfo();
 
@@ -2880,7 +2899,10 @@ module.exports = function formatDiscord(nodes) {
       result = formatDmConversation();
       break;
     case 'server_channel':
-      result = formatServerChannel();
+      result = formatServerChannel(page.params);
+      break;
+    case 'server_root':
+      result = channelRendered() ? formatServerChannel(page.params) : formatUnknown();
       break;
     default:
       result = formatUnknown();
