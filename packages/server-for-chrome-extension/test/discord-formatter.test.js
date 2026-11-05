@@ -729,3 +729,48 @@ describe('discord formatter: server-only URL routing', () => {
     assert.strictEqual(formatDiscord(dmConversationNodes().nodes).pageType, 'dm_conversation');
   });
 });
+
+describe('discord formatter: serverId / channelId extras', () => {
+  test('server-only page renders like a channel page and derives channelId', () => {
+    const fx = serverOnlyPage({ header: true, main: true, toggle: 'Hide', groups: TWO_GROUPS });
+    const r = formatDiscord(fx.nodes);
+    const lines = r.tree.split('\n');
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(lines[0], 'Discord | Alpha Guild | #general');
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels, 'Channels section present');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.strictEqual(r.serverId, '1');
+    assert.strictEqual(r.channelId, '10');
+    assert.strictEqual(r.memberListOpen, true);
+    assert.ok(lines.includes('[' + r.memberListToggleRef + '] Hide Member List (button)'));
+    assert.ok(r.tree.includes('--- Members ---'));
+  });
+
+  test('full channel URL: channelId is the URL second segment', () => {
+    const r = formatDiscord(serverChannelNodes().nodes);
+    assert.strictEqual(r.serverId, '800000000000000001');
+    assert.strictEqual(r.channelId, '800000000000000002');
+    const r2 = formatDiscord(serverOnlyPage({ url: 'https://discord.com/channels/1/11', header: true }).nodes);
+    assert.strictEqual(r2.channelId, '11');
+  });
+
+  test('channelId derived from the main landmark when no header heading exists', () => {
+    const r = formatDiscord(serverOnlyPage({ main: true, title: 'Discord' }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.channelId, '10');
+  });
+
+  test('channelId derived from the Invite to Channel child when no name source matches', () => {
+    const r = formatDiscord(serverOnlyPage({ header: 'Alpha Guild', title: 'Discord' }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.channelId, '10');
+  });
+
+  test('channelId is null when nothing identifies the channel', () => {
+    const r = formatDiscord(serverOnlyPage({ header: 'Alpha Guild', title: 'Discord', invite: false }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.serverId, '1');
+    assert.strictEqual(r.channelId, null);
+  });
+});
