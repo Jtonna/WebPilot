@@ -25,7 +25,7 @@ const GUILD_URL = (g, c) => `https://discord.com/channels/${g}/${c}`;
  * opts.onClick(target, state, env) may mutate state / throw.
  */
 function makeEnv(state, opts = {}) {
-  const env = { gen: 0, clicks: [], stale: [], fetches: 0, state };
+  const env = { gen: 0, clicks: [], types: [], stale: [], fetches: 0, state };
   env.browser = {
     async getAccessibilityTree() {
       env.gen++;
@@ -54,9 +54,14 @@ function makeEnv(state, opts = {}) {
           mentions: 0
         })),
         dms: state.dms || [],
+        hasBlockingDialog: !!state.blocking,
+        ...(state.blocking ? { blockingDialog: state.blocking } : {}),
         totalUnread: state.totalUnread === undefined ? null : state.totalUnread,
         ...memberFields(state, env, g)
       };
+    },
+    async type(args) {
+      env.types.push(args);
     },
     async getTabs() {
       return [{ id: 1, url: 'https://example.com' }, { id: TAB, url: state.url }];
@@ -553,4 +558,52 @@ test('open_member_list: non-server page fails immediately', async () => {
   assert.strictEqual(env.fetches, 1);
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.pageType, 'dm_conversation');
+});
+
+// --- blocking popup guard ---
+const BLOCKING = {
+  name: 'Shop promo',
+  closeRef: 'e99',
+  buttons: [{ ref: 'e99', text: 'Close' }],
+  headings: ['New in the shop']
+};
+
+for (const [name, params] of [
+  ['send_message', { text: 'hi' }],
+  ['check_sidebar', { timeoutMs: 1000 }],
+  ['open_server', { name: 'Alpha', timeoutMs: 1000 }],
+  ['check_dm_list', { timeoutMs: 1000 }],
+  ['open_member_list', { timeoutMs: 1000 }]
+]) {
+  test(`${name}: returns blocked result without acting while a popup is open`, async () => {
+    const st = serverState(['Alpha'], { blocking: BLOCKING, folders: [{ name: 'F', expanded: false }] });
+    const env = makeEnv(st);
+    const r = await workflows[name].run({
+      params,
+      browser: env.browser,
+      tabId: TAB,
+      findInTree: () => ({ ref: 'composer' })
+    });
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.blocked, true);
+    assert.strictEqual(r.reason, 'blocking_dialog');
+    assert.ok(r.message.includes('modal dialog'));
+    assert.ok(r.message.includes('e99'));
+    assert.deepStrictEqual(r.blockingDialog, BLOCKING);
+    assert.strictEqual(env.clicks.length, 0);
+    assert.strictEqual(env.types.length, 0);
+  });
+}
+
+test('hasBlockingDialog false leaves open_server unchanged', async () => {
+  const st = serverState(['Alpha', 'Gamma'], {
+    url: GUILD_URL('1', '10'),
+    pageType: 'server_channel',
+    serverName: 'Alpha'
+  });
+  const env = makeEnv(st);
+  const r = await run('open_server', env, { name: 'ALPHA', timeoutMs: 1000 });
+  assert.strictEqual(r.blocked, undefined);
+  assert.strictEqual(r.alreadyOpen, true);
+  assert.strictEqual(env.clicks.length, 0);
 });

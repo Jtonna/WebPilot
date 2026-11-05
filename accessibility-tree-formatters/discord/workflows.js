@@ -183,6 +183,28 @@ function fetchTree(ctx) {
   return ctx.browser.getAccessibilityTree({ tab_id: ctx.tabId });
 }
 
+/**
+ * Returns a blocked result when the formatter reports a modal dialog covering
+ * the page, otherwise null. Workflows call this right after their first tree fetch.
+ */
+function blockedByDialog(tree) {
+  if (!tree || !tree.hasBlockingDialog) return null;
+  const d = tree.blockingDialog || {};
+  const name = d.name || 'Dialog';
+  const closeRef = d.closeRef || 'unknown';
+  return {
+    ok: false,
+    blocked: true,
+    reason: 'blocking_dialog',
+    message:
+      `A modal dialog "${name}" is covering the page. Clicking or running workflows on any other elements ` +
+      'will not work until the dialog is closed. Call browser_get_accessibility_tree for this tab, click the ' +
+      `Close ref shown in the BLOCKING POPUP block (currently ${closeRef}), then re-fetch the tree and run this ` +
+      'workflow again.',
+    blockingDialog: tree.blockingDialog
+  };
+}
+
 function foldersOf(tree) {
   return (tree && tree.folders) || [];
 }
@@ -198,6 +220,7 @@ function serversOf(tree) {
  */
 async function expandCollapsedFolders(ctx) {
   let tree = await fetchTree(ctx);
+  if (blockedByDialog(tree)) return { tree, pending: false, warnings: [] };
   for (let round = 0; round < 3; round++) {
     const collapsed = foldersOf(tree).filter((f) => f.expanded === false);
     if (collapsed.length === 0) break;
@@ -304,6 +327,8 @@ module.exports = {
       // discord.js formatComposerLine. Pre-1.1.0 formatters emitted just
       // `[eN] Message textbox`; the selector below matches both shapes.
       const tree = await browser.getAccessibilityTree({ tab_id: tabId });
+      const blocked = blockedByDialog(tree);
+      if (blocked) return blocked;
 
       const composer = findInTree(tree, {
         name_starts_with: 'Message ',
@@ -360,6 +385,8 @@ module.exports = {
         warnings = r.warnings;
         pending = r.pending;
       }
+      const blocked = blockedByDialog(tree);
+      if (blocked) return blocked;
       const servers = serversOf(tree);
       const result = { servers, folders: foldersOf(tree), serverCount: servers.length };
       if (pending) return { pending: true, message: PENDING_MESSAGE, ...result };
@@ -394,6 +421,8 @@ module.exports = {
       const target = p.name;
 
       let tree = await fetchTree(ctx);
+      const blocked = blockedByDialog(tree);
+      if (blocked) return blocked;
       let res = resolveServer(serversOf(tree), target);
       if (res.kind === 'none' && foldersOf(tree).some((f) => f.expanded === false)) {
         const r = await expandFoldersUntilFound(ctx, target, tree);
@@ -471,6 +500,8 @@ module.exports = {
       const ctx = makeCtx(params, browser, tabId);
       const isDm = (t) => t && (t.pageType === 'dm_list' || t.pageType === 'dm_conversation');
       let tree = await fetchTree(ctx);
+      const blocked = blockedByDialog(tree);
+      if (blocked) return blocked;
       if (!isDm(tree)) {
         await safeClick(browser, { selector: HOME_SELECTOR, tab_id: tabId });
         for (;;) {
@@ -510,6 +541,8 @@ module.exports = {
       const ctx = makeCtx(params, browser, tabId);
       const counts = (t) => ({ memberCount: t.memberCount || 0, memberTotal: t.memberTotal || 0 });
       let tree = await fetchTree(ctx);
+      const blocked = blockedByDialog(tree);
+      if (blocked) return blocked;
       if (!tree || tree.pageType !== 'server_channel') {
         return { ok: false, reason: 'not a server channel', pageType: tree && tree.pageType };
       }
