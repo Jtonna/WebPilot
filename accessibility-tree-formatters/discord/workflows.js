@@ -42,6 +42,8 @@
 
 const HOME_SELECTOR = '[data-list-item-id="guildsnav___home"]';
 const DEFAULT_TIMEOUT_MS = 42000;
+// /channels/<serverId> with an optional /<channelId>; server-only URLs allowed.
+const SERVER_URL_RE = /\/channels\/(\d+)(?:\/(\d+))?(?:[/?#]|$)/;
 const PENDING_MESSAGE =
   'Timed out waiting for Discord; a late click may still apply — re-read state ' +
   '(e.g. call check_sidebar or get the tree) before retrying.';
@@ -399,7 +401,8 @@ module.exports = {
     description:
       'Open a Discord server by name. Matches the exact name first, then ignoring case, emoji and punctuation, ' +
       'then a unique partial name; ambiguous or unknown names return an error listing close matches. ' +
-      'If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified }, ' +
+      'If the server is not visible, expands collapsed folders one at a time (unnamed folders listing the name first) and stops as soon as it is found; folders are left expanded. Returns { serverId, channelId, name, url, verified } ' +
+      '(channelId may be null when Discord lands on a server-only URL; read the tree\'s channelId extra), ' +
       'or { alreadyOpen: true, ... } if that server is already showing. If it returns pending:true it timed out; ' +
       'a late click may still apply, so re-read state (call check_sidebar or get the tree) before retrying.',
     parameters: {
@@ -437,13 +440,12 @@ module.exports = {
       const matchedName = matched.name;
 
       const preUrl = await getTabUrl(ctx);
-      const preMatch = /\/channels\/(\d+)\//.exec(preUrl);
+      const preMatch = SERVER_URL_RE.exec(preUrl);
       if (preMatch && tree.serverName && normalize(tree.serverName) === normalize(matchedName)) {
-        const full = /\/channels\/(\d+)\/(\d+)/.exec(preUrl);
         return {
           alreadyOpen: true,
           serverId: preMatch[1],
-          channelId: full ? full[2] : null,
+          channelId: preMatch[2] || tree.channelId || null,
           name: matchedName,
           url: preUrl,
           verified: true
@@ -468,14 +470,16 @@ module.exports = {
       for (;;) {
         await pollWait(ctx);
         lastUrl = await getTabUrl(ctx);
-        const m = /\/channels\/(\d+)\/(\d+)/.exec(lastUrl);
+        const m = SERVER_URL_RE.exec(lastUrl);
         if (m && lastUrl !== preUrl) {
           let verified = false;
+          let after = null;
           if (remaining(ctx) > 0) {
-            const after = await fetchTree(ctx);
+            after = await fetchTree(ctx);
             verified = normalize(after && after.serverName) === normalize(matchedName);
           }
-          return { serverId: m[1], channelId: m[2], name: matchedName, url: lastUrl, verified };
+          const channelId = m[2] || (after && after.channelId) || null;
+          return { serverId: m[1], channelId, name: matchedName, url: lastUrl, verified };
         }
         if (remaining(ctx) <= 0) {
           return { pending: true, message: PENDING_MESSAGE, name: matchedName, lastUrl };

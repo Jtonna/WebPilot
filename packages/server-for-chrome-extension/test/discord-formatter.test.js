@@ -664,3 +664,143 @@ describe('discord formatter: blocking promo dialog', () => {
     assert.deepStrictEqual(r.blockingDialog.headings, []);
   });
 });
+
+// --- Server-only URLs (#157) -------------------------------------------------
+
+const GUILD_URL = 'https://discord.com/channels/1';
+
+// Server page whose URL may lack the channel segment. opts: { url, title,
+// header: false | true | '<heading name>', main: bool, toggle, groups,
+// invite (default true), noNames }. The channel list holds "general"
+// (.../1/10, current, Invite child) and "build-general" (.../1/11).
+function serverOnlyPage(opts) {
+  opts = opts || {};
+  const b = new Builder(opts.url || GUILD_URL, opts.title !== undefined ? opts.title : '(3) Discord | #general | Alpha Guild');
+  const sb = b.sidebar();
+  fillSidebar(b, sb);
+  const chanNav = b.add(b.root, 'navigation', 'Alpha Guild (server)');
+  const list = b.add(chanNav, 'list', 'Channels');
+  const catItem = b.add(list, 'listitem', '');
+  const catBtn = b.add(catItem, 'button', 'INFO (category)');
+  b.add(catBtn, 'heading', 'INFO');
+  const general = b.channelLink(list, 'general (text channel)', 'https://discord.com/channels/1/10', { invite: opts.invite !== false });
+  const build = b.channelLink(list, 'build-general (text channel)', 'https://discord.com/channels/1/11');
+  let header = null;
+  if (opts.header) {
+    header = b.channelHeader(b.root, {
+      toggle: opts.toggle,
+      heading: typeof opts.header === 'string' ? opts.header : undefined,
+    });
+  }
+  if (opts.main) b.mainLandmark(b.root, 'general');
+  const panel = opts.groups ? b.membersPanel(b.root, opts.groups) : null;
+  return { nodes: b.build(), general: general, build: build, header: header, panel: panel };
+}
+
+describe('discord formatter: server-only URL routing', () => {
+  test('server-only URL with a Channel header region routes to server_channel', () => {
+    const r = formatDiscord(serverOnlyPage({ header: true }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+  });
+
+  test('server-only URL with only a "(channel)" main landmark routes to server_channel', () => {
+    const r = formatDiscord(serverOnlyPage({ main: true }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+  });
+
+  test('server-only URL with no rendered channel stays unknown', () => {
+    const r = formatDiscord(serverOnlyPage().nodes);
+    assert.strictEqual(r.pageType, 'unknown');
+  });
+
+  test('server-only URL with a trailing slash routes the same way', () => {
+    const r = formatDiscord(serverOnlyPage({ url: GUILD_URL + '/', header: true }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+  });
+
+  test('full channel URL is unchanged', () => {
+    assert.strictEqual(formatDiscord(serverChannelNodes().nodes).pageType, 'server_channel');
+    const r = formatDiscord(serverOnlyPage({ url: 'https://discord.com/channels/1/10' }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+  });
+
+  test('@me URLs are unchanged', () => {
+    assert.strictEqual(formatDiscord(dmListNodes().nodes).pageType, 'dm_list');
+    assert.strictEqual(formatDiscord(dmConversationNodes().nodes).pageType, 'dm_conversation');
+  });
+});
+
+describe('discord formatter: serverId / channelId extras', () => {
+  test('server-only page renders like a channel page and derives channelId', () => {
+    const fx = serverOnlyPage({ header: true, main: true, toggle: 'Hide', groups: TWO_GROUPS });
+    const r = formatDiscord(fx.nodes);
+    const lines = r.tree.split('\n');
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(lines[0], 'Discord | Alpha Guild | #general');
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels, 'Channels section present');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.strictEqual(r.serverId, '1');
+    assert.strictEqual(r.channelId, '10');
+    assert.strictEqual(r.memberListOpen, true);
+    assert.ok(lines.includes('[' + r.memberListToggleRef + '] Hide Member List (button)'));
+    assert.ok(r.tree.includes('--- Members ---'));
+  });
+
+  test('full channel URL: channelId is the URL second segment', () => {
+    const r = formatDiscord(serverChannelNodes().nodes);
+    assert.strictEqual(r.serverId, '800000000000000001');
+    assert.strictEqual(r.channelId, '800000000000000002');
+    const r2 = formatDiscord(serverOnlyPage({ url: 'https://discord.com/channels/1/11', header: true }).nodes);
+    assert.strictEqual(r2.channelId, '11');
+  });
+
+  test('channelId derived from the main landmark when no header heading exists', () => {
+    const r = formatDiscord(serverOnlyPage({ main: true, title: 'Discord' }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.channelId, '10');
+  });
+
+  test('channelId derived from the Invite to Channel child when no name source matches', () => {
+    const r = formatDiscord(serverOnlyPage({ header: 'Alpha Guild', title: 'Discord' }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.channelId, '10');
+  });
+
+  test('channelId is null when nothing identifies the channel', () => {
+    const r = formatDiscord(serverOnlyPage({ header: 'Alpha Guild', title: 'Discord', invite: false }).nodes);
+    assert.strictEqual(r.pageType, 'server_channel');
+    assert.strictEqual(r.serverId, '1');
+    assert.strictEqual(r.channelId, null);
+  });
+});
+
+describe('discord formatter: current channel match', () => {
+  test('full URL: only the exact channel is current, not a name that contains it', () => {
+    const fx = serverOnlyPage({ url: 'https://discord.com/channels/1/10', title: 'Discord | Alpha Guild | #general' });
+    const r = formatDiscord(fx.nodes);
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.ok(!channels.some((l) => /build-general.*\(current\)/.test(l)));
+  });
+
+  test('server-only URL: build-general is not marked current', () => {
+    const r = formatDiscord(serverOnlyPage({ header: true }).nodes);
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.ok(!channels.some((l) => /build-general.*\(current\)/.test(l)));
+  });
+
+  test('unread prefix and emoji do not stop the exact match', () => {
+    const b = new Builder('https://discord.com/channels/1/12', 'Discord | Alpha Guild | #\u{1F44B}-welcome');
+    const nav = b.add(b.root, 'navigation', 'Alpha Guild (server)');
+    const list = b.add(nav, 'list', 'Channels');
+    const cat = b.add(list, 'listitem', '');
+    b.add(cat, 'button', 'INFO (category)');
+    b.channelLink(list, 'unread, \u{1F44B}-welcome (text channel)', 'https://discord.com/channels/1/12');
+    b.channelLink(list, '\u{1F44B}-welcome-archive (text channel)', 'https://discord.com/channels/1/13');
+    const channels = section(formatDiscord(b.build()).tree, 'Channels');
+    assert.strictEqual(channels.filter((l) => /\(current\)$/.test(l)).length, 1);
+    assert.ok(channels.some((l) => /\u{1F44B}-welcome \(text channel\) \(current\)$/u.test(l)));
+  });
+});

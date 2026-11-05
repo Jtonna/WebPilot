@@ -183,11 +183,12 @@ Builder.prototype.navLinks = function (parent, links) {
 // Live structure: region "Channel header" holding a title heading and sibling
 // buttons (no toolbar ancestor). opts.toggle: 'Show' | 'Hide' | null (omit the
 // toggle, as before the toolbar has rendered). opts.noBackend drops the
-// toggle's backendDOMNodeId. Returns { region, toggle }.
+// toggle's backendDOMNodeId. opts.heading overrides the title heading's name
+// (default "Alpha Guild: general"). Returns { region, toggle }.
 Builder.prototype.channelHeader = function (parent, opts) {
   opts = opts || {};
   const region = this.add(parent, 'region', 'Channel header');
-  const title = this.add(region, 'heading', 'Alpha Guild: general', { props: { level: '1' } });
+  const title = this.add(region, 'heading', opts.heading || 'Alpha Guild: general', { props: { level: '1' } });
   this.text(title, 'Alpha Guild');
   for (const nm of ['Threads', 'Notification Settings', 'Pinned Messages']) {
     this.add(region, 'button', nm, { props: { focusable: true, expanded: false } });
@@ -198,6 +199,22 @@ Builder.prototype.channelHeader = function (parent, opts) {
     if (opts.noBackend) delete toggle.backendDOMNodeId;
   }
   return { region: region, toggle: toggle };
+};
+
+// Chat-area landmark, live name "<channel> (channel)". Returns the main node.
+Builder.prototype.mainLandmark = function (parent, channelName) {
+  return this.add(parent, 'main', channelName + ' (channel)');
+};
+
+// Channel sidebar link inside its own listitem. opts.invite adds the
+// "Invite to Channel" child button the live tree renders on the current
+// channel. Returns the link.
+Builder.prototype.channelLink = function (list, linkName, url, opts) {
+  opts = opts || {};
+  const item = this.add(list, 'listitem', '');
+  const link = this.add(item, 'link', linkName, { props: { focusable: true, url: url } });
+  if (opts.invite) this.add(link, 'button', 'Invite to Channel', { props: { focusable: true } });
+  return link;
 };
 
 // Members panel. groups: [{ name, count, text?, members: [[displayName, status], ...] }].
