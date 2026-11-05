@@ -109,6 +109,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Commands in flight on a replaced extension socket are rejected immediately with "Extension connection replaced" instead of waiting out the 30s timeout. (#134)
 - `/connect` `sseUrl` and `/api/popup/state` `serverUrl` are always loopback, and the extension rewrites a stale non-loopback stored `serverUrl` to `ws://localhost:<port>`. (#136)
 - Extension reconnect race: a late close of a replaced socket after `identify_timeout` no longer leaves `identifyReconnectPending` set (which made the next socket's close skip its retry), and auto-connect keeps exactly one retry interval. (#141)
+- Discord formatter now surfaces unnamed shop/promo modals as a `--- BLOCKING POPUP ---` block at the top of the tree with `hasBlockingDialog`/`blockingDialog` extras, and Discord workflows return a `blocked` result with the fix instructions instead of clicking under the modal (#156)
 
 ## [1.1.8]
 
