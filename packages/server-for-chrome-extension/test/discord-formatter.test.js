@@ -804,3 +804,387 @@ describe('discord formatter: current channel match', () => {
     assert.ok(channels.some((l) => /\u{1F44B}-welcome \(text channel\) \(current\)$/u.test(l)));
   });
 });
+
+// --- User ids via page resolvers (#161) ---------------------------------------
+
+const ID_ALICE = '100000000000000001';
+const ID_BOB = '100000000000000002';
+const ID_CAROL = '100000000000000003';
+const ID_DAVE = '100000000000000004';
+
+function userPage(opts) {
+  opts = opts || {};
+  const b = new Builder('https://discord.com/channels/800000000000000001/800000000000000002', 'general | Alpha Guild');
+  b.channelHeader(b.root, { toggle: 'Hide' });
+  const msgs = b.messageList(b.root, 'general', opts.messages || [
+    { author: 'Alice', time: '10:00 AM', parts: ['hello ', { mention: '@Bob' }, ' there'] },
+    { author: 'Alice', time: '10:01 AM', followUp: true, parts: ['second'] },
+    { author: 'Bob', time: '10:02 AM', parts: ['ping ', { mention: '@everyone' }, ' and ', { mention: '@here' }] },
+  ]);
+  const panel = b.membersPanel(b.root, [
+    { name: 'Online', count: 2, members: [['Alice', 'Idle'], ['Bob', 'Online']] },
+    { name: 'Offline', count: 1, members: [['Carol', null]] },
+  ]);
+  const dialog = opts.dialog ? b.profileDialog(b.root, 'Dave', 'dave.d', opts.dialog) : null;
+  return { nodes: b.build(), msgs: msgs, panel: panel, dialog: dialog };
+}
+
+function dmUserPage(opts) {
+  opts = opts || {};
+  const b = new Builder('https://discord.com/channels/@me/900000000000000099', 'Discord | @Alice Example');
+  const header = opts.noHeader ? null : b.dmHeader(b.root, 'Alice Example', 'alice.ex');
+  const msgs = b.messageList(b.root, 'Alice Example', [
+    { author: 'Alice Example', time: '9:00 AM', parts: ['hi'] },
+  ]);
+  const form = b.add(b.root, 'form', '');
+  const composer = b.add(form, 'textbox', 'Message @Alice Example', { props: { focusable: true } });
+  const dialog = opts.dialog ? b.profileDialog(b.root, 'Dave', 'dave.d', opts.dialog) : null;
+  return { nodes: b.build(), header: header, msgs: msgs, composer: composer, dialog: dialog };
+}
+
+// Resolved values keyed like the formatter's requests, built from a
+// backendNodeId -> user map (what the server's resolve pass produces).
+function resolveWith(result, byBackend) {
+  const out = {};
+  for (const req of result.__resolve.requests) {
+    if (Object.prototype.hasOwnProperty.call(byBackend, req.backendNodeId)) out[req.key] = byBackend[req.backendNodeId];
+  }
+  return out;
+}
+
+function user(id, username, globalName) {
+  return {
+    id: id,
+    username: username === undefined ? null : username,
+    globalName: globalName === undefined ? null : globalName,
+  };
+}
+
+function lineRe(text) {
+  return new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/<e>/g, 'e\\d+') + '$');
+}
+
+describe('discord formatter: user id resolve hook', () => {
+  test('__resolve is non-enumerable, base result has no markers and plain extras', () => {
+    const r = formatDiscord(userPage().nodes);
+    assert.ok(r.__resolve, 'hook present');
+    assert.ok(!Object.keys(r).includes('__resolve'));
+    assert.ok(!JSON.stringify(r).includes('\u0000'));
+    assert.ok(!r.tree.includes('[user='));
+    assert.deepStrictEqual(r.users, {});
+    assert.strictEqual(r.usersResolved, false);
+    assert.strictEqual(typeof r.__resolve.apply, 'function');
+    for (const k of ['user', 'messageAuthor', 'mention', 'dmRecipient']) {
+      assert.strictEqual(r.__resolve.resolvers[k], formatDiscord.pageResolvers[k].toString());
+    }
+    // spreading (what an old server does) drops the hook
+    assert.ok(!('__resolve' in Object.assign({}, r)));
+  });
+
+  test('base tree text is unchanged by the feature', () => {
+    const r = formatDiscord(userPage().nodes);
+    const msgs = section(r.tree, 'Messages');
+    assert.match(msgs[0], lineRe('[<e>] [<e>:Alice] (10:00 AM): hello @Bob there'));
+    assert.match(msgs[1], lineRe('[<e>] Alice (10:01 AM): second'));
+    assert.match(msgs[2], lineRe('[<e>] [<e>:Bob] (10:02 AM): ping @everyone and @here'));
+    const tree = r.tree.split('\n');
+    assert.ok(tree.some((l) => lineRe('  [<e>] Alice (Idle)').test(l)));
+    assert.ok(tree.some((l) => lineRe('  [<e>] Carol').test(l)));
+  });
+
+  test('apply({}) returns the base tree, usersResolved true, no ids', () => {
+    const r = formatDiscord(userPage().nodes);
+    const a = r.__resolve.apply({});
+    assert.strictEqual(a.tree, r.tree);
+    assert.strictEqual(a.usersResolved, true);
+    assert.deepStrictEqual(a.users, {});
+    assert.ok(a.members.every((m) => m.userId === null));
+    assert.ok(!('__resolve' in a));
+    assert.strictEqual(r.__resolve.apply(null).tree, r.tree);
+  });
+
+  test('requests: one per member, message, user mention; none for @everyone/@here', () => {
+    const fx = userPage();
+    const r = formatDiscord(fx.nodes);
+    const reqs = r.__resolve.requests;
+    const byResolver = (n) => reqs.filter((q) => q.resolver === n);
+    assert.strictEqual(byResolver('mention').length, 1);
+    assert.strictEqual(byResolver('mention')[0].backendNodeId, fx.msgs.items[0].mentions[0].backendDOMNodeId);
+    assert.deepStrictEqual(byResolver('messageAuthor').map((q) => q.backendNodeId),
+      fx.msgs.items.map((it) => it.item.backendDOMNodeId));
+    assert.deepStrictEqual(byResolver('user').map((q) => q.backendNodeId),
+      fx.panel.items.map((li) => li.backendDOMNodeId));
+    assert.strictEqual(new Set(reqs.map((q) => q.key)).size, reqs.length);
+    reqs.forEach((q) => assert.deepStrictEqual(Object.keys(q).sort(), ['backendNodeId', 'key', 'resolver']));
+  });
+
+  test('resolved: member, message, follow-up and mention lines carry [user=ID]; refs unchanged', () => {
+    const fx = userPage();
+    const r = formatDiscord(fx.nodes);
+    const [m1, m2, m3] = fx.msgs.items;
+    const [pa, pb, pc] = fx.panel.items;
+    const a = r.__resolve.apply(resolveWith(r, {
+      [m1.item.backendDOMNodeId]: user(ID_ALICE, 'alice', 'Alice'),
+      [m2.item.backendDOMNodeId]: user(ID_ALICE, 'alice', 'Alice'),
+      [m3.item.backendDOMNodeId]: user(ID_BOB, 'bob', null),
+      [m1.mentions[0].backendDOMNodeId]: user(ID_BOB),
+      [pa.backendDOMNodeId]: user(ID_ALICE, 'alice', 'Alice'),
+      [pb.backendDOMNodeId]: user(ID_BOB, 'bob', 'Bobby'),
+      [pc.backendDOMNodeId]: user(ID_CAROL, 'carol', null),
+    }));
+    assert.deepStrictEqual(a.refs, r.refs);
+    assert.strictEqual(a.elementCount, r.elementCount);
+    const msgs = section(a.tree, 'Messages');
+    assert.match(msgs[0], lineRe('[<e>] [<e>:Alice] [user=' + ID_ALICE + '] (10:00 AM): hello @Bob [user=' + ID_BOB + '] there'));
+    assert.match(msgs[1], lineRe('[<e>] Alice [user=' + ID_ALICE + '] (10:01 AM): second'));
+    assert.match(msgs[2], lineRe('[<e>] [<e>:Bob] [user=' + ID_BOB + '] (10:02 AM): ping @everyone and @here'));
+    const lines = a.tree.split('\n');
+    assert.ok(lines.includes('  [' + r.members[0].ref + '] Alice [user=' + ID_ALICE + '] (Idle)'));
+    assert.ok(lines.includes('  [' + r.members[2].ref + '] Carol [user=' + ID_CAROL + ']'));
+    assert.deepStrictEqual(a.members.map((m) => m.userId), [ID_ALICE, ID_BOB, ID_CAROL]);
+    // the id-only mention entry does not erase the richer member entry
+    assert.deepStrictEqual(a.users[ID_BOB], { id: ID_BOB, username: 'bob', globalName: 'Bobby' });
+    assert.deepStrictEqual(Object.keys(a.users).sort(), [ID_ALICE, ID_BOB, ID_CAROL]);
+    // base result untouched
+    assert.ok(!r.tree.includes('[user='));
+    assert.ok(r.members.every((m) => m.userId === null));
+  });
+
+  test('unresolved and invalid values render nothing', () => {
+    const fx = userPage();
+    const r = formatDiscord(fx.nodes);
+    const a = r.__resolve.apply(resolveWith(r, {
+      [fx.panel.items[0].backendDOMNodeId]: { id: '12345', username: 'x', globalName: null },
+      [fx.panel.items[1].backendDOMNodeId]: null,
+      [fx.panel.items[2].backendDOMNodeId]: { id: 1000000000000000 },
+    }));
+    assert.strictEqual(a.tree, r.tree);
+    assert.deepStrictEqual(a.users, {});
+  });
+
+  test('members[].username comes from the avatar image without resolution', () => {
+    const r = formatDiscord(userPage().nodes);
+    assert.deepStrictEqual(r.members.map((m) => [m.name, m.username, m.status, m.userId]), [
+      ['Alice', 'alice', 'Idle', null],
+      ['Bob', 'bob', 'Online', null],
+      ['Carol', 'carol', null, null],
+    ]);
+  });
+
+  test('page text containing a marker sequence cannot inject a tag', () => {
+    const fx = userPage({
+      messages: [{ author: 'Mallory', time: '10:00 AM', parts: ['evil \u0000Um:e1\u0000 \u0000Uu:e5\u0000 text'] }],
+    });
+    const r = formatDiscord(fx.nodes);
+    assert.ok(!JSON.stringify(r).includes('\u0000'));
+    const all = {};
+    for (const q of r.__resolve.requests) all[q.key] = user(ID_DAVE);
+    const a = r.__resolve.apply(all);
+    const line = section(a.tree, 'Messages')[0];
+    assert.match(line, lineRe('[<e>] [<e>:Mallory] [user=' + ID_DAVE + '] (10:00 AM): evil Um:e1 Uu:e5 text'));
+    assert.strictEqual(a.tree.split('[user=').length - 1, r.__resolve.requests.length);
+  });
+
+  test('mention as a direct article child (descendants order quirk) still tags the mention', () => {
+    const fx = userPage({
+      messages: [
+        { author: 'Alice', time: '10:00 AM', parts: ['x'] },
+        { author: 'Alice', time: '10:01 AM', followUp: true, mentionDirect: true, parts: ['yo ', { mention: '@Carol' }, ' end'] },
+      ],
+    });
+    const r = formatDiscord(fx.nodes);
+    const base = section(r.tree, 'Messages')[1];
+    assert.ok(base.includes('@Carol'));
+    const a = r.__resolve.apply(resolveWith(r, { [fx.msgs.items[1].mentions[0].backendDOMNodeId]: user(ID_CAROL) }));
+    assert.strictEqual(section(a.tree, 'Messages')[1], base.replace('@Carol', '@Carol [user=' + ID_CAROL + ']'));
+  });
+
+  test('page with no taggable nodes has no hook but still has users extras', () => {
+    const r = formatDiscord(dmListNodes().nodes);
+    assert.strictEqual(r.__resolve, undefined);
+    assert.deepStrictEqual(r.users, {});
+    assert.strictEqual(r.usersResolved, false);
+  });
+});
+
+describe('discord formatter: DM header and profile popout ids', () => {
+  test('DM header: display (@username) from the header heading, tagged after the label', () => {
+    const fx = dmUserPage();
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.tree.split('\n')[0], 'Discord | Alice Example (@alice.ex) (DM)');
+    assert.strictEqual(r.recipientUsername, 'alice.ex');
+    assert.strictEqual(r.recipientDisplayName, 'Alice Example');
+    assert.strictEqual(r.recipientId, null);
+    const req = r.__resolve.requests.find((q) => q.key === 'dm');
+    assert.strictEqual(req.resolver, 'dmRecipient');
+    assert.strictEqual(req.backendNodeId, fx.header.button.backendDOMNodeId);
+    const a = r.__resolve.apply({ dm: user(ID_ALICE, 'alice.ex', 'Alice Example') });
+    assert.strictEqual(a.tree.split('\n')[0], 'Discord | Alice Example (@alice.ex) [user=' + ID_ALICE + '] (DM)');
+    assert.strictEqual(a.recipientId, ID_ALICE);
+    assert.deepStrictEqual(a.users[ID_ALICE], { id: ID_ALICE, username: 'alice.ex', globalName: 'Alice Example' });
+  });
+
+  test('DM without the header region keeps the title-based label and no dm request', () => {
+    const r = formatDiscord(dmUserPage({ noHeader: true }).nodes);
+    assert.strictEqual(r.tree.split('\n')[0], 'Discord | @Alice (DM)');
+    assert.ok(!r.__resolve.requests.some((q) => q.key === 'dm'));
+    assert.strictEqual(r.__resolve.apply({}).recipientId, null);
+  });
+
+  test('profile popout: profile extra, username, roles, textbox as message ref, tagged header', () => {
+    const fx = userPage({ dialog: { roles: ['Mods', 'Helpers'] } });
+    const r = formatDiscord(fx.nodes);
+    const p = r.profile;
+    assert.deepStrictEqual(Object.keys(p).sort(), ['closeRef', 'messageButtonRef', 'name', 'roles', 'userId', 'username']);
+    assert.strictEqual(p.name, 'Dave');
+    assert.strictEqual(p.username, 'dave.d');
+    assert.strictEqual(p.userId, null);
+    assert.deepStrictEqual(p.roles, ['Mods', 'Helpers']);
+    assert.strictEqual(r.refs[p.messageButtonRef], fx.dialog.textbox.backendDOMNodeId);
+    assert.strictEqual(p.closeRef, null);
+    const lines = r.tree.split('\n');
+    assert.ok(lines.includes("--- Dave's profile ---"));
+    assert.ok(lines.includes('Roles: Mods, Helpers'));
+    const req = r.__resolve.requests.find((q) => q.key === 'dialog');
+    assert.strictEqual(req.resolver, 'user');
+    assert.strictEqual(req.backendNodeId, fx.dialog.dialog.backendDOMNodeId);
+    const a = r.__resolve.apply({ dialog: user(ID_DAVE, 'dave.d', 'Dave') });
+    assert.ok(a.tree.split('\n').includes("--- Dave's profile [user=" + ID_DAVE + '] ---'));
+    assert.strictEqual(a.profile.userId, ID_DAVE);
+    assert.strictEqual(r.profile.userId, null);
+  });
+
+  test('profile popout: Message button wins over the textbox; Close button gives closeRef', () => {
+    const fx = userPage({ dialog: { messageButton: true, close: true } });
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.refs[r.profile.messageButtonRef], fx.dialog.messageButton.backendDOMNodeId);
+    assert.strictEqual(r.refs[r.profile.closeRef], fx.dialog.closeBtn.backendDOMNodeId);
+    assert.deepStrictEqual(r.profile.roles, []);
+  });
+
+  test('profile popout on a DM page: profile extra, composer is NOT the popout textbox', () => {
+    const fx = dmUserPage({ dialog: {} });
+    const r = formatDiscord(fx.nodes);
+    assert.strictEqual(r.profile.username, 'dave.d');
+    const composerLine = r.tree.split('\n').find((l) => / textbox$/.test(l));
+    const ref = composerLine.match(/^\[(e\d+)\]/)[1];
+    assert.strictEqual(r.refs[ref], fx.composer.backendDOMNodeId);
+    assert.strictEqual(composerLine, '[' + ref + '] Message @Alice Example textbox');
+  });
+
+  test('settings and plain dialogs carry no profile', () => {
+    assert.strictEqual(formatDiscord(userPage().nodes).profile, undefined);
+    const b = new Builder('https://discord.com/channels/800000000000000001/800000000000000002', 'general | Alpha Guild');
+    const d = b.add(b.root, 'dialog', 'Channel Settings', { props: { focusable: true } });
+    b.add(d, 'tabpanel', 'Overview');
+    b.add(d, 'textbox', 'Message @x', { props: { focusable: true } });
+    const r2 = formatDiscord(b.build());
+    assert.strictEqual(r2.profile, undefined);
+    assert.ok(!r2.__resolve || !r2.__resolve.requests.some((q) => q.key === 'dialog'));
+  });
+});
+
+// --- Page resolvers -----------------------------------------------------------
+
+// Recompile from source text: proves each resolver is self-contained.
+function compile(fn) {
+  return new Function('return (' + fn.toString() + ')')();
+}
+
+// Fake DOM element whose fiber chain carries the given memoizedProps, from
+// the element's own fiber (index 0) upward.
+function fakeEl(propsChain, key) {
+  let fiber = null;
+  for (let i = propsChain.length - 1; i >= 0; i--) {
+    fiber = { memoizedProps: propsChain[i], return: fiber };
+  }
+  const el = { className: 'x' };
+  el[key || '__reactFiber$abc123'] = fiber;
+  return el;
+}
+
+const R = {};
+for (const k of ['user', 'messageAuthor', 'mention', 'dmRecipient']) R[k] = compile(formatDiscord.pageResolvers[k]);
+const FULL = { id: ID_ALICE, username: 'alice', globalName: 'Alice', email: 'a@x.test', token: 'secret', avatar: 'h' };
+
+describe('discord page resolvers', () => {
+  test('pageResolvers is exported next to the formatter function', () => {
+    assert.strictEqual(typeof formatDiscord, 'function');
+    assert.deepStrictEqual(Object.keys(formatDiscord.pageResolvers).sort(), ['dmRecipient', 'mention', 'messageAuthor', 'user']);
+  });
+
+  test('user: finds props.user up the chain and returns only id/username/globalName', () => {
+    const r = R.user.call(fakeEl([{}, { className: 'y' }, {}, { user: FULL }]));
+    assert.deepStrictEqual(r, { id: ID_ALICE, username: 'alice', globalName: 'Alice' });
+    assert.deepStrictEqual(Object.keys(r), ['id', 'username', 'globalName']);
+  });
+
+  test('user: accepts global_name and the legacy __reactInternalInstance$ key', () => {
+    const r = R.user.call(fakeEl([{ author: { id: ID_BOB, username: 'bob', global_name: 'Bobby' } }], '__reactInternalInstance$zz'));
+    assert.deepStrictEqual(r, { id: ID_BOB, username: 'bob', globalName: 'Bobby' });
+  });
+
+  test('user: message.author is used when there is no user prop', () => {
+    assert.strictEqual(R.user.call(fakeEl([{ message: { author: { id: ID_BOB } } }])).id, ID_BOB);
+  });
+
+  test('null: no fiber key, non-snowflake id, throwing getter, cyclic and too-deep chains', () => {
+    assert.strictEqual(R.user.call({ foo: 1 }), null);
+    assert.strictEqual(R.user.call(fakeEl([{ user: { id: '12345' } }])), null);
+    assert.strictEqual(R.user.call(fakeEl([{ user: { id: 100000000000000001 } }])), null);
+    const throwing = {};
+    Object.defineProperty(throwing, 'user', { get() { throw new Error('boom'); } });
+    Object.defineProperty(throwing, 'message', { get() { throw new Error('boom'); } });
+    for (const k of Object.keys(R)) assert.strictEqual(R[k].call(fakeEl([throwing])), null, k);
+    const cyc = { memoizedProps: {}, return: null };
+    cyc.return = cyc;
+    for (const k of Object.keys(R)) assert.strictEqual(R[k].call({ __reactFiber$q: cyc }), null, k);
+    const deep = [];
+    for (let i = 0; i < 26; i++) deep.push({});
+    deep.push({ user: FULL });
+    for (const k of Object.keys(R)) assert.strictEqual(R[k].call(fakeEl(deep)), null, k);
+    assert.strictEqual(R.user.call(fakeEl(deep.slice(2))).id, ID_ALICE);
+  });
+
+  test('messageAuthor: prefers message.author over user; rejects system messages', () => {
+    const chain = [{}, {}, { user: { id: ID_BOB }, message: { type: 0, author: FULL } }];
+    assert.deepStrictEqual(R.messageAuthor.call(fakeEl(chain)), { id: ID_ALICE, username: 'alice', globalName: 'Alice' });
+    assert.strictEqual(R.messageAuthor.call(fakeEl([{ message: { type: 19, author: FULL } }])).id, ID_ALICE);
+    assert.strictEqual(R.messageAuthor.call(fakeEl([{ message: { author: FULL } }])).id, ID_ALICE);
+    assert.strictEqual(R.messageAuthor.call(fakeEl([{ message: { type: 7, author: FULL } }, { user: { id: ID_BOB } }])), null);
+  });
+
+  test('mention: userId gives an id-only user, user prop gives the full one', () => {
+    assert.deepStrictEqual(R.mention.call(fakeEl([{}, { userId: ID_BOB }])), { id: ID_BOB, username: null, globalName: null });
+    assert.deepStrictEqual(R.mention.call(fakeEl([{}, { user: FULL, currentUser: { id: ID_DAVE } }])),
+      { id: ID_ALICE, username: 'alice', globalName: 'Alice' });
+  });
+
+  test('mention: stops at the message fiber, never returns the message author', () => {
+    assert.strictEqual(R.mention.call(fakeEl([{}, { userId: null }, { message: { author: FULL } }, { user: FULL }])), null);
+    assert.strictEqual(R.mention.call(fakeEl([{}, { message: { author: FULL }, user: FULL }])), null);
+  });
+
+  test('mention: gives up after 10 levels', () => {
+    const chain = [];
+    for (let i = 0; i < 10; i++) chain.push({});
+    chain.push({ userId: ID_BOB });
+    assert.strictEqual(R.mention.call(fakeEl(chain)), null);
+  });
+
+  test('dmRecipient: user prop, single raw recipient, single recipient id; null for group DMs', () => {
+    assert.strictEqual(R.dmRecipient.call(fakeEl([{ user: FULL }])).id, ID_ALICE);
+    assert.deepStrictEqual(R.dmRecipient.call(fakeEl([{}, { channel: { rawRecipients: [FULL], recipients: [ID_ALICE] } }])),
+      { id: ID_ALICE, username: 'alice', globalName: 'Alice' });
+    assert.deepStrictEqual(R.dmRecipient.call(fakeEl([{ channel: { recipients: [ID_BOB] } }])),
+      { id: ID_BOB, username: null, globalName: null });
+    assert.strictEqual(R.dmRecipient.call(fakeEl([{ channel: { recipients: [ID_BOB, ID_CAROL] } }])), null);
+  });
+
+  test('resolver sources reference nothing outside themselves', () => {
+    for (const k of Object.keys(formatDiscord.pageResolvers)) {
+      const src = formatDiscord.pageResolvers[k].toString();
+      assert.ok(!/require|module|PAGE_RESOLVERS|SNOWFLAKE_RE|localStorage|document|window|eval|content/.test(src), k);
+    }
+  });
+});

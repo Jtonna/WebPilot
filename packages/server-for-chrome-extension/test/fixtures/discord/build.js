@@ -236,7 +236,8 @@ Builder.prototype.membersPanel = function (parent, groups) {
     headings.push(h);
     for (const m of g.members || []) {
       const li = this.add(list, 'listitem', '', { props: { focusable: true, level: '1', expanded: false } });
-      this.add(li, 'image', m[0].toLowerCase() + ', ' + (m[1] || 'Online'));
+      // m[1] === null: offline row, avatar image named by username only
+      this.add(li, 'image', m[0].toLowerCase() + (m[1] === null ? '' : ', ' + (m[1] || 'Online')));
       this.text(li, m[0]);
       items.push(li);
     }
@@ -275,6 +276,110 @@ Builder.prototype.promoDialog = function (parent, opts) {
   if (opts.textbox) this.add(dialog, 'textbox', 'Message', { props: { focusable: true } });
   if (opts.tabpanel) this.add(dialog, 'tabpanel', 'Overview');
   return { dialog: dialog, closeBtn: closeBtn, buttons: buttons };
+};
+
+// --- Messages / DM header / profile popout (#161) ---------------------------
+
+// Message list as seen live: main "<channel> (channel)" > list "Messages in
+// <channel>" > listitem > article. A message with an author has a heading
+// (level 3) holding the author button and a time; a grouped follow-up has
+// no heading, only a time. Content sits in an unnamed generic wrapper.
+// messages: [{ author, time, parts, followUp?, mentionDirect? }] where parts
+// is an array of strings and { mention: '@Name' } entries. mentionDirect puts
+// the content parts straight under the article (no wrapper).
+// Returns { main, list, items: [{ item, article, authorBtn, mentions[] }] }.
+Builder.prototype.messageList = function (parent, channelName, messages) {
+  const main = this.add(parent, 'main', channelName + ' (channel)');
+  const group = this.add(main, 'group', '', { props: { focusable: true } });
+  const list = this.add(group, 'list', 'Messages in ' + channelName, { props: { focusable: true } });
+  const items = [];
+  for (const m of messages) {
+    const item = this.add(list, 'listitem', '', { props: { level: '1' } });
+    const text = m.parts.map(function (p) { return typeof p === 'string' ? p : p.mention; }).join('');
+    const article = this.add(item, 'article', (m.author || '') + ' , ' + text + ' , ' + m.time,
+      { props: { focusable: true } });
+    let authorBtn = null;
+    if (!m.followUp) {
+      const heading = this.add(article, 'heading', m.author + ' ' + m.time, { props: { level: '3' } });
+      authorBtn = this.add(heading, 'button', m.author, { props: { focusable: true, expanded: false } });
+      this.text(authorBtn, m.author);
+      const time = this.add(heading, 'time', '');
+      this.text(time, m.time);
+    } else {
+      const time = this.add(article, 'time', '');
+      this.text(time, m.time);
+    }
+    const wrap = m.mentionDirect ? article : this.add(article, 'generic', '');
+    const mentions = [];
+    for (const p of m.parts) {
+      if (typeof p === 'string') {
+        this.text(wrap, p);
+      } else {
+        const btn = this.add(wrap, 'button', p.mention, { props: { focusable: true, expanded: false } });
+        this.text(btn, p.mention);
+        mentions.push(btn);
+      }
+    }
+    items.push({ item: item, article: article, authorBtn: authorBtn, mentions: mentions });
+  }
+  return { main: main, list: list, items: items };
+};
+
+// Live DM header: region "Channel header" > button > heading (level 1) with
+// StaticText [displayName, username]. Returns { region, button, heading }.
+Builder.prototype.dmHeader = function (parent, displayName, username) {
+  const region = this.add(parent, 'region', 'Channel header');
+  this.text(region, 'Direct Message');
+  const button = this.add(region, 'button', displayName + ' ' + username, { props: { focusable: true } });
+  const heading = this.add(button, 'heading', displayName + ' ' + username, { props: { level: '1' } });
+  this.text(heading, displayName);
+  this.text(heading, username);
+  this.add(region, 'button', 'Start Voice Call', { props: { focusable: true } });
+  return { region: region, button: button, heading: heading };
+};
+
+// Member profile popout as seen live: dialog "<name>'s profile" with the
+// avatar image "<username>, <status>", display-name and username buttons,
+// badges, a Roles list of unnamed listitems and the inline DM textbox
+// "Message @<name>". opts: { status, roles, messageButton (adds a
+// "Message" button), close (adds a Close button), noTextbox, noBadges }.
+// Returns { dialog, textbox, messageButton, closeBtn }.
+Builder.prototype.profileDialog = function (parent, displayName, username, opts) {
+  opts = opts || {};
+  const dialog = this.add(parent, 'dialog', displayName + "'s profile", { props: { focusable: true } });
+  const h = this.add(dialog, 'heading', displayName + "'s profile", { props: { level: '1' } });
+  this.text(h, displayName + "'s profile");
+  let closeBtn = null;
+  if (opts.close) closeBtn = this.add(dialog, 'button', 'Close', { props: { focusable: true } });
+  for (const nm of ['Add Friend', 'More', 'View Full Profile']) {
+    this.add(dialog, 'button', nm, { props: { focusable: true } });
+  }
+  this.add(dialog, 'image', username + (opts.status === null ? '' : ', ' + (opts.status || 'Idle')));
+  const nameBtn = this.add(dialog, 'button', displayName, { props: { focusable: true } });
+  this.text(nameBtn, displayName);
+  this.add(dialog, 'button', 'Add Note (only visible to you)', { props: { focusable: true } });
+  const userBtn = this.add(dialog, 'button', username, { props: { focusable: true } });
+  this.text(userBtn, username);
+  if (!opts.noBadges) {
+    const badges = this.add(dialog, 'group', 'User Badges');
+    this.add(badges, 'link', 'Account Age', { props: { focusable: true } });
+  }
+  let messageButton = null;
+  if (opts.messageButton) {
+    messageButton = this.add(dialog, 'button', 'Message', { props: { focusable: true } });
+  }
+  if (opts.roles) {
+    const rl = this.add(dialog, 'list', 'Roles');
+    for (const r of opts.roles) {
+      const li = this.add(rl, 'listitem', '', { props: { level: '1' } });
+      this.text(li, r);
+    }
+  }
+  let textbox = null;
+  if (!opts.noTextbox) {
+    textbox = this.add(dialog, 'textbox', 'Message @' + displayName, { props: { focusable: true } });
+  }
+  return { dialog: dialog, textbox: textbox, messageButton: messageButton, closeBtn: closeBtn };
 };
 
 Builder.prototype.build = function () {
