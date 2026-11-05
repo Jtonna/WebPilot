@@ -774,3 +774,33 @@ describe('discord formatter: serverId / channelId extras', () => {
     assert.strictEqual(r.channelId, null);
   });
 });
+
+describe('discord formatter: current channel match', () => {
+  test('full URL: only the exact channel is current, not a name that contains it', () => {
+    const fx = serverOnlyPage({ url: 'https://discord.com/channels/1/10', title: 'Discord | Alpha Guild | #general' });
+    const r = formatDiscord(fx.nodes);
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.ok(!channels.some((l) => /build-general.*\(current\)/.test(l)));
+  });
+
+  test('server-only URL: build-general is not marked current', () => {
+    const r = formatDiscord(serverOnlyPage({ header: true }).nodes);
+    const channels = section(r.tree, 'Channels');
+    assert.ok(channels.some((l) => /\] general \(text channel\) \(current\)$/.test(l)));
+    assert.ok(!channels.some((l) => /build-general.*\(current\)/.test(l)));
+  });
+
+  test('unread prefix and emoji do not stop the exact match', () => {
+    const b = new Builder('https://discord.com/channels/1/12', 'Discord | Alpha Guild | #\u{1F44B}-welcome');
+    const nav = b.add(b.root, 'navigation', 'Alpha Guild (server)');
+    const list = b.add(nav, 'list', 'Channels');
+    const cat = b.add(list, 'listitem', '');
+    b.add(cat, 'button', 'INFO (category)');
+    b.channelLink(list, 'unread, \u{1F44B}-welcome (text channel)', 'https://discord.com/channels/1/12');
+    b.channelLink(list, '\u{1F44B}-welcome-archive (text channel)', 'https://discord.com/channels/1/13');
+    const channels = section(formatDiscord(b.build()).tree, 'Channels');
+    assert.strictEqual(channels.filter((l) => /\(current\)$/.test(l)).length, 1);
+    assert.ok(channels.some((l) => /\u{1F44B}-welcome \(text channel\) \(current\)$/u.test(l)));
+  });
+});

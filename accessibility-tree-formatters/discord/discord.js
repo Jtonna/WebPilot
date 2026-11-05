@@ -1326,6 +1326,7 @@ module.exports = function formatDiscord(nodes) {
     var channels = [];
     var chanInfo = extractChannelInfo();
     var currentChannelName = chanInfo.channelName || '';
+    var cleanCurrent2 = normalizeChannelName(currentChannelName);
 
     // --- Strategy: find ALL category buttons globally, then locate the channel list from them ---
     // Category buttons have "(category)" in their a11y name (e.g. "INFORMATION (category)")
@@ -1534,12 +1535,9 @@ module.exports = function formatDiscord(nodes) {
       if (lower2.includes('unread')) unread2 = true;
 
       var isCurrent2 = false;
-      if (currentChannelName) {
-        var cleanCurrent2 = currentChannelName.replace(/^#/, '').toLowerCase();
-        var cleanNode2 = rawName2.replace(/^#/, '').replace(/\s*\(unread\)\s*/gi, '').toLowerCase();
-        cleanNode2 = cleanNode2.replace(/^text[- ]?channel[,\s]*/i, '');
-        if (cleanNode2 === cleanCurrent2 || rawName2.toLowerCase().includes(cleanCurrent2)) isCurrent2 = true;
-      }
+      // Exact match after normalisation: a substring test would also flag
+      // "build-general" when the current channel is "general".
+      if (cleanCurrent2 && normalizeChannelName(rawName2) === cleanCurrent2) isCurrent2 = true;
       var selectedProp2 = propValue(node, 'selected');
       var currentProp2 = propValue(node, 'current');
       if (selectedProp2 === true || selectedProp2 === 'true' ||
