@@ -1,1 +1,6 @@
-[]
+[
+  {
+    "issue": 157,
+    "body": "Sub-tasks (approved plan):\n\n1. Routing: a server-only `/channels/<serverId>` URL routes to `server_channel` when a channel is rendered, else `unknown` (standard)\n2. `serverId`/`channelId` extras; `channelId` is derived from the current channel link when the URL lacks it (standard)\n3. Tighten the current-channel match to an exact comparison after normalisation (light)\n4. `open_server` workflow tolerates server-only URLs (standard)\n5. Manifests 1.4.1 / top-level 7, notes, CHANGELOG, re-sign (light)\n6. Live verification via a custom shadow formatter, read-only (light)\n7. Final verification (light)"
+  }
+]
