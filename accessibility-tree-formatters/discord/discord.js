@@ -1220,6 +1220,85 @@ module.exports = function formatDiscord(nodes) {
     return { channelName: channelName, serverName: serverName };
   }
 
+  // --- Channel name normalisation ---
+  // Reduces a channel name from any source (title "#general", header heading
+  // tail, main landmark, sidebar link "unread, 📋・rules (text channel), ...")
+  // to one comparable form: lowercase, no "unread, " prefix, no
+  // "(<kind> channel)" suffix or anything after it, no emoji / variation
+  // selectors, no leading "#". Falls back to the emoji-bearing form when the
+  // name is nothing but emoji.
+  function normalizeChannelName(raw) {
+    var s = String(raw || '').trim().toLowerCase();
+    s = s.replace(/^(?:unread,\s*)+/, '');
+    s = s.replace(/^text[- ]?channel[,\s]*/, '');
+    s = s.replace(/\s*\((?:unread|muted)\)\s*/g, ' ');
+    s = s.replace(/\s*\((?:[a-z]+\s+)?channel\).*$/, '');
+    s = s.replace(/^#/, '').trim();
+    var bare = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '');
+    bare = bare.replace(/^#/, '').trim();
+    return bare || s;
+  }
+
+  // Channel id from a channel link url ".../channels/<serverId>/<channelId>":
+  // the last path segment when it is all digits, else null.
+  function channelIdFromUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    var path = url.split(/[?#]/)[0].replace(/\/+$/, '');
+    if (path.indexOf('/channels/') < 0) return null;
+    var last = path.split('/').pop();
+    return /^\d+$/.test(last) ? last : null;
+  }
+
+  // Name of the channel the chat area renders: the Channel header heading
+  // text after the first ": " ("Run it up AI: 👋-welcome"), else the main
+  // landmark name minus " (channel)". Empty when neither exists.
+  function renderedChannelName() {
+    var header = findNode(function (node) {
+      return role(node) === 'region' && name(node) === 'Channel header';
+    });
+    if (header) {
+      var hs = preorderDescendants(header);
+      for (var i = 0; i < hs.length; i++) {
+        if (role(hs[i]) !== 'heading' || isIgnored(hs[i])) continue;
+        var hn = name(hs[i]);
+        var sep = hn.indexOf(': ');
+        if (sep >= 0 && hn.slice(sep + 2).trim()) return hn.slice(sep + 2).trim();
+      }
+    }
+    var main = findNode(function (node) {
+      return role(node) === 'main' && name(node).endsWith(' (channel)');
+    });
+    if (main) return name(main).slice(0, -' (channel)'.length).trim();
+    return '';
+  }
+
+  // channelId of the rendered channel when the URL lacks one. Tries, in
+  // order: an exact normalised-name match between renderedChannelName() and
+  // a sidebar entry, the entry flagged isCurrent, then the channel link with
+  // an "Invite to Channel" child button (shown only on the current channel).
+  function deriveChannelId(sidebarChannels) {
+    var entries = sidebarChannels.filter(function (c) {
+      return c.type !== 'category' && c.channelId;
+    });
+    var current = normalizeChannelName(renderedChannelName());
+    if (current) {
+      for (var i = 0; i < entries.length; i++) {
+        if (normalizeChannelName(entries[i].name) === current) return entries[i].channelId;
+      }
+    }
+    for (var j = 0; j < entries.length; j++) {
+      if (entries[j].isCurrent) return entries[j].channelId;
+    }
+    var links = findNodes(function (node) {
+      if (role(node) !== 'link' || !channelIdFromUrl(propValue(node, 'url'))) return false;
+      return children(node).some(function (k) {
+        return !isIgnored(k) && role(k) === 'button' && name(k).trim() === 'Invite to Channel';
+      });
+    });
+    if (links.length === 1) return channelIdFromUrl(propValue(links[0], 'url'));
+    return null;
+  }
+
   // --- Extract server sidebar channels (with categories) ---
   //
   // Discord's channel sidebar structure in the a11y tree:
@@ -1475,7 +1554,14 @@ module.exports = function formatDiscord(nodes) {
       else if (mentionCount2) annotation2 = ' (' + mentionCount2 + ' mentions)';
       else if (unread2) annotation2 = ' (unread)';
 
-      channels.push({ ref: ref2, name: displayName2, unread: unread2, isCurrent: isCurrent2, annotation: annotation2 });
+      channels.push({
+        ref: ref2,
+        name: displayName2,
+        unread: unread2,
+        isCurrent: isCurrent2,
+        annotation: annotation2,
+        channelId: channelIdFromUrl(propValue(node, 'url'))
+      });
     }
 
     return channels;
@@ -2652,6 +2738,8 @@ module.exports = function formatDiscord(nodes) {
 
     // Server channels sidebar
     var sidebarChannels = extractServerChannels();
+    var serverId = params.serverId || null;
+    var channelId = params.channelId || deriveChannelId(sidebarChannels) || null;
     if (sidebarChannels.length > 0) {
       lines.push('--- Channels ---');
       for (var ci = 0; ci < sidebarChannels.length; ci++) {
@@ -2789,6 +2877,8 @@ module.exports = function formatDiscord(nodes) {
       folders: sidebar.folders,
       serverName: chanInfo.serverName,
       channelName: chanInfo.channelName,
+      serverId: serverId,
+      channelId: channelId,
       messageCount: messageData.filter(function (m) { return m.type === 'message'; }).length,
       channelCount: sidebarChannels.length,
       memberCount: memberData.filter(function (m) { return m.type === 'member'; }).length,
