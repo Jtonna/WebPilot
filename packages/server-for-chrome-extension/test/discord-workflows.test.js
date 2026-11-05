@@ -14,7 +14,8 @@ const TAB = 7;
 const PENDING_MESSAGE =
   'Timed out waiting for Discord; a late click may still apply — re-read state ' +
   '(e.g. call check_sidebar or get the tree) before retrying.';
-const GUILD_URL = (g, c) => `https://discord.com/channels/${g}/${c}`;
+const GUILD_URL = (g, c) =>
+  c === undefined ? `https://discord.com/channels/${g}` : `https://discord.com/channels/${g}/${c}`;
 
 /**
  * Stateful fake of the browser primitives. Refs embed a fetch generation so a
@@ -54,6 +55,7 @@ function makeEnv(state, opts = {}) {
           mentions: 0
         })),
         dms: state.dms || [],
+        ...(state.channelId !== undefined ? { channelId: state.channelId } : {}),
         hasBlockingDialog: !!state.blocking,
         ...(state.blocking ? { blockingDialog: state.blocking } : {}),
         totalUnread: state.totalUnread === undefined ? null : state.totalUnread,
@@ -489,6 +491,56 @@ test('check_dm_list: pending when home navigation never lands', async () => {
   assert.strictEqual(r.pageType, 'server_channel');
 });
 
+
+test('open_server: alreadyOpen on a server-only URL takes channelId from the tree', async () => {
+  const st = serverState(['Alpha', 'Gamma'], {
+    url: GUILD_URL('1'),
+    pageType: 'server_channel',
+    serverName: 'Alpha',
+    channelId: '10'
+  });
+  const env = makeEnv(st);
+  const r = await run('open_server', env, { name: 'ALPHA', timeoutMs: 1000 });
+  assert.strictEqual(r.alreadyOpen, true);
+  assert.strictEqual(r.serverId, '1');
+  assert.strictEqual(r.channelId, '10');
+  assert.strictEqual(env.clicks.length, 0);
+});
+
+test('open_server: alreadyOpen on a server-only URL without tree channelId is null', async () => {
+  const st = serverState(['Alpha', 'Gamma'], {
+    url: GUILD_URL('1'),
+    pageType: 'server_channel',
+    serverName: 'Alpha'
+  });
+  const env = makeEnv(st);
+  const r = await run('open_server', env, { name: 'Alpha', timeoutMs: 1000 });
+  assert.strictEqual(r.alreadyOpen, true);
+  assert.strictEqual(r.serverId, '1');
+  assert.strictEqual(r.channelId, null);
+});
+
+test('open_server: click landing on a server-only URL resolves with tree channelId', async () => {
+  const st = serverState(['Alpha', 'Gamma'], {
+    url: GUILD_URL('1', '10'),
+    pageType: 'server_channel',
+    serverName: 'Alpha'
+  });
+  const env = makeEnv(st, {
+    onClick: async (args, state) => {
+      state.url = GUILD_URL('2');
+      state.serverName = 'Gamma';
+      state.channelId = '20';
+    }
+  });
+  const r = await run('open_server', env, { name: 'Gamma', timeoutMs: 3000 });
+  assert.strictEqual(r.pending, undefined);
+  assert.strictEqual(r.serverId, '2');
+  assert.strictEqual(r.channelId, '20');
+  assert.strictEqual(r.verified, true);
+  assert.strictEqual(r.url, GUILD_URL('2'));
+});
+
 // ---------------------------------------------------------------- open_member_list
 
 function memberState(member, extra = {}) {
@@ -515,6 +567,16 @@ test('open_member_list: already open is a no-op', async () => {
   const r = await run('open_member_list', env, { timeoutMs: 1000 });
   assert.strictEqual(env.clicks.length, 0);
   assert.deepStrictEqual(r, { ok: true, opened: false, memberListOpen: true, memberCount: 3, memberTotal: 41 });
+});
+
+test('open_member_list: succeeds on a server-only URL reported as server_channel', async () => {
+  const env = makeEnv(
+    memberState({ open: false, count: 3, total: 41 }, { url: GUILD_URL('800000000000000001') }),
+    { onClick: opensOnClick }
+  );
+  const r = await run('open_member_list', env, { timeoutMs: 3000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(env.clicks.length, 1);
 });
 
 test('open_member_list: closed panel gets exactly one click', async () => {
