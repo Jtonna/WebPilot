@@ -481,3 +481,94 @@ test('workflow that rethrows the block message after later commands -> blocked e
 function prime() {
   return makeHandler();
 }
+
+// #161: browser.resolveRefs is gated like getAccessibilityTree and dispatches
+// resolve_nodes with the refs and the resolver's function source.
+test('workflow resolveRefs on a blocked tab -> blocked envelope, no resolve_nodes dispatched', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  seedAgentBlock('blocked.com');
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      await browser.resolveRefs({ tab_id: 8, refs: ['e1'], resolver: function () { return 1; } });
+    },
+  };
+  assertBlockedAtB(await runWorkflow());
+  assert.ok(!sentCommands.some((c) => c.cmd === 'resolve_nodes'), 'blocked resolveRefs must not reach the extension');
+  t.mock.timers.tick(5000);
+});
+
+test('workflow resolveRefs on an allowed tab dispatches resolve_nodes', async () => {
+  let out;
+  currentWorkflow = {
+    parameters: {},
+    run: async ({ browser }) => {
+      out = await browser.resolveRefs({ tab_id: 7, refs: ['e1', 'e2'], resolver: function () { return 1; } });
+      return { ok: true };
+    },
+  };
+  const orig = fakeBridge.sendCommand;
+  fakeBridge.sendCommand = async (p, cmd, args, opts) => {
+    if (cmd === 'resolve_nodes') {
+      sentCommands.push({ cmd, args });
+      return { results: [['a', null]], errors: [null] };
+    }
+    return orig(p, cmd, args, opts);
+  };
+  try {
+    await runWorkflow();
+  } finally {
+    fakeBridge.sendCommand = orig;
+  }
+  const sent = sentCommands.find((c) => c.cmd === 'resolve_nodes');
+  assert.ok(sent, 'resolve_nodes should dispatch');
+  assert.deepEqual(sent.args.calls[0].refs, ['e1', 'e2']);
+  assert.equal(typeof sent.args.calls[0].functionDeclaration, 'string');
+  assert.match(sent.args.calls[0].functionDeclaration, /^function/);
+  assert.deepEqual(out, ['a', null]);
+});
+
+// #161: tree path runs the formatter's __resolve pass; failures fall back to
+// the base tree.
+function resolvableFormatted() {
+  const f = { tree: 'base', elementCount: 1, refs: { e1: 5 } };
+  Object.defineProperty(f, '__resolve', {
+    enumerable: false,
+    value: {
+      resolvers: { r: 'function () { return 1; }' },
+      requests: [{ key: 'e1', backendNodeId: 5, resolver: 'r' }],
+      apply: (m) => ({ tree: 'base ' + JSON.stringify(m), elementCount: 1, refs: { e1: 5 } }),
+    },
+  });
+  return f;
+}
+async function treeWith(resolveImpl) {
+  const origSend = fakeBridge.sendCommand;
+  const origFmt = fm.formatTree;
+  fakeBridge.sendCommand = async (p, cmd, args, opts) => {
+    if (cmd === 'resolve_nodes') {
+      sentCommands.push({ cmd, args });
+      return resolveImpl();
+    }
+    return origSend(p, cmd, args, opts);
+  };
+  fm.formatTree = () => resolvableFormatted();
+  try {
+    return bodyOf(await callTool(makeHandler(), "browser_get_accessibility_tree", { tab_id: 7 }));
+  } finally {
+    fakeBridge.sendCommand = origSend;
+    fm.formatTree = origFmt;
+  }
+}
+
+test('get_accessibility_tree annotates via __resolve', async () => {
+  const body = await treeWith(async () => ({ results: [['u1']], errors: [null] }));
+  assert.equal(body.tree, 'base {"e1":"u1"}');
+  assert.deepEqual(body.refs, { e1: 5 });
+  assert.equal('__resolve' in body, false);
+});
+
+test('get_accessibility_tree returns base tree when resolve_nodes rejects', async () => {
+  const body = await treeWith(async () => { throw new Error('Unknown command type: resolve_nodes'); });
+  assert.equal(body.tree, 'base');
+});

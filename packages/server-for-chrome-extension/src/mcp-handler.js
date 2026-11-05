@@ -4,6 +4,7 @@ const dns = require('node:dns').promises;
 const { buildMcpConfigJson } = require('./lib/mcp-config-template');
 const { findInTree } = require('./lib/tree-query');
 const formatterLogs = require('./formatter-logs');
+const { runResolvePass, normalizeResolverSource } = require('./lib/resolve-pass');
 const sitePolicy = require('./site-policy');
 const sitePolicyEvents = require('./site-policy-events');
 const formatterUnlockState = require('./formatter-unlock-state');
@@ -1323,6 +1324,21 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
       formatted = formatterManager.formatTree(null, nodes);
     }
 
+    // Optional page-side node resolution (#161). Any failure (old extension,
+    // timeout, bad apply output) returns the base formatted result unchanged.
+    if (formatterUrl) {
+      formatted = await runResolvePass(formatted, {
+        sendResolve: (calls) =>
+          extensionBridge.sendCommand(targetProfile, 'resolve_nodes', { tab_id: tabId, calls }, { timeout: 5000 }),
+        onApplyError: (err) => {
+          try {
+            const platform = formatterManager.getFormatterNameForUrl(formatterUrl);
+            if (platform) formatterLogs.recordError(platform, { error: err, phase: 'resolve' });
+          } catch (_e) { /* logging must never break the tree fetch */ }
+        }
+      });
+    }
+
     const { tree, elementCount, refs, ...extras } = formatted;
 
     // Build ancestry context for each ref using extractAncestryContext from default formatter
@@ -1380,7 +1396,7 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    * Each primitive resolves the target Chrome profile from the caller's
    * `apiKey` (per-agent routing) and forwards to `extensionBridge.sendCommand`.
    * The shape of the returned object — `{ getAccessibilityTree, click, type,
-   * scroll, getTabs, createTab }` — is the public contract that workflow
+   * scroll, getTabs, createTab, resolveRefs }` — is the public contract that workflow
    * authors rely on. Add fields here in lockstep with new workflow needs;
    * do not remove or rename existing fields without bumping the formatter
    * manifest schema.
@@ -1396,7 +1412,8 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
    *   type: Function,
    *   scroll: Function,
    *   getTabs: Function,
-   *   createTab: Function
+   *   createTab: Function,
+   *   resolveRefs: Function  // ({ tab_id, refs, resolver }) -> Array<any|null>; resolver runs in the page with `this` = the element
    * }}
    */
   function buildBrowserPrimitives(apiKey, policyTracker = { envelope: null, kind: null, commandsSinceBlock: 0 }) {
@@ -1498,6 +1515,25 @@ Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\
         await _gate('browser_create_tab', { url });
         _noteDispatch();
         return _browserCreateTab({ url }, apiKey);
+      },
+      // Run a self-contained function in the page with `this` = the DOM
+      // element for each ref; returns one JSON-serializable value (or null)
+      // per ref. Gated like getAccessibilityTree. Errors propagate.
+      resolveRefs: async ({ tab_id, refs, resolver } = {}) => {
+        if (!Array.isArray(refs) || refs.length === 0 || !refs.every((r) => typeof r === 'string')) {
+          throw new Error('resolveRefs: refs must be a non-empty array of strings');
+        }
+        await _gate('browser_get_accessibility_tree', { tab_id });
+        _noteDispatch();
+        const targetProfile = _requireExtensionConnected(apiKey);
+        const res = await extensionBridge.sendCommand(
+          targetProfile,
+          'resolve_nodes',
+          { tab_id, calls: [{ functionDeclaration: normalizeResolverSource(resolver), refs }] },
+          { timeout: 5000 }
+        );
+        if (res && res.errors && res.errors[0]) throw new Error(res.errors[0]);
+        return res.results[0];
       }
     };
   }

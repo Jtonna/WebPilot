@@ -558,7 +558,8 @@ function getFormatterApiContract() {
       tree: 'string — human-readable formatted accessibility tree',
       elementCount: 'number — total number of interactive/visible elements',
       refs: 'object — maps ref strings (e.g., "e1", "e2") to backendDOMNodeId values for click/scroll/type targeting',
-      extras: 'any additional fields returned by the formatter (e.g., postCount, listingCount, platform)'
+      extras: 'any additional fields returned by the formatter (e.g., postCount, listingCount, platform)',
+      __resolve: 'OPTIONAL, non-enumerable own property (Object.defineProperty(result, "__resolve", { value, enumerable: false })). Shape: { resolvers: { name: "function source string" }, requests: [{ key, backendNodeId, resolver: name }], apply(resolvedByKey) -> full new result }. Resolver functions run in the page with `this` = the DOM element for backendNodeId; they must be self-contained functions (no closures, no eval) returning JSON-serializable values. Limits: <=1000 requests, 500 ids per call, <=10 calls, source <=32KB, 5s timeout. apply receives only non-null resolved values and must return a new result with a string tree (<= 2x original length + 4KB); refs and elementCount are forced back to the originals. Any failure (old extension, timeout, throw) returns the base result, never an error.'
     }
   };
 }
@@ -569,6 +570,12 @@ function getHowToCreateCustomFormatter() {
     functionSignature: 'function formatSiteName(nodes) — receives array of raw CDP accessibility nodes',
     outputRequirements: 'Must return { tree: string, elementCount: number, refs: { e1: backendDOMNodeId, e2: ... }, ...optionalExtras }',
     refsExplanation: 'The refs object maps ref strings to backendDOMNodeId values. These refs enable the agent to target elements with browser_click, browser_scroll, and browser_type tools.',
+    nodeResolution: {
+      purpose: 'Read values only available in the page (e.g. React fiber props) for specific accessibility nodes, then fold them into the tree.',
+      how: 'Attach a non-enumerable __resolve = { resolvers, requests, apply } to the returned result. resolvers are function source strings run with this = the DOM element; apply(resolvedByKey) returns the annotated result.',
+      workflows: 'Workflows can call browser.resolveRefs({ tab_id, refs, resolver }) to run a resolver function on refs from the latest tree; it returns one value (or null) per ref and throws on failure.',
+      failureMode: 'If resolution fails the base result is returned unchanged.'
+    },
     routerPattern: 'For multi-page sites, export a router function that detects the page type from the URL and delegates to page-specific sub-formatters.',
     customFormatters: {
       step1: 'Drop your formatter files into the custom-formatters directory (path shown in the customFormatterDir field of this response)',
