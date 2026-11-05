@@ -27,7 +27,16 @@
  * right after the title line (its Close button always gets the first ref),
  * and every result carries hasBlockingDialog plus, when true, blockingDialog
  * { name, closeRef, buttons: [{ref, text}], headings }.
+ *
+ * User ids: member rows, message authors, @mentions, the DM header and a
+ * profile popout header can carry " [user=<id>]" tags. Ids are not in the
+ * accessibility tree, so the plain result never has them (users: {},
+ * usersResolved: false). A non-enumerable result.__resolve hook lets a
+ * resolve-capable server run module.exports.pageResolvers in the page and
+ * call __resolve.apply() for the annotated result (usersResolved: true).
  */
+
+var PAGE_RESOLVERS = null; // set at the bottom of this file
 
 module.exports = function formatDiscord(nodes) {
   // --- Build lookup structures ---
@@ -41,8 +50,15 @@ module.exports = function formatDiscord(nodes) {
     return (node.role && node.role.value) || '';
   }
 
+  // NUL characters are stripped from every page-derived string: the formatter
+  // uses NUL-delimited markers for user-id tags (see userTag), so page text
+  // must never be able to forge one.
+  function stripNul(v) {
+    return (typeof v === 'string' && v.indexOf('\u0000') >= 0) ? v.replace(/\u0000/g, '') : v;
+  }
+
   function name(node) {
-    return (node.name && node.name.value) || '';
+    return stripNul((node.name && node.name.value) || '');
   }
 
   function prop(node, propName) {
@@ -62,7 +78,7 @@ module.exports = function formatDiscord(nodes) {
     if (typeof v === 'object' && v.value !== undefined) result = v.value;
     if (result === 'true') return true;
     if (result === 'false') return false;
-    return result;
+    return stripNul(result);
   }
 
   function children(node) {
@@ -220,6 +236,27 @@ module.exports = function formatDiscord(nodes) {
     const ref = 'e' + refCounter++;
     refs[ref] = node.backendDOMNodeId;
     return ref;
+  }
+
+  // --- User-id resolve requests ---
+  // Discord user ids are not in the accessibility tree. While rendering, the
+  // formatter drops an invisible marker ("\u0000U<key>\u0000") wherever a
+  // "[user=<id>]" tag belongs and records a request naming the node and the
+  // page resolver (module.exports.pageResolvers) that can read the id from
+  // that node's React fiber. finalize() strips the markers from the returned
+  // tree and attaches a non-enumerable __resolve { resolvers, requests,
+  // apply } that a resolve-capable server uses to run the resolvers and get
+  // back an annotated result. Servers that ignore __resolve get the plain
+  // tree, byte-identical to the output without this feature.
+  var MARKER_RE = /\u0000U([^\u0000]*)\u0000/g;
+  var resolveRequests = [];
+  var resolveKeys = {};
+
+  function userTag(key, backendNodeId, resolver) {
+    if (!backendNodeId || resolveKeys[key]) return '';
+    resolveKeys[key] = true;
+    resolveRequests.push({ key: key, backendNodeId: backendNodeId, resolver: resolver });
+    return '\u0000U' + key + '\u0000';
   }
 
   // --- Blocking popup (unnamed promo/shop modal) ---
@@ -787,6 +824,8 @@ module.exports = function formatDiscord(nodes) {
     return messages;
   }
 
+  var mentionCounter = 1;
+
   function extractMessagesFromListItems(items) {
     var messages = [];
     var lastAuthor = '';
@@ -974,15 +1013,43 @@ module.exports = function formatDiscord(nodes) {
       // The message article is the top-level one; nested articles are embeds
       var messageArticleId = articleNode ? articleNode.nodeId : null;
 
+      // Inline @mention buttons: the button itself is skipped like any other
+      // button and its StaticText child is collected as usual (so the base
+      // text is unchanged); a user tag is appended to the last part the
+      // button's subtree produced. descendants() lists a subtree as one
+      // contiguous run right after its root, so the subtree ends at
+      // mention.end.
+      var mention = null;
+      var mentionMarks = [];
+      var flushMention = function () {
+        if (mention && contentParts.length > mention.start) {
+          mentionMarks.push({ part: contentParts.length - 1, backendNodeId: mention.backendNodeId });
+        }
+        mention = null;
+      };
+
       for (var ci = 0; ci < msgDescs.length; ci++) {
         var cNode = msgDescs[ci];
         var cRole = role(cNode);
         var cName = name(cNode).trim();
 
+        if (mention && ci > mention.end) flushMention();
+
         // Skip nodes in heading/time subtrees
         if (skipNodeIds.has(cNode.nodeId)) continue;
         if (cRole === 'InlineTextBox') continue;
         if (!cName) continue;
+
+        if (cRole === 'button' && cName.charAt(0) === '@' && cName !== '@everyone' &&
+            cName !== '@here' && cNode.backendDOMNodeId) {
+          flushMention();
+          mention = {
+            backendNodeId: cNode.backendDOMNodeId,
+            start: contentParts.length,
+            end: ci + descendants(cNode).length
+          };
+          continue;
+        }
 
         // Skip buttons, toolbars, interactive chrome, message action groups
         if (cRole === 'button' || cRole === 'toolbar' || cRole === 'menuitem' || cRole === 'group') {
@@ -1084,11 +1151,20 @@ module.exports = function formatDiscord(nodes) {
           continue;
         }
       }
+      flushMention();
 
       var content = contentParts.join(' ').trim();
 
       // Skip items that don't look like real messages
       if (!content && !hasImage && !hasEmbed) continue;
+
+      if (mentionMarks.length) {
+        for (var mmi = 0; mmi < mentionMarks.length; mmi++) {
+          var mark = mentionMarks[mmi];
+          contentParts[mark.part] += userTag('mention:' + (mentionCounter++), mark.backendNodeId, 'mention');
+        }
+        content = contentParts.join(' ').trim();
+      }
 
       // Continuation messages: no heading means same author
       if (!author && lastAuthor) {
@@ -1102,6 +1178,7 @@ module.exports = function formatDiscord(nodes) {
       messages.push({
         type: 'message',
         ref: ref,
+        backendNodeId: item.backendDOMNodeId,
         author: author,
         authorRef: authorRef,
         timestamp: timestamp,
@@ -1125,13 +1202,21 @@ module.exports = function formatDiscord(nodes) {
   }
 
   // --- Extract textbox ---
+  // A profile popout carries its own "Message @<user>" DM textbox; it must
+  // never be taken for the channel composer (typing there DMs that user), so
+  // textboxes inside a dialog are ignored here.
   function extractTextbox() {
-    var textbox = findNode(function (node) {
+    var candidates = findNodes(function (node) {
       var r = role(node);
       return (r === 'textbox' || r === 'textarea') &&
         name(node).toLowerCase().includes('message');
     });
-    return textbox;
+    for (var i = 0; i < candidates.length; i++) {
+      if (!hasAncestor(candidates[i], function (anc) { return role(anc) === 'dialog'; }, 40)) {
+        return candidates[i];
+      }
+    }
+    return null;
   }
 
   // Format the message composer line, preserving the discriminating part
@@ -1629,13 +1714,41 @@ module.exports = function formatDiscord(nodes) {
       }
     }
 
+    // 5) Live DM header: region "Channel header" > button > heading (level 1)
+    //    whose StaticText children are [displayName, username]. The page
+    //    title carries the DISPLAY name ("Discord | @Jtonna"), so when this
+    //    two-part heading exists it wins over steps 1-3. Its button (or the
+    //    heading itself) is also the node the dmRecipient resolver runs on.
+    var idNode = null;
+    var headerRegion = findNode(function (node) {
+      return role(node) === 'region' && name(node).trim() === 'Channel header';
+    });
+    if (headerRegion) {
+      var regionDescs = preorderDescendants(headerRegion);
+      for (var hi = 0; hi < regionDescs.length; hi++) {
+        if (role(regionDescs[hi]) !== 'heading' || isIgnored(regionDescs[hi])) continue;
+        var heading = regionDescs[hi];
+        var parent = byId.get(heading.parentId);
+        idNode = (parent && role(parent) === 'button') ? parent : heading;
+        var texts = children(heading).filter(function (c) {
+          return role(c) === 'StaticText' && name(c).trim();
+        }).map(function (c) { return name(c).trim(); });
+        if (texts.length === 2 && /^[a-z0-9_.]{2,32}$/.test(texts[1])) {
+          displayName = texts[0];
+          username = texts[1];
+        }
+        break;
+      }
+    }
+    if (!idNode) idNode = headerNode || null;
+
     // If display name and username collapse to the same value, drop the
     // displayName so we don't render "@foo (@foo)".
     if (displayName && username && displayName.replace(/^@/, '').toLowerCase() === username.toLowerCase()) {
       displayName = '';
     }
 
-    return { username: username, displayName: displayName };
+    return { username: username, displayName: displayName, node: idNode };
   }
 
   // Parse "Name, N members" / "Name, 1 member" group headers. Only
@@ -1657,6 +1770,22 @@ module.exports = function formatDiscord(nodes) {
         /^(Show|Hide) Member List$/i.test(name(node).trim()) &&
         !isSidebarOwned(node);
     });
+  }
+
+  // A member row's avatar image is named "<username>, <Status>" (online) or
+  // just "<username>" (offline). Uses the FIRST image in document order:
+  // custom-status emoji images (":lock:") follow the avatar.
+  function memberUsername(row) {
+    var desc = preorderDescendants(row);
+    for (var i = 0; i < desc.length; i++) {
+      if (role(desc[i]) !== 'image') continue;
+      var n = name(desc[i]).trim();
+      if (!n || n.charAt(0) === ':') return null;
+      var cut = n.lastIndexOf(',');
+      var u = (cut >= 0 ? n.slice(0, cut) : n).trim();
+      return u && !/\s/.test(u) ? u : null;
+    }
+    return null;
   }
 
   // --- Extract member list ---
@@ -1730,7 +1859,9 @@ module.exports = function formatDiscord(nodes) {
             type: 'member',
             ref: ref,
             name: memberName,
-            status: status
+            status: status,
+            username: memberUsername(d),
+            node: d
           });
         }
       }
@@ -1957,6 +2088,10 @@ module.exports = function formatDiscord(nodes) {
 
     var dialog = { items: [], name: dialogName };
     var descs = descendants(dialogNode);
+    var profileCloseRef = null;
+    var messageButtonRef = null;
+    var messageTextboxRef = null;
+    var sawProfileMarker = false;
 
     for (var i = 0; i < descs.length; i++) {
       var d = descs[i];
@@ -1967,6 +2102,7 @@ module.exports = function formatDiscord(nodes) {
       if (r === 'button' && n === 'Close') {
         var closeRef = addRef(d);
         dialog.items.unshift({ type: 'action', ref: closeRef, text: 'Close' });
+        if (!profileCloseRef) profileCloseRef = closeRef;
         continue;
       }
 
@@ -1975,6 +2111,7 @@ module.exports = function formatDiscord(nodes) {
           !n.includes('Click to react')) {
         var ref = addRef(d);
         dialog.items.push({ type: 'action', ref: ref, text: n });
+        if (!messageButtonRef && ref && /^(Send )?Message\b/i.test(n)) messageButtonRef = ref;
         continue;
       }
 
@@ -2001,6 +2138,7 @@ module.exports = function formatDiscord(nodes) {
         var tbDisplay = tbLabel;
         if (tbContent) tbDisplay = tbLabel + ': ' + tbContent;
         dialog.items.push({ type: 'textbox', ref: tbRef, text: tbDisplay });
+        if (!messageTextboxRef && tbRef && /^Message @/.test(n)) messageTextboxRef = tbRef;
         continue;
       }
 
@@ -2018,13 +2156,22 @@ module.exports = function formatDiscord(nodes) {
         continue;
       }
 
-      // Roles
-      if (r === 'region' && n.toLowerCase() === 'roles') {
-        var roleDescs = descendants(d);
+      // Roles (a region on older builds, a list on current ones)
+      if ((r === 'region' || r === 'list') && n.toLowerCase() === 'roles') {
+        sawProfileMarker = true;
+        // Document order; live role listitems are unnamed, so fall back to
+        // their first StaticText.
+        var roleDescs = preorderDescendants(d);
         var roles = [];
         for (var ri = 0; ri < roleDescs.length; ri++) {
           if (role(roleDescs[ri]) === 'listitem') {
             var roleName = name(roleDescs[ri]).trim();
+            if (!roleName) {
+              var roleTexts = preorderDescendants(roleDescs[ri]);
+              for (var rt = 0; rt < roleTexts.length && !roleName; rt++) {
+                if (role(roleTexts[rt]) === 'StaticText') roleName = name(roleTexts[rt]).trim();
+              }
+            }
             if (roleName) roles.push(roleName);
           }
         }
@@ -2034,6 +2181,7 @@ module.exports = function formatDiscord(nodes) {
 
       // Badges
       if (r === 'group' && n === 'User Badges') {
+        sawProfileMarker = true;
         var badgeDescs = descendants(d);
         var badges = [];
         for (var bdi = 0; bdi < badgeDescs.length; bdi++) {
@@ -2054,7 +2202,43 @@ module.exports = function formatDiscord(nodes) {
       }
     }
 
+    // User profile popout (member row / author click): identified by a
+    // Message button, an inline "Message @x" DM textbox, a Roles list or a
+    // User Badges group.
+    if (messageButtonRef || messageTextboxRef || sawProfileMarker) {
+      dialog.profile = {
+        name: dialogName.replace(/['\u2019]s profile$/i, ''),
+        username: profileUsername(dialogNode),
+        userId: null,
+        roles: dialog.roles ? dialog.roles.slice() : [],
+        messageButtonRef: messageButtonRef || messageTextboxRef || null,
+        closeRef: profileCloseRef
+      };
+      dialog.userTag = userTag('dialog', dialogNode.backendDOMNodeId, 'user');
+    }
+
     return dialog;
+  }
+
+  // Username shown in a profile popout: the avatar image is named
+  // "<username>, <Status>" (or just "<username>"); otherwise the lowercase
+  // username button under the display name. Discord usernames are 2-32
+  // chars of [a-z0-9_.].
+  function profileUsername(dialogNode) {
+    var desc = preorderDescendants(dialogNode);
+    var i, n, m;
+    for (i = 0; i < desc.length; i++) {
+      if (role(desc[i]) !== 'image') continue;
+      n = name(desc[i]).trim();
+      m = /^([a-z0-9_.]{2,32})(?:,\s*.+)?$/.exec(n);
+      if (m) return m[1];
+    }
+    for (i = 0; i < desc.length; i++) {
+      if (role(desc[i]) !== 'button') continue;
+      n = name(desc[i]).trim();
+      if (/^[a-z0-9_.]{2,32}$/.test(n)) return n;
+    }
+    return null;
   }
 
   // --- Extract settings/admin dialog (Channel Settings, Server Settings, Create Channel, etc.) ---
@@ -2519,7 +2703,7 @@ module.exports = function formatDiscord(nodes) {
     }
 
     // Profile / generic dialog
-    lines.push('--- ' + dialogData.name + ' ---');
+    lines.push('--- ' + dialogData.name + (dialogData.userTag || '') + ' ---');
     if (dialogData.bio) lines.push('Bio: ' + dialogData.bio);
     if (dialogData.badges) lines.push('Badges: ' + dialogData.badges.join(', '));
     if (dialogData.roles) lines.push('Roles: ' + dialogData.roles.join(', '));
@@ -2530,6 +2714,24 @@ module.exports = function formatDiscord(nodes) {
       dLine += dItem.text;
       lines.push(dLine);
     }
+  }
+
+  // One message line: "[eN] [eM:Author] (time): text" when the author has
+  // a ref, "[eN] Author (time): text" for grouped follow-ups. The user tag
+  // goes right after the author.
+  function renderMessageLine(msg) {
+    var line = '';
+    if (msg.ref) line += '[' + msg.ref + '] ';
+    var tag = (msg.author && msg.ref) ? userTag('m:' + msg.ref, msg.backendNodeId, 'messageAuthor') : '';
+    if (msg.author && msg.authorRef) {
+      line += '[' + msg.authorRef + ':' + msg.author + ']' + tag;
+    } else if (msg.author) {
+      line += msg.author + tag;
+    }
+    if (msg.timestamp) line += ' (' + msg.timestamp + ')';
+    if (msg.author || msg.timestamp) line += ': ';
+    line += msg.content;
+    return line;
   }
 
   // =========================================================================
@@ -2596,7 +2798,8 @@ module.exports = function formatDiscord(nodes) {
       headerLabel = '@Unknown';
     }
 
-    lines.push('Discord | ' + headerLabel + ' (DM)');
+    lines.push('Discord | ' + headerLabel +
+      userTag('dm', recipient.node && recipient.node.backendDOMNodeId, 'dmRecipient') + ' (DM)');
     pushPopupBlock(lines);
     lines.push('');
 
@@ -2635,18 +2838,7 @@ module.exports = function formatDiscord(nodes) {
           continue;
         }
 
-        var line = '';
-        if (msg.ref) line += '[' + msg.ref + '] ';
-        if (msg.author && msg.authorRef) {
-          line += '[' + msg.authorRef + ':' + msg.author + ']';
-        } else if (msg.author) {
-          line += msg.author;
-        }
-        if (msg.timestamp) line += ' (' + msg.timestamp + ')';
-        if (msg.author || msg.timestamp) line += ': ';
-        line += msg.content;
-
-        lines.push(line);
+        lines.push(renderMessageLine(msg));
       }
     } else {
       lines.push('(No messages found)');
@@ -2691,7 +2883,7 @@ module.exports = function formatDiscord(nodes) {
     var sidebar = appendSidebarSections(lines);
     var dmx = dmExtras(allDmItems);
 
-    return {
+    var dmResult = {
       tree: lines.join('\n'),
       elementCount: refCounter - 1,
       refs: refs,
@@ -2705,8 +2897,11 @@ module.exports = function formatDiscord(nodes) {
       recipient: recipient.username || recipient.displayName || '',
       recipientUsername: recipient.username,
       recipientDisplayName: recipient.displayName,
+      recipientId: null,
       messageCount: messageData.filter(function (m) { return m.type === 'message'; }).length
     };
+    if (dialogData && dialogData.profile) dmResult.profile = dialogData.profile;
+    return dmResult;
   }
 
   function formatServerChannel(params) {
@@ -2777,18 +2972,7 @@ module.exports = function formatDiscord(nodes) {
           continue;
         }
 
-        var line2 = '';
-        if (msg.ref) line2 += '[' + msg.ref + '] ';
-        if (msg.author && msg.authorRef) {
-          line2 += '[' + msg.authorRef + ':' + msg.author + ']';
-        } else if (msg.author) {
-          line2 += msg.author;
-        }
-        if (msg.timestamp) line2 += ' (' + msg.timestamp + ')';
-        if (msg.author || msg.timestamp) line2 += ': ';
-        line2 += msg.content;
-
-        lines.push(line2);
+        lines.push(renderMessageLine(msg));
       }
     } else {
       lines.push('(No messages found)');
@@ -2824,6 +3008,7 @@ module.exports = function formatDiscord(nodes) {
           var mLine = '';
           if (mem.ref) mLine += '[' + mem.ref + '] ';
           mLine += mem.name;
+          if (mem.ref) mLine += userTag('u:' + mem.ref, mem.node.backendDOMNodeId, 'user');
           if (mem.status) mLine += ' (' + mem.status + ')';
           lines.push('  ' + mLine);
         }
@@ -2883,8 +3068,12 @@ module.exports = function formatDiscord(nodes) {
       memberTotal: memberTotal,
       groups: memberGroups,
       memberListToggleRef: memberListToggleRef,
-      memberListOpen: memberListOpen
+      memberListOpen: memberListOpen,
+      members: memberData.filter(function (m) { return m.type === 'member'; }).map(function (m) {
+        return { ref: m.ref, name: m.name, username: m.username, status: m.status || null, userId: null };
+      })
     };
+    if (dialogData && dialogData.profile) result.profile = dialogData.profile;
 
     if (dialogData && dialogData.type === 'settings') {
       result.hasSettingsDialog = true;
@@ -2911,17 +3100,7 @@ module.exports = function formatDiscord(nodes) {
           lines.push('--- ' + msg.text + ' ---');
           continue;
         }
-        var line = '';
-        if (msg.ref) line += '[' + msg.ref + '] ';
-        if (msg.author && msg.authorRef) {
-          line += '[' + msg.authorRef + ':' + msg.author + ']';
-        } else if (msg.author) {
-          line += msg.author;
-        }
-        if (msg.timestamp) line += ' (' + msg.timestamp + ')';
-        if (msg.author || msg.timestamp) line += ': ';
-        line += msg.content;
-        lines.push(line);
+        lines.push(renderMessageLine(msg));
       }
       lines.push('');
     }
@@ -2997,5 +3176,309 @@ module.exports = function formatDiscord(nodes) {
   }
   result.hasBlockingDialog = !!blockingDialog;
   if (blockingDialog) result.blockingDialog = blockingDialog;
-  return result;
+  return finalize(result);
+
+  // Strips the user-tag markers from result.tree, adds the users /
+  // usersResolved extras and, when tags were requested, attaches the
+  // non-enumerable __resolve hook (see userTag).
+  function finalize(res) {
+    var marked = res.tree;
+    var base = marked.replace(MARKER_RE, '');
+    if (base.indexOf('\u0000') >= 0) base = base.replace(/\u0000/g, '');
+    res.tree = base;
+    res.users = {};
+    res.usersResolved = false;
+    if (!resolveRequests.length) return res;
+
+    var resolverSource = {};
+    var names = ['user', 'messageAuthor', 'mention', 'dmRecipient'];
+    for (var i = 0; i < names.length; i++) {
+      resolverSource[names[i]] = PAGE_RESOLVERS[names[i]].toString();
+    }
+    var requests = resolveRequests.map(function (r) {
+      return { key: r.key, backendNodeId: r.backendNodeId, resolver: r.resolver };
+    });
+
+    Object.defineProperty(res, '__resolve', {
+      enumerable: false,
+      configurable: true,
+      writable: false,
+      value: {
+        resolvers: resolverSource,
+        requests: requests,
+        apply: function (resolvedByKey) { return applyResolved(res, marked, resolvedByKey); }
+      }
+    });
+    return res;
+  }
 };
+
+var SNOWFLAKE_RE = /^\d{15,22}$/;
+
+// Normalizes one resolver result to { id, username, globalName } or null.
+function cleanResolvedUser(v) {
+  if (!v || typeof v !== 'object' || typeof v.id !== 'string' || !SNOWFLAKE_RE.test(v.id)) return null;
+  function str(x) {
+    return typeof x === 'string' ? x.replace(/\u0000/g, '') : null;
+  }
+  return { id: v.id, username: str(v.username), globalName: str(v.globalName) };
+}
+
+// Builds the annotated result: markers become " [user=<id>]" (resolved) or
+// '' (unresolved); users / members[].userId / recipientId / profile.userId
+// are filled. Returns a NEW object; the base result is not modified.
+function applyResolved(base, marked, resolvedByKey) {
+  var rk = (resolvedByKey && typeof resolvedByKey === 'object') ? resolvedByKey : {};
+  var byKey = {};
+  var users = {};
+  Object.keys(rk).forEach(function (key) {
+    var u = cleanResolvedUser(rk[key]);
+    if (!u) return;
+    byKey[key] = u;
+    var prev = users[u.id];
+    users[u.id] = {
+      id: u.id,
+      username: (prev && prev.username !== null) ? prev.username : u.username,
+      globalName: (prev && prev.globalName !== null) ? prev.globalName : u.globalName
+    };
+  });
+  function idOf(key) {
+    return Object.prototype.hasOwnProperty.call(byKey, key) ? byKey[key].id : null;
+  }
+
+  var tree = marked.replace(/\u0000U([^\u0000]*)\u0000/g, function (m, key) {
+    var id = idOf(key);
+    return id ? ' [user=' + id + ']' : '';
+  });
+  if (tree.indexOf('\u0000') >= 0) tree = tree.replace(/\u0000/g, '');
+
+  var extra = { tree: tree, users: users, usersResolved: true };
+  if (Array.isArray(base.members)) {
+    extra.members = base.members.map(function (m) {
+      return Object.assign({}, m, { userId: m.ref ? idOf('u:' + m.ref) : null });
+    });
+  }
+  if (Object.prototype.hasOwnProperty.call(base, 'recipientId')) extra.recipientId = idOf('dm');
+  if (base.profile) extra.profile = Object.assign({}, base.profile, { userId: idOf('dialog') });
+  return Object.assign({}, base, extra);
+}
+
+// =========================================================================
+// Page resolvers (run IN THE PAGE by the server's resolve pass)
+// =========================================================================
+//
+// Discord user ids are not in the accessibility tree; they live in the React
+// fiber props of the rendered DOM elements. Each resolver below is shipped to
+// the page as SOURCE TEXT (fn.toString()) and called with `this` bound to the
+// DOM element of one tree node. They must therefore stay fully
+// self-contained: no closures, no outer references, no eval, ES5 only.
+//
+// They read only user-identity props (user / message.author / author /
+// userId / channel recipients, plus message.type to reject system messages)
+// and return ONLY { id, username, globalName } or null. They never read
+// message content, storage, tokens or anything else.
+
+// Member row / profile popout: nearest fiber carrying a user object.
+function resolveUser() {
+  function pick(u) {
+    if (!u || typeof u !== 'object') return null;
+    var id = u.id;
+    if (typeof id !== 'string' || !/^\d{15,22}$/.test(id)) return null;
+    var un = u.username;
+    var gn = u.globalName;
+    if (gn === undefined) gn = u.global_name;
+    return {
+      id: id,
+      username: typeof un === 'string' ? un : null,
+      globalName: typeof gn === 'string' ? gn : null
+    };
+  }
+  try {
+    var el = this;
+    if (!el || typeof el !== 'object') return null;
+    var keys = Object.keys(el);
+    var key = null;
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+        key = keys[i];
+        break;
+      }
+    }
+    if (!key) return null;
+    var f = el[key];
+    for (var d = 0; f && d < 25; d++) {
+      var p = f.memoizedProps;
+      if (p && typeof p === 'object') {
+        var r = pick(p.user);
+        if (!r && p.message && typeof p.message === 'object') r = pick(p.message.author);
+        if (!r) r = pick(p.author);
+        if (r) return r;
+      }
+      f = f.return;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+// Message listitem: the message's author. System messages (joins, boosts,
+// pins: any message.type other than default/reply/command) resolve to null
+// because their "author" is not the person the formatted line names.
+function resolveMessageAuthor() {
+  function pick(u) {
+    if (!u || typeof u !== 'object') return null;
+    var id = u.id;
+    if (typeof id !== 'string' || !/^\d{15,22}$/.test(id)) return null;
+    var un = u.username;
+    var gn = u.globalName;
+    if (gn === undefined) gn = u.global_name;
+    return {
+      id: id,
+      username: typeof un === 'string' ? un : null,
+      globalName: typeof gn === 'string' ? gn : null
+    };
+  }
+  try {
+    var el = this;
+    if (!el || typeof el !== 'object') return null;
+    var keys = Object.keys(el);
+    var key = null;
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+        key = keys[i];
+        break;
+      }
+    }
+    if (!key) return null;
+    var f = el[key];
+    for (var d = 0; f && d < 25; d++) {
+      var p = f.memoizedProps;
+      if (p && typeof p === 'object') {
+        var m = p.message;
+        if (m && typeof m === 'object' && m.author) {
+          var t = m.type;
+          if (typeof t === 'number' && t !== 0 && t !== 19 && t !== 20 && t !== 23) return null;
+          return pick(m.author);
+        }
+        var r = pick(p.author);
+        if (!r) r = pick(p.user);
+        if (r) return r;
+      }
+      f = f.return;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+// Inline @mention button. Stops (null) at the first fiber holding a
+// message, so it never falls through to the message author.
+function resolveMention() {
+  function pick(u) {
+    if (!u || typeof u !== 'object') return null;
+    var id = u.id;
+    if (typeof id !== 'string' || !/^\d{15,22}$/.test(id)) return null;
+    var un = u.username;
+    var gn = u.globalName;
+    if (gn === undefined) gn = u.global_name;
+    return {
+      id: id,
+      username: typeof un === 'string' ? un : null,
+      globalName: typeof gn === 'string' ? gn : null
+    };
+  }
+  try {
+    var el = this;
+    if (!el || typeof el !== 'object') return null;
+    var keys = Object.keys(el);
+    var key = null;
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+        key = keys[i];
+        break;
+      }
+    }
+    if (!key) return null;
+    var f = el[key];
+    for (var d = 0; f && d < 10; d++) {
+      var p = f.memoizedProps;
+      if (p && typeof p === 'object') {
+        if (p.message) return null;
+        var uid = p.userId;
+        if (typeof uid === 'string' && /^\d{15,22}$/.test(uid)) {
+          return { id: uid, username: null, globalName: null };
+        }
+        var r = pick(p.user);
+        if (r) return r;
+      }
+      f = f.return;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+// DM conversation header: the 1:1 recipient (null for group DMs).
+function resolveDmRecipient() {
+  function pick(u) {
+    if (!u || typeof u !== 'object') return null;
+    var id = u.id;
+    if (typeof id !== 'string' || !/^\d{15,22}$/.test(id)) return null;
+    var un = u.username;
+    var gn = u.globalName;
+    if (gn === undefined) gn = u.global_name;
+    return {
+      id: id,
+      username: typeof un === 'string' ? un : null,
+      globalName: typeof gn === 'string' ? gn : null
+    };
+  }
+  try {
+    var el = this;
+    if (!el || typeof el !== 'object') return null;
+    var keys = Object.keys(el);
+    var key = null;
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+        key = keys[i];
+        break;
+      }
+    }
+    if (!key) return null;
+    var f = el[key];
+    for (var d = 0; f && d < 25; d++) {
+      var p = f.memoizedProps;
+      if (p && typeof p === 'object') {
+        var r = pick(p.user);
+        if (r) return r;
+        var c = p.channel;
+        if (c && typeof c === 'object') {
+          var raw = c.rawRecipients;
+          if (raw && raw.length === 1) {
+            r = pick(raw[0]);
+            if (r) return r;
+          }
+          var ids = c.recipients;
+          if (ids && ids.length === 1 && typeof ids[0] === 'string' && /^\d{15,22}$/.test(ids[0])) {
+            return { id: ids[0], username: null, globalName: null };
+          }
+        }
+      }
+      f = f.return;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+module.exports.pageResolvers = {
+  user: resolveUser,
+  messageAuthor: resolveMessageAuthor,
+  mention: resolveMention,
+  dmRecipient: resolveDmRecipient
+};
+PAGE_RESOLVERS = module.exports.pageResolvers;
