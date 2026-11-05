@@ -1,1 +1,6 @@
-[]
+[
+  {
+    "issue": 156,
+    "body": "Sub-tasks (approved plan):\n\n1. Fixture helper `promoDialog` in the Discord test builder (light)\n2. Unit tests for blocking dialog detection and rendering (standard)\n3. Formatter fix: detect unnamed root-level modal, render `BLOCKING POPUP` block first, add `hasBlockingDialog` / `blockingDialog` extras (complex)\n4. Live test via a temporary custom-formatter shadow, read-only tree fetches (standard)\n5. Workflow guard: all five workflows return a blocked result with a reason while a popup is open (light)\n6. Manifests 1.3.0 -> 1.4.0 and top-level 5 -> 6, notes, CHANGELOG, re-sign (standard)\n7. Sync the shadow copy to the final files and leave it in place until the next release is installed (light)\n8. Final verification, no push until approval (light)"
+  }
+]
