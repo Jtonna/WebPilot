@@ -163,7 +163,8 @@ the manifest declaration.
    - `params` — the validated params object (type-checked against the
      manifest declaration).
    - `browser` — primitive object with `getAccessibilityTree`, `click`,
-     `type`, `scroll`, `getTabs`, `createTab`. These resolve the agent's
+     `type`, `scroll`, `getTabs`, `createTab`,
+     `resolveRefs({ tab_id, refs, resolver })`. These resolve the agent's
      bound Chrome profile from the API key and execute server-side
      against the extension WS (no MCP/SSE round-trip).
    - `tabId` — the browser tab to run against.
