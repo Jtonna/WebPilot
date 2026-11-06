@@ -21,6 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Popup profile picker for when the server can't match the Chrome profile. Suggested profiles come first, in-use profiles are disabled, and picking an already-registered profile asks for confirmation. (#138)
 - `reidentify` message from popup to background. (#138)
 - Dashboard and Profiles hint for an extension waiting to be matched, including the "Match the waiting extension" setup modal variant. (#138)
+- Discord formatter 1.5.0: user ids. (#161)
+  - ` [user=<id>]` tags after member names, message authors (including grouped follow-ups), @mentions, the DM header and the profile popout header. Tags appear only when node resolution ran.
+  - New response fields `users`, `usersResolved`, `members[{ref,name,username,status,userId}]`, `recipientId` and `profile` (while a member profile popout is open).
+  - Workflow `get_member_profile`, which opens a member's profile popout and returns `userId`, `username`, `displayName`, `roles`, `messageButtonRef` and `closeRef`.
+- Extension command `resolve_nodes` and a server-side formatter node-resolution pass: a formatter can attach a non-enumerable `__resolve` to read page-only values for specific nodes, and any failure leaves the base result unchanged. Workflows get a matching `browser.resolveRefs({ tab_id, refs, resolver })` primitive, gated like `browser_get_accessibility_tree`. (#161)
 
 ### Changed
 - Discord formatter: `--- Server Notifications ---` replaced by `--- Servers ---`. (#148)
@@ -73,11 +78,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `hello` carries `extensionId`. (#138)
 - `identify_required` profiles carry `connected` and `registered`. (#138)
 - `/api/ui/status` adds `pendingIdentification.count`. The UI broadcasts `identification_pending_changed`. (#138)
+- Discord formatter: the DM header (`Discord | Display (@username) (DM)`) is now read from the header heading. (#161)
+- Discord formatter: member profile roles are read from the `list "Roles"`. (#161)
 
 ### Removed
 - Unreachable "Override · Allowed / Blocked" popup pills and unused "Agent:" line. Popup shows global policy (Chrome profile only); per-agent rules moved to Site Policy page. (#105)
 
 ### Fixed
+- Discord formatter: the composer no longer picks a profile popout's `Message @user` textbox, which would have sent the message as a DM to that user. (#161)
+- Click no longer stalls about 1 s per path point on throttled or occluded windows: it stops following the path and jumps to the target, and the response reports `pathAbandoned`. (#161)
 - Formatter auto-update now delivers the Discord 1.2.0 formatter (top-level formatter manifest version bumped; it was left at 3). (#150)
 - Discord DM list counted Friends, Shop, Quests and Nitro links as DMs. (#148)
 - Extension ref clicks missed or hit the wrong element when the target sat at the edge of a scrolled container or the layout shifted mid-click. Clicks now scroll the node into view, aim at the centre of its visible part, and refuse to click if another element covers the point. (#148)
