@@ -634,7 +634,7 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
     },
     {
       name: 'webpilot_get_formatter_info',
-      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own. Pass tab_id to also unlock the formatter gate for that tab so subsequent browser_* tools on the tab are allowed.',
+      description: 'Get information about available platform-specific accessibility tree formatters and instructions for writing custom platform optimizers. Use this to discover what sites have optimized formatters and to learn how to create your own. The response includes the authoring guide (howToCreateCustomFormatter: formatters, workflows.js, per-platform manifest notes, and page-side node resolution) plus customFormatterDir, where custom formatter files go. Pass tab_id to also unlock the formatter gate for that tab so subsequent browser_* tools on the tab are allowed.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -690,7 +690,7 @@ function createMcpHandler(extensionBridge, pairedKeys, formatterManager, isPairi
     },
     {
       name: 'webpilot_run_workflow',
-      description: 'Execute a platform-specific workflow exposed by an accessibility tree formatter. Workflows bundle multiple primitive actions (click, type, scroll, etc.) into a single named operation — much cheaper than multiple tool calls. Use webpilot_get_formatter_info to discover available workflows per platform. Each workflow has typed parameters; pass them via the `params` argument.',
+      description: 'Execute a platform-specific workflow exposed by an accessibility tree formatter. Workflows bundle multiple primitive actions (click, type, scroll, etc.) into a single named operation — much cheaper than multiple tool calls. They are defined in a workflows.js file next to a formatter and declared in its manifest; use webpilot_get_formatter_info to discover available workflows per platform, or to read howToCreateCustomFormatter.workflows if you need to write one. Each workflow has typed parameters; pass them via the `params` argument.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -866,6 +866,8 @@ browser_execute_js: Reserve for actions that genuinely require JavaScript execut
 4. Test by calling \`browser_get_accessibility_tree\` or \`webpilot_run_workflow\` against a real page.
 5. If it broke, \`webpilot_dev_get_formatter_logs\` with \`platform: '<name>'\` returns the most recent errors with stack traces, plus a health summary ({ health, lastError, successCount, errorCount, lastSuccess/ErrorAt }). The ring buffer only stores errors — successful invocations bump \`successCount\` and \`lastSuccessAt\` but don't add a row.
 6. After editing the Chrome extension itself (handlers/click.js, keyboard.js, background.js, etc.), call \`webpilot_dev_reload_extension\` — chrome.runtime.reload() inside the extension. WS drops + reconnects in 1-3s; the API key persists. Wait ~2-3s before issuing more browser_* tools. **Per-profile scope:** extension reloads are profile-scoped — \`webpilot_dev_reload_extension\` only reloads the calling agent's paired Chrome profile, and the manual chrome://extensions/ reload icon only affects the profile that's currently in front. If WebPilot is paired across multiple profiles and you edited shared extension code, each profile must be reloaded independently (one tool call per paired agent, or one manual chrome://extensions/ reload per profile).
+
+**Building a formatter for a new site.** Call \`webpilot_get_formatter_info\` and read \`howToCreateCustomFormatter\`: it covers the formatter function, \`workflows.js\` (multi-step actions run via \`webpilot_run_workflow\`), the per-platform \`manifest.json\` (its \`notes\` are what other agents read), and a worked example. Write the files into \`customFormatterDir\`, call \`webpilot_reload_formatters\`, test, and check \`webpilot_dev_get_formatter_logs\` on errors. For data that is not in the accessibility tree (e.g. ids stored in page state), a formatter can attach page-side node resolution (\`__resolve\`) and workflows can call \`browser.resolveRefs\`; the guide's \`nodeResolution\` section has the contract.
 
 Naming convention: \`webpilot_dev_*\` = developer-iteration tools. \`webpilot_*\` (without dev) = production formatter/workflow inspection/dispatch. \`browser_*\` = direct CDP-backed primitives.`
         }
