@@ -81,9 +81,22 @@ See `discord/manifest.json` in this repo for a worked example with workflows.
    shapes are accepted by the loader: `module.exports = fn` (single function,
    what most platform formatters use) or `module.exports = { someName: fn }`
    (the default formatter uses `{ formatAccessibilityTree }`); the manager
-   takes the first value if it's an object. For multi-page sites, the entry
-   can route on `nodes[0].url` to per-page sub-formatters (Discord, Threads,
-   and Zillow all do this).
+   takes the first value if it's an object. Formatters receive only `nodes`.
+   For multi-page sites, the entry can route to per-page sub-formatters by
+   finding the `RootWebArea` node and reading its `url` property (Discord's
+   `detectUrl` does this).
+
+   A formatter can optionally read values that exist only in the page (for
+   example React props) by attaching a non-enumerable `__resolve` to its
+   result: `{ resolvers: { name: '<function source>' }, requests: [{ key,
+   backendNodeId, resolver }], apply(resolvedByKey) }`. After formatting, the
+   server runs each resolver in the page with `this` set to the element, then
+   calls `apply` with the non-null values. `apply` returns the full new
+   result. Resolvers must be self-contained function sources (no `eval`, no
+   closures) and return JSON values. If anything fails (old extension,
+   timeout, `apply` throws, invalid output), the base result is returned
+   unchanged. `discord/discord.js` is the worked example: it uses it to add
+   `[user=<id>]` tags.
 
 3. **Bump `manifest.json#version`.** Even a patch bump is fine; it just lets
    you confirm the reload picked up your file.
@@ -145,6 +158,8 @@ The dev loop matches formatters:
    `successCount` and `lastSuccessAt` on the health summary). If you want to
    confirm a workflow actually ran, check the response of `webpilot_run_workflow`
    (it returns the workflow's own return value) or re-fetch the page tree.
+
+Workflows can also call `browser.resolveRefs({ tab_id, refs, resolver })` to run a resolver function on refs from the latest tree. It returns one value (or `null`) per ref and throws on failure.
 
 The element-targeting selectors that workflows use (`findInTree`) operate on
 the **formatted tree string**, not the raw CDP node list — so write your
