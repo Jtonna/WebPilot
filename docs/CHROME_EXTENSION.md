@@ -25,6 +25,7 @@ background.js (service worker)
     |     keyboard.js      Keyboard input simulation
     |     scripts.js       Script injection and execution
     |     accessibility.js Accessibility tree extraction
+    |     resolve.js       Page-side node resolution (resolve_nodes)
     |
     +-- utils/
     |     debugger.js      CDP session management
@@ -33,6 +34,7 @@ background.js (service worker)
     |     cursor.js        Visual cursor animation (SVG + particles)
     |     scroll.js        Scroll animation and viewport helpers
     |     click-geometry.js Visible-area geometry for ref clicks
+    |     resolve-batch.js Param validation and batching for resolve_nodes
     |     timing.js        Weighted random delays
     |
     +-- accessibility-storage.js Ref-to-backendNodeId mapping
@@ -143,6 +145,7 @@ CDP mouse simulation with human-like cursor movement.
 - Re-resolves the point right before `mousePressed` and verifies with `elementFromPoint` that the hit target is the node or a descendant. It recomputes once, then throws `Ref "eN" is covered by or has moved from (x,y)...`. If the check can't run, the click proceeds
 - Re-identifies elements after scroll using ancestry context (handles virtualized DOM recycling)
 - Tracks last cursor position per tab so subsequent clicks start from where the previous one ended
+- Abandons the path when moves ack slowly: if a `mouseMoved` ack takes 300 ms or more, or the path overruns its planned duration by more than 2000 ms, it stops following the path, sends one `mouseMoved` to the target and moves the visual cursor there. A throttled or occluded window does not produce frames, which makes each move ack take about 1 s. The click response includes `pathAbandoned: boolean`
 
 ### `handlers/scroll.js`
 
@@ -181,6 +184,17 @@ Accessibility tree extraction.
 - Returns `{ nodes, url, tabId, usePlatformOptimizer }` (raw data) to the server
 - Platform detection, formatting, and ref assignment happen server-side
 
+### `handlers/resolve.js`
+
+Page-side node resolution for the `resolve_nodes` command. It is a server-only command: the server's formatter resolve pass and the `resolveRefs` workflow primitive call it, and there is no MCP tool for it. Parameters are validated and batched by `utils/resolve-batch.js`.
+
+- Params: `{ tab_id, calls: [{ functionDeclaration, backendNodeIds | refs }] }`. Limits: 10 calls, 500 ids or refs per call, a declaration of at most 32,000 characters that must start with `function`, and a result of at most 1 MiB
+- Refs are mapped to backend node ids through `getBackendNodeId`; an unknown ref yields `null`
+- Each id is resolved with `DOM.resolveNode`, then one `Runtime.callFunctionOn` per call runs the function with `this` set to the element. The function is wrapped without `eval`. A throw or `undefined` becomes `null`
+- The `webpilot-resolve` object group is released afterwards
+- Returns `{ results: any[][], errors: (string|null)[] }`. A failed call yields an all-`null` row and an error string for that call
+- Rejects protected pages (`chrome://`, `chrome-extension://`, `about:`)
+
 ## Formatting (Server-Side)
 
 Accessibility tree formatting is performed by the MCP server, not the extension. The extension sends raw CDP nodes to the server. After formatting, the server sends ref mappings back via a `store_refs` WebSocket message, which the extension persists for interaction commands (click, scroll).
@@ -195,6 +209,7 @@ Implements the WindMouse algorithm for generating human-like mouse movement path
 - Distance-based Hz caps: short moves cap at 250Hz, long moves reach up to 1000Hz
 - Acceleration curve: slow start, peak speed at 50-80% of path, slow end
 - Returns path statistics (points, duration, average/min/max Hz) for logging
+- `shouldAbandonPath({ moveMs, elapsedMs, plannedMs })` -- Returns `true` when a single move ack took at least `SLOW_MOVE_MS` (300) or the elapsed time exceeds the planned duration plus `PATH_OVERRUN_MS` (2000). `click.js` uses it to stop following a path and jump to the target
 
 ### `utils/mouse-state.js`
 

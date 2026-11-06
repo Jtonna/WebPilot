@@ -40,6 +40,8 @@
  * manager treats every export as a workflow.
  */
 
+const { pageResolvers } = require('./discord.js');
+
 const HOME_SELECTOR = '[data-list-item-id="guildsnav___home"]';
 const DEFAULT_TIMEOUT_MS = 42000;
 // /channels/<serverId> with an optional /<channelId>; server-only URLs allowed.
@@ -596,6 +598,100 @@ module.exports = {
         tree = await fetchTree(ctx);
       }
       return { ok: true, opened: true, memberListOpen: true, ...counts(tree) };
+    }
+  },
+
+  get_member_profile: {
+    description:
+      "Open a Discord member's profile popout by clicking the given member-list row or message-author ref (from a tree you just fetched; do not fetch another tree first). Returns { ok, userId, username, displayName, roles, messageButtonRef, closeRef, popoutOpen, warnings? }. The popout is left open so messageButtonRef (the popout's inline \"Message @user\" textbox; typing into it and pressing Enter sends a DM to that user) stays usable. The popout has no close button: dismiss it by clicking elsewhere (e.g. the channel header). userId needs a WebPilot version with node resolution (otherwise it is null, with a warning). If it returns pending:true the click was made but the popout is not confirmed open; re-read the tree and do NOT click again, a second click may close it.",
+    parameters: {
+      ref: {
+        type: 'string',
+        description: 'Ref (eN) of a member-list row or message author from the latest tree.'
+      },
+      timeoutMs: TIMEOUT_PARAM
+    },
+    async run({ params, browser, tabId }) {
+      const p = params || {};
+      if (typeof tabId !== 'number') {
+        throw new Error('get_member_profile requires tab_id (number).');
+      }
+      if (typeof p.ref !== 'string' || !/^e\d+$/.test(p.ref)) {
+        throw new Error('get_member_profile requires params.ref (string like "e12").');
+      }
+      const ctx = makeCtx(p, browser, tabId);
+      const warnings = [];
+      // No tree fetch before the click: a fetch re-stores the tab's refs and would
+      // invalidate the caller's ref. A blocking popup is detected after the click.
+      let resolvedUser = null;
+      if (typeof browser.resolveRefs === 'function') {
+        try {
+          const out = await browser.resolveRefs({
+            tab_id: tabId,
+            refs: [p.ref],
+            resolver: pageResolvers.user
+          });
+          resolvedUser = (Array.isArray(out) && out[0]) || null;
+          if (!resolvedUser) {
+            warnings.push('ref did not resolve to a user (stale ref or not a user element)');
+          }
+        } catch (e) {
+          if (e && e.__sitePolicyEnvelope) throw e;
+          warnings.push('user id resolution unavailable: ' + (e && e.message));
+        }
+      } else {
+        warnings.push('server does not support node resolution (update WebPilot); userId may be null');
+      }
+
+      // Exactly one click: a second click may toggle the popout closed. A click
+      // error is ambiguous (it may still apply), so verify by polling.
+      await safeClick(browser, { ref: p.ref, tab_id: tabId });
+
+      let tree;
+      for (;;) {
+        await pollWait(ctx);
+        tree = await fetchTree(ctx);
+        const blocked = blockedByDialog(tree);
+        if (blocked) return blocked;
+        if (tree && tree.profile) break;
+        if (remaining(ctx) <= 0) {
+          return {
+            pending: true,
+            message:
+              'Timed out waiting for the profile popout; the click was made and may still apply. ' +
+              'Re-read the tree and do NOT click again (a second click may close the popout).'
+          };
+        }
+      }
+
+      const profile = tree.profile;
+      const users = tree.users || {};
+      if (resolvedUser && resolvedUser.id && profile.userId && resolvedUser.id !== profile.userId) {
+        warnings.push(
+          `resolved user id ${resolvedUser.id} differs from profile popout user id ${profile.userId}`
+        );
+      }
+      const userId = (resolvedUser && resolvedUser.id) || profile.userId || null;
+      const known = (userId && users[userId]) || {};
+      const username =
+        (resolvedUser && resolvedUser.username) || known.username || profile.username || null;
+      // The popout header name is the visible display name; prefer it over the
+      // handle when no globalName is known (e.g. no node resolution).
+      const displayName =
+        (resolvedUser && resolvedUser.globalName) || known.globalName || profile.name || username || null;
+      if (!userId) warnings.push('user id could not be determined');
+      const result = {
+        ok: true,
+        userId,
+        username,
+        displayName,
+        roles: profile.roles || [],
+        messageButtonRef: profile.messageButtonRef || null,
+        closeRef: profile.closeRef || null,
+        popoutOpen: true
+      };
+      if (warnings.length) result.warnings = warnings;
+      return result;
     }
   }
 };

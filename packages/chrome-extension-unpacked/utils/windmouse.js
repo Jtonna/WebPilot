@@ -227,3 +227,26 @@ export function getPathStats(path) {
     maxHz: Math.round(1000 / minDt)
   };
 }
+
+/**
+ * A single mouseMoved ack slower than this means the renderer is not producing
+ * frames (occluded or throttled window): Chrome then acks each move only after
+ * ~1 s, so a 50-point path takes ~50 s and outlives the 30 s command timeout.
+ */
+export const SLOW_MOVE_MS = 300;
+
+/** Extra time allowed beyond the path's planned duration before giving up on it. */
+export const PATH_OVERRUN_MS = 2000;
+
+/**
+ * Whether the click handler should stop following the path and jump straight
+ * to the target. `moveMs` is how long the last mouseMoved took to ack,
+ * `elapsedMs` the time spent on the path so far, `plannedMs` its planned
+ * duration (getPathDuration).
+ *
+ * @param {{moveMs: number, elapsedMs: number, plannedMs: number}} t
+ * @returns {boolean}
+ */
+export function shouldAbandonPath({ moveMs, elapsedMs, plannedMs }) {
+  return moveMs >= SLOW_MOVE_MS || elapsedMs > plannedMs + PATH_OVERRUN_MS;
+}

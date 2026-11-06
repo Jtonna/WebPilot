@@ -12,6 +12,7 @@ import { injectScript, executeJs, handleNavigationComplete, handleTabClosed } fr
 import { click } from './handlers/click.js';
 import { scroll } from './handlers/scroll.js';
 import { type as typeText } from './handlers/keyboard.js';
+import { resolveNodes } from './handlers/resolve.js';
 
 // Auto-connect defaults
 const DEFAULT_SERVER_URL = 'ws://localhost:3456';
@@ -1015,6 +1016,9 @@ async function handleServerCommand(message) {
       case 'type':
         result = await typeText(params);
         organizeTab(params.tab_id);
+        break;
+      case 'resolve_nodes':
+        result = await resolveNodes(params);
         break;
       case 'reload_extension':
         // Developer hot-reload: ack first, then schedule chrome.runtime.reload

@@ -80,6 +80,8 @@ Site policy checks live outside the helper. Handle these cases if they apply:
 
 Full list of checked and exempt tools: [SITE_POLICY.md](SITE_POLICY.md#checked-and-exempt-tools).
 
+**Server-only commands.** Some extension commands are called only by server code and have no MCP tool (for example `resolve_nodes`, used by the formatter resolve pass and the `resolveRefs` workflow primitive). They need the `background.js` switch case and a server-side caller (`extensionBridge.sendCommand`), but no tool entry, schema or `handleToolCall` case. Gate them at their caller if they touch a tab, as `resolveRefs` does.
+
 If you opt into the legacy fall-through pattern instead, declare `commandType` and `commandParams`, then break — the trailing dispatch handles wrapping:
 
 ```javascript
@@ -428,7 +430,7 @@ Use this when adding a site-specific formatter (GitHub / public):
 ```
 [ ] 1. accessibility-tree-formatters/<site>/router.js — Create formatter (CommonJS, returns tree, elementCount, refs)
 [ ] 2. accessibility-tree-formatters/<site>/manifest.json — Per-formatter metadata (name, version, match, source, description; optional workflows[])
-[ ] 3. accessibility-tree-formatters/manifest.json — Add platform entry, add files to "files" array (include the per-formatter manifest.json), bump top-level "version"
+[ ] 3. accessibility-tree-formatters/manifest.json — Add platform entry, add files to "files" array (include the per-formatter manifest.json), bump top-level "version", then re-sign with `node scripts/sign-formatters.js` (needed again whenever any listed formatter file changes)
 [ ] 4. docs/ — Document the new platform
 [ ] 5. Push to main so auto-updater fetches the new version
 [ ] 6. Test with browser_get_accessibility_tree on target site

@@ -354,9 +354,11 @@ webpilot_run_workflow(
 → { "ok": true, "sent": true, "composerRef": "e42" }
 ```
 
-Discord also provides the sidebar workflows `check_sidebar`, `open_server` and `check_dm_list`, plus `open_member_list`, which opens the member list panel on a server channel page (it does nothing if the panel is already open). These accept an optional `timeoutMs` (default 42000, clamped to 1000..45000). After that deadline they return `{ pending: true, message, ... }` instead of throwing. A late click may still apply, so re-read state (for example with `check_sidebar` or the accessibility tree) before retrying. After a `pending` from `open_member_list`, check `memberListOpen` in the tree before clicking `memberListToggleRef`: the toggle closes the panel if it is already open. While an unnamed modal dialog covers the page, all five Discord workflows do nothing and return `{ ok: false, blocked: true, reason: "blocking_dialog", message, blockingDialog: { name, closeRef, buttons, headings } }`. This is a normal result, not a thrown failure, so it has no `error` or `diagnostics`. Fetch the accessibility tree, click the Close ref in its `--- BLOCKING POPUP: <name> ---` block (also available as `blockingDialog.closeRef`), then re-run the workflow.
+Discord also provides the sidebar workflows `check_sidebar`, `open_server` and `check_dm_list`, plus `open_member_list`, which opens the member list panel on a server channel page (it does nothing if the panel is already open). These accept an optional `timeoutMs` (default 42000, clamped to 1000..45000). After that deadline they return `{ pending: true, message, ... }` instead of throwing. A late click may still apply, so re-read state (for example with `check_sidebar` or the accessibility tree) before retrying. After a `pending` from `open_member_list`, check `memberListOpen` in the tree before clicking `memberListToggleRef`: the toggle closes the panel if it is already open. While an unnamed modal dialog covers the page, `send_message`, `check_sidebar`, `open_server`, `check_dm_list` and `open_member_list` return without clicking anything: `{ ok: false, blocked: true, reason: "blocking_dialog", message, blockingDialog: { name, closeRef, buttons, headings } }`. This is a normal result, not a thrown failure, so it has no `error` or `diagnostics`. Fetch the accessibility tree, click the Close ref in its `--- BLOCKING POPUP: <name> ---` block (also available as `blockingDialog.closeRef`), then re-run the workflow. `get_member_profile` is the exception: it does not pre-check for a blocking popup. It clicks first, then returns the same blocked result if a popup appears while it polls.
 
-Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' })` (matching names like `Message #general` or `Message @user`), clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
+`get_member_profile({ ref, timeoutMs? })` clicks a member-list row or message-author ref once and opens that member's profile popout. Pass a ref from a tree you just fetched, and do not fetch another tree first. It returns `{ ok, userId, username, displayName, roles, messageButtonRef, closeRef, popoutOpen, warnings? }`. The popout is left open. `messageButtonRef` is the popout's inline `Message @user` textbox: typing into it and pressing Enter sends a DM to that user. The popout has no close button, so click elsewhere to dismiss it. `userId` is `null` with a warning when node resolution is unavailable. On `pending: true` the click was made but the popout is not confirmed open, so re-read the tree and do not click again.
+
+Internally this workflow fetches the formatted accessibility tree, locates the composer textbox via `findInTree(tree, { name_starts_with: 'Message ', role: 'textbox' })` (matching names like `Message #general` or `Message @user`; textboxes inside dialogs, such as a profile popout's `Message @user` box, are ignored), clicks it, types the supplied text, and presses Enter — one MCP round-trip instead of four.
 
 **Errors:**
 - `platform_guide_required` — Tool blocked on formatter-covered URLs until the agent calls `webpilot_get_formatter_info({platform, tab_id})` to unlock the tab. The error envelope includes `platform`, `tab_id`, and an `unlock_call` object naming the required call. Pass `usePlatformOptimizer: false` to bypass when intentional.
@@ -590,6 +592,7 @@ Gets the accessibility tree (a11y DOM) of a browser tab. Returns a pre-filtered,
 | `postCount` | (Threads home/profile/search results) Number of posts extracted |
 | `listingCount` | (Zillow search/detail) Number of property listings extracted |
 | `platform` | (When optimizer used) Detected platform name |
+| *(formatter extras)* | Any other fields the matched formatter returns. Some are read from the page itself through the server's node-resolution pass, for example the Discord `users`, `usersResolved`, `members`, `recipientId` and `profile` extras and the `[user=<id>]` tags in its tree. If resolution is unavailable, the tree has no tags and `usersResolved` is `false`. |
 
 > **Note:** The handler passes through every field the formatter returns via a `...extras` spread (see `mcp-handler.js` `browser_get_accessibility_tree` response builder). The exact set of count/metadata fields depends on which formatter matched (`postCount`, `ghostCount`, `listingCount`, `activityCount`, etc.).
 
@@ -823,6 +826,7 @@ Clicks at specific coordinates in a browser tab using CDP mouse simulation. Simu
 | `delay` | number | Actual delay used between press and release (ms) |
 | `lingerDelay` | number | Cursor linger time after click before fade (ms) |
 | `scrolled` | boolean | Whether auto-scroll was performed to bring element into view |
+| `pathAbandoned` | boolean | `true` when slow `mouseMoved` acks (a throttled or occluded window) cut the path short and the cursor jumped straight to the target |
 | `path.points` | number | Number of points in the WindMouse path |
 | `path.duration` | number | Total path duration in ms |
 | `path.avgHz` | number | Average polling rate during movement |
@@ -872,6 +876,7 @@ By default, a visual cursor follows a human-like path using the WindMouse algori
   - ≥ 1200px: max 1000Hz
 - **Acceleration curve**: slow start → peak speed at 50-80% → slow end
 - Both visual cursor and CDP `mouseMoved` events are dispatched for each path point
+- **Path abandon**: if a `mouseMoved` ack takes 300 ms or more, or the path runs more than 2000 ms past its planned duration, the click stops following the path, sends one `mouseMoved` to the target, moves the visual cursor there, and reports `pathAbandoned: true`. This happens when the window is occluded or throttled and the renderer stops producing frames, which would otherwise stall each path point for about 1 s
 - SVG arrow pointer with "WebPilot" text label:
   - Arrow: black fill, white stroke, RGB color-shifting outer glow
   - Text: black fill, white stroke, RGB color-shifting outer glow (synced with arrow)

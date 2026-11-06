@@ -59,18 +59,29 @@ function makeEnv(state, opts = {}) {
         hasBlockingDialog: !!state.blocking,
         ...(state.blocking ? { blockingDialog: state.blocking } : {}),
         totalUnread: state.totalUnread === undefined ? null : state.totalUnread,
-        ...memberFields(state, env, g)
+        ...memberFields(state, env, g),
+        ...(state.profile ? { profile: state.profile } : {}),
+        ...(state.users ? { users: state.users } : {})
       };
     },
     async type(args) {
       env.types.push(args);
     },
+    ...(opts.resolveRefs
+      ? {
+          async resolveRefs(args) {
+            env.resolveCalls = env.resolveCalls || [];
+            env.resolveCalls.push({ ...args, fetchesAtCall: env.fetches });
+            return opts.resolveRefs(args, state, env);
+          }
+        }
+      : {}),
     async getTabs() {
       return [{ id: 1, url: 'https://example.com' }, { id: TAB, url: state.url }];
     },
     async click(args) {
       env.clicks.push(args);
-      if (args.ref) {
+      if (args.ref && !/^e\d+$/.test(args.ref)) {
         const m = /^g(\d+)-/.exec(args.ref);
         if (!m || Number(m[1]) !== env.gen) {
           env.stale.push(args.ref);
@@ -668,4 +679,193 @@ test('hasBlockingDialog false leaves open_server unchanged', async () => {
   assert.strictEqual(r.blocked, undefined);
   assert.strictEqual(r.alreadyOpen, true);
   assert.strictEqual(env.clicks.length, 0);
+});
+
+// ---------------------------------------------------------------- get_member_profile
+
+const PROFILE = {
+  name: 'Alice',
+  username: 'alice_h',
+  userId: '111',
+  roles: ['Admin', 'Mod'],
+  messageButtonRef: 'e50',
+  closeRef: null
+};
+
+// Clicking the ref opens the popout (sets state.profile) after `delay` ms.
+function profileClick(profile = PROFILE, { delay = 0 } = {}) {
+  return async (args, state) => {
+    const open = () => { state.profile = profile; };
+    if (delay) setTimeout(open, delay);
+    else open();
+  };
+}
+
+const USER = { id: '111', username: 'alice_h', globalName: 'Alice A' };
+
+test('get_member_profile: happy path resolves user, clicks once, returns fields', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick(), resolveRefs: async () => [USER] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.deepStrictEqual(r, {
+    ok: true,
+    userId: '111',
+    username: 'alice_h',
+    displayName: 'Alice A',
+    roles: ['Admin', 'Mod'],
+    messageButtonRef: 'e50',
+    closeRef: null,
+    popoutOpen: true
+  });
+  assert.strictEqual(env.clicks.length, 1);
+  assert.strictEqual(env.clicks[0].ref, 'e5');
+  assert.strictEqual(env.resolveCalls.length, 1);
+  assert.deepStrictEqual(env.resolveCalls[0].refs, ['e5']);
+  assert.strictEqual(env.resolveCalls[0].tab_id, TAB);
+  assert.ok(['function', 'string'].includes(typeof env.resolveCalls[0].resolver));
+});
+
+test('get_member_profile: no tree fetch before the click (refs stay valid)', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  let fetchesAtClick = -1;
+  const env = makeEnv(st, {
+    resolveRefs: async () => [USER],
+    onClick: async (args, state, e) => { fetchesAtClick = e.fetches; state.profile = PROFILE; }
+  });
+  await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(fetchesAtClick, 0);
+  assert.strictEqual(env.resolveCalls[0].fetchesAtCall, 0);
+});
+
+test('get_member_profile: displayName falls back to profile name, username, then users{} globalName', async () => {
+  let st = serverState([], { pageType: 'server_channel' });
+  let env = makeEnv(st, {
+    onClick: profileClick(),
+    resolveRefs: async () => [{ id: '111', username: 'alice_h', globalName: null }]
+  });
+  let r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.displayName, 'Alice');
+
+  st = serverState([], { pageType: 'server_channel' });
+  env = makeEnv(st, { onClick: profileClick({ ...PROFILE, name: null }), resolveRefs: async () => [null] });
+  r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.displayName, 'alice_h');
+
+  st = serverState([], {
+    pageType: 'server_channel',
+    users: { 111: { id: '111', username: 'alice_h', globalName: 'From Users' } }
+  });
+  env = makeEnv(st, { onClick: profileClick(), resolveRefs: async () => [{ id: '111' }] });
+  r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.username, 'alice_h');
+  assert.strictEqual(r.displayName, 'From Users');
+});
+
+test('get_member_profile: resolveRefs undefined -> profile.userId with warning', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick() });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.userId, '111');
+  // Live 2.4.0 case: popout "Jtonna" / handle "notboosted" must report the
+  // popout name as displayName, not the handle.
+  assert.strictEqual(r.displayName, 'Alice');
+  assert.strictEqual(r.username, 'alice_h');
+  assert.ok(r.warnings.some((w) => /does not support node resolution/.test(w)));
+  assert.strictEqual(env.clicks.length, 1);
+});
+
+test('get_member_profile: resolveRefs undefined and no profile id -> null userId with warnings', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick({ ...PROFILE, userId: null }) });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.userId, null);
+  assert.strictEqual(r.username, 'alice_h');
+  assert.ok(r.warnings.some((w) => /could not be determined/.test(w)));
+});
+
+test('get_member_profile: resolveRefs throwing falls back with warning', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, {
+    onClick: profileClick(),
+    resolveRefs: async () => { throw new Error('unknown command resolve_nodes'); }
+  });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.userId, '111');
+  assert.ok(r.warnings.some((w) => /user id resolution unavailable: unknown command/.test(w)));
+  assert.strictEqual(env.clicks.length, 1);
+});
+
+test('get_member_profile: unresolved ref (null) warns but still opens popout', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick(), resolveRefs: async () => [null] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.userId, '111');
+  assert.ok(r.warnings.some((w) => /did not resolve to a user/.test(w)));
+});
+
+test('get_member_profile: site-policy block from resolveRefs is rethrown, no click', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, {
+    onClick: profileClick(),
+    resolveRefs: async () => {
+      const e = new Error('blocked by policy');
+      e.__sitePolicyEnvelope = { blocked: true };
+      throw e;
+    }
+  });
+  await assert.rejects(run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 }), /blocked by policy/);
+  assert.strictEqual(env.clicks.length, 0);
+});
+
+test('get_member_profile: waits for the popout and clicks exactly once', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick(PROFILE, { delay: 800 }), resolveRefs: async () => [USER] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 3000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(env.clicks.length, 1);
+  assert.ok(env.fetches >= 2);
+});
+
+test('get_member_profile: blocking popup after the click returns blocked result', async () => {
+  const st = serverState([], { pageType: 'server_channel', blocking: BLOCKING });
+  const env = makeEnv(st, { resolveRefs: async () => [USER] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.blocked, true);
+  assert.strictEqual(r.reason, 'blocking_dialog');
+  assert.strictEqual(env.clicks.length, 1);
+});
+
+test('get_member_profile: no popout before deadline returns pending, no second click', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { resolveRefs: async () => [USER] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 1000 });
+  assert.strictEqual(r.pending, true);
+  assert.ok(/do NOT click again/.test(r.message));
+  assert.strictEqual(env.clicks.length, 1);
+});
+
+test('get_member_profile: invalid ref or tabId throws', async () => {
+  const env = makeEnv(serverState([]));
+  for (const ref of [undefined, '', 'x5', 'e', 'e5 ', 5]) {
+    await assert.rejects(run('get_member_profile', env, { ref }), /params\.ref/);
+  }
+  await assert.rejects(run('get_member_profile', env, { ref: 'e5' }, 'nope'), /tab_id/);
+  assert.strictEqual(env.clicks.length, 0);
+});
+
+test('get_member_profile: id mismatch between resolver and popout warns', async () => {
+  const st = serverState([], { pageType: 'server_channel' });
+  const env = makeEnv(st, { onClick: profileClick(), resolveRefs: async () => [{ ...USER, id: '222' }] });
+  const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.userId, '222');
+  assert.ok(r.warnings.some((w) => /differs from profile popout/.test(w)));
+});
+
+test('get_member_profile: declared in the manifest with ref and timeoutMs params', () => {
+  const w = manifest.workflows.find((x) => x.name === 'get_member_profile');
+  assert.ok(w);
+  assert.deepStrictEqual(Object.keys(w.parameters).sort(), ['ref', 'timeoutMs']);
 });
