@@ -6,7 +6,7 @@ import { getBackendNodeId, getRefContext, findRefByAncestry } from '../accessibi
 import { getAccessibilityTree } from './accessibility.js';
 import { getSession } from '../utils/debugger.js';
 import { getWeightedRandomDelay } from '../utils/timing.js';
-import { generateWindMousePath, getPathStats } from '../utils/windmouse.js';
+import { generateWindMousePath, getPathStats, getPathDuration, shouldAbandonPath } from '../utils/windmouse.js';
 import { getStartPosition, setLastPosition } from '../utils/mouse-state.js';
 import {
   generateCursorCreateCode,
@@ -356,10 +356,19 @@ export async function click(params) {
     // Follow the path - dispatch mouseMoved and update visual cursor for each point
     phaseLog('path_iter_start', { points: path.length });
     let pathStallCount = 0;
+    // A renderer that is not producing frames (occluded or throttled window)
+    // acks each mouseMoved only after ~1 s, so following a long path would take
+    // longer than the server's command timeout and the click would land after
+    // the caller gave up. Stop following the path once moves ack slowly (or the
+    // path overruns its planned duration) and jump straight to the target.
+    const plannedPathMs = getPathDuration(path);
+    const pathT0 = Date.now();
+    let pathAbandoned = false;
     for (const point of path) {
       if (detached) break;
 
       // Dispatch CDP mouseMoved event with per-call stall watchdog.
+      const moveT0 = Date.now();
       const moveResult = await safeCdp(
         chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved',
@@ -370,6 +379,10 @@ export async function click(params) {
       );
       if (moveResult && moveResult.__stalled) { pathStallCount++; break; }
       if (moveResult && moveResult.__detached) break;
+      if (shouldAbandonPath({ moveMs: Date.now() - moveT0, elapsedMs: Date.now() - pathT0, plannedMs: plannedPathMs })) {
+        pathAbandoned = true;
+        break;
+      }
 
       // Update visual cursor position (only when not detached/stalled).
       if (showCursor && !detached) {
@@ -389,7 +402,22 @@ export async function click(params) {
         await sleep(point.dt);
       }
     }
-    phaseLog('path_iter_done', { stalled: pathStallCount > 0, detached });
+    if (pathAbandoned && !detached) {
+      await safeCdp(
+        chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }),
+        'mouseMovedToTarget'
+      );
+      if (showCursor && !detached) {
+        await safeCdp(
+          chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+            expression: generateCursorMoveCode(x, y),
+            returnByValue: true
+          }),
+          'cursorMove'
+        );
+      }
+    }
+    phaseLog('path_iter_done', { stalled: pathStallCount > 0, detached, pathAbandoned });
 
     // Play ripple animation (skip if already detached)
     if (showCursor && !detached) {
@@ -488,6 +516,9 @@ export async function click(params) {
       delay: clickDelay,
       lingerDelay,
       scrolled,
+      // true when slow mouseMoved acks (renderer not producing frames) cut the
+      // path short and the cursor jumped straight to the target.
+      pathAbandoned,
       // navigated=true means the click triggered a context teardown
       // (SPA navigation, full-page load, tab close, etc.) OR a CDP stall
       // (Chrome's renderer froze long enough that the per-call watchdog
