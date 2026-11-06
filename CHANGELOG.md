@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- MCP formatter authoring guide (`howToCreateCustomFormatter` in `webpilot_get_formatter_info`) now covers `workflows.js` (loader rules, `browser` primitives, deadline and pending conventions), the per-platform `manifest.json` (`notes`, custom `-custom` version suffix, shadowing) and a runnable page-side node resolution example with rules and limits. The MCP instructions and the `webpilot_get_formatter_info` and `webpilot_run_workflow` descriptions point agents to it; the guide now says formatters receive only `nodes` and to use `webpilot_reload_formatters`. (#163)
 - Discord formatter: `--- Servers ---` sidebar section (with folders) and `--- Navigation ---` section, plus workflows `check_sidebar`, `open_server` and `check_dm_list`. (#148)
 - Discord formatter: member list toggle line (`Show Member List` / `Hide Member List`) on server channel pages, new response fields `memberListOpen`, `memberListToggleRef`, `memberTotal` and `groups`, and workflow `open_member_list`. (#152)
 - Site policy event log: one row per agent + domain (domain only, no path). (#103)
