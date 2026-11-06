@@ -73,6 +73,8 @@ that points at each formatter's entry file and lists files to sync.
 | `errorHandling` | no | object | `{ fallbackToRawTree: boolean }` — when `true`, the manager returns the raw CDP tree if the formatter throws. Defaults to `true` if absent. |
 | `workflows` | no | array | Workflow declarations consumed by `webpilot_run_workflow`. Each entry: `{ name, description, parameters }`. Implementations live in a sibling `workflows.js`. See "Workflows" below. Default `[]`. |
 
+> **Missing required fields:** if `name`, `version`, `match`, `source` or `description` is missing, or the file is not valid JSON, the loader replaces the manifest with an empty synthesized one (`source` forced to `"custom"`): `notes` are lost and no workflows load. For a custom formatter that shadows a remote one of the same name, use a version suffix such as `1.0.0-custom` to tell the copies apart.
+
 > **Note on `version`**: This per-formatter `version` field is **informational only**. Auto-updates are triggered exclusively by the TOP-LEVEL `accessibility-tree-formatters/manifest.json` `version` bump. Bump that (and regenerate `signed-manifest.json` via `node scripts/sign-formatters.js`) when any formatter file changes. Bumping a per-formatter `version` alone does nothing — the auto-updater never reads it.
 
 ### `source` semantics

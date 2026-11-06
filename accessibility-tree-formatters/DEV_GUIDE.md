@@ -18,6 +18,8 @@ edit → reload → test on a real page → check logs if it broke → repeat
 
 Each step has an MCP tool. None of them require restarting the WebPilot server.
 
+An agent with only MCP access can build a formatter, workflows and node resolution from the `howToCreateCustomFormatter` field of `webpilot_get_formatter_info` (it mirrors this guide and `MANIFEST_SCHEMA.md`). Keep the two in sync when either changes.
+
 | Step | Tool | What it does |
 |---|---|---|
 | Discover | `webpilot_get_formatter_info` | Lists every loaded formatter, versions, manifest notes, and the path to drop custom files (`customFormatterDir`). Calling this also triggers a reload from disk, so it doubles as a no-auth way to pick up your latest edit. |
