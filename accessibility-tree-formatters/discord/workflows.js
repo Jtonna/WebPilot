@@ -675,8 +675,10 @@ module.exports = {
       const known = (userId && users[userId]) || {};
       const username =
         (resolvedUser && resolvedUser.username) || known.username || profile.username || null;
+      // The popout header name is the visible display name; prefer it over the
+      // handle when no globalName is known (e.g. no node resolution).
       const displayName =
-        (resolvedUser && resolvedUser.globalName) || known.globalName || username || profile.name || null;
+        (resolvedUser && resolvedUser.globalName) || known.globalName || profile.name || username || null;
       if (!userId) warnings.push('user id could not be determined');
       const result = {
         ok: true,

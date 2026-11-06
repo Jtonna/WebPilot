@@ -737,13 +737,18 @@ test('get_member_profile: no tree fetch before the click (refs stay valid)', asy
   assert.strictEqual(env.resolveCalls[0].fetchesAtCall, 0);
 });
 
-test('get_member_profile: displayName falls back to username, then users{} globalName', async () => {
+test('get_member_profile: displayName falls back to profile name, username, then users{} globalName', async () => {
   let st = serverState([], { pageType: 'server_channel' });
   let env = makeEnv(st, {
     onClick: profileClick(),
     resolveRefs: async () => [{ id: '111', username: 'alice_h', globalName: null }]
   });
   let r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
+  assert.strictEqual(r.displayName, 'Alice');
+
+  st = serverState([], { pageType: 'server_channel' });
+  env = makeEnv(st, { onClick: profileClick({ ...PROFILE, name: null }), resolveRefs: async () => [null] });
+  r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
   assert.strictEqual(r.displayName, 'alice_h');
 
   st = serverState([], {
@@ -762,7 +767,10 @@ test('get_member_profile: resolveRefs undefined -> profile.userId with warning',
   const r = await run('get_member_profile', env, { ref: 'e5', timeoutMs: 2000 });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.userId, '111');
-  assert.strictEqual(r.displayName, 'alice_h');
+  // Live 2.4.0 case: popout "Jtonna" / handle "notboosted" must report the
+  // popout name as displayName, not the handle.
+  assert.strictEqual(r.displayName, 'Alice');
+  assert.strictEqual(r.username, 'alice_h');
   assert.ok(r.warnings.some((w) => /does not support node resolution/.test(w)));
   assert.strictEqual(env.clicks.length, 1);
 });
