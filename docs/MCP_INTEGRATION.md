@@ -232,7 +232,7 @@ Get information about available platform-specific formatters and instructions fo
 | `default` | Description of fallback behavior when no formatter matches |
 | `customFormatterDir` | Absolute path to the `custom-formatters/` directory on this machine |
 | `formatterApiContract` | Input/output specification for the formatter API |
-| `howToCreateCustomFormatter` | Authoring guide for writing a custom platform formatter |
+| `howToCreateCustomFormatter` | Authoring guide for writing a custom platform formatter. Sections: `functionSignature`/`customFormatters` (formatter function, custom dir, reload), `workflows` (`workflows.js`, `browser` primitives, conventions, skeleton), `platformManifest` (per-platform `manifest.json`, `notes`, custom `-custom` version suffix, shadowing), `nodeResolution` (page-side `__resolve`, `browser.resolveRefs`, rules, limits, runnable example) |
 
 **Example Usage:**
 ```
@@ -248,7 +248,7 @@ webpilot_get_formatter_info(platform="threads")
 **Notes:**
 - This tool does not require an API key (unauthenticated, like `request_pairing`, `check_pairing_status`, and `webpilot_dev_get_formatter_logs`).
 - Use this tool to understand what platform formatters are available before calling `browser_get_accessibility_tree`
-- The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform
+- The `howToCreateCustomFormatter` field provides a full guide for agents or users who want to author a custom formatter for a new platform, including workflows, the per-platform manifest (`notes` is what other agents read) and page-side node resolution. The top-level MCP instructions and the descriptions of this tool and `webpilot_run_workflow` point agents at it
 - Calling this tool also triggers a live reload of both manifests, so changes to `custom-formatters/manifest.json` are picked up immediately
 
 ---

@@ -301,7 +301,7 @@ For **private or internal sites** that you don't want to publish to the GitHub r
      "files": ["my-formatter.js"]
    }
    ```
-3. Restart the server or call `webpilot_get_formatter_info` to reload
+3. Call `webpilot_reload_formatters` (no restart needed) to load your changes
 
 Custom formatters are never overwritten by auto-updates and take priority over auto-updated formatters for the same domain. The formatter file format is identical to the GitHub-hosted approach — same CommonJS module, same return shape.
 

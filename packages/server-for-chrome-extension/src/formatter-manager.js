@@ -566,22 +566,140 @@ function getFormatterApiContract() {
 
 function getHowToCreateCustomFormatter() {
   return {
+    overview: 'A formatter is a JS function that turns raw accessibility nodes into a compact tree for agents. A platform may also ship workflows (server-side multi-step actions run via webpilot_run_workflow), a per-platform manifest whose `notes` field is read by other agents, and page-side node resolution for data that is not in the accessibility tree. Build order: formatter + manifest, reload and test, then workflows, then node resolution only if needed.',
     modulePattern: 'CommonJS module exporting a single function',
-    functionSignature: 'function formatSiteName(nodes) — receives array of raw CDP accessibility nodes',
+    functionSignature: 'function formatSiteName(nodes) — receives ONLY the array of raw CDP accessibility nodes (no url argument). To route by page type, read the RootWebArea node\'s `url` property (an entry named "url" in its properties array) and delegate to page-specific sub-formatters.',
     outputRequirements: 'Must return { tree: string, elementCount: number, refs: { e1: backendDOMNodeId, e2: ... }, ...optionalExtras }',
     refsExplanation: 'The refs object maps ref strings to backendDOMNodeId values. These refs enable the agent to target elements with browser_click, browser_scroll, and browser_type tools.',
-    nodeResolution: {
-      purpose: 'Read values only available in the page (e.g. React fiber props) for specific accessibility nodes, then fold them into the tree.',
-      how: 'Attach a non-enumerable __resolve = { resolvers, requests, apply } to the returned result. resolvers are function source strings run with this = the DOM element; apply(resolvedByKey) returns the annotated result.',
-      workflows: 'Workflows can call browser.resolveRefs({ tab_id, refs, resolver }) to run a resolver function on refs from the latest tree; it returns one value (or null) per ref and throws on failure.',
-      failureMode: 'If resolution fails the base result is returned unchanged.'
-    },
-    routerPattern: 'For multi-page sites, export a router function that detects the page type from the URL and delegates to page-specific sub-formatters.',
+    routerPattern: 'For multi-page sites, export a router function that detects the page type from the RootWebArea node\'s url and delegates to page-specific sub-formatters.',
     customFormatters: {
-      step1: 'Drop your formatter files into the custom-formatters directory (path shown in the customFormatterDir field of this response)',
-      step2: 'Edit custom-formatters/manifest.json to add your platform entry under "platforms": { "myplatform": { "match": "hostname-substring", "entry": "my-formatter.js" } }',
+      step1: 'Create a directory per platform inside the custom-formatters directory (path shown in the customFormatterDir field of this response), e.g. <customFormatterDir>/myplatform/myplatform.js, plus myplatform/manifest.json (see platformManifest) and optionally myplatform/workflows.js (see workflows).',
+      step2: 'Edit <customFormatterDir>/manifest.json to add your platform entry under "platforms": { "myplatform": { "match": "hostname-substring", "entry": "myplatform/myplatform.js" } }. "match" is a substring test against the tab URL hostname; the first matching platform wins.',
       step3: 'Custom formatters are never overwritten by auto-updates — they persist across server updates',
-      step4: 'Restart the server or call webpilot_get_formatter_info to trigger a reload'
+      step4: 'Call webpilot_reload_formatters to load your changes (no server restart needed), then test with browser_get_accessibility_tree or webpilot_run_workflow. If something broke, call webpilot_dev_get_formatter_logs with platform set to your platform name.'
+    },
+    workflows: {
+      purpose: 'A workflow bundles several browser actions into one named operation that agents run with webpilot_run_workflow({ platform, workflow, tab_id, params }).',
+      files: 'Put workflows in workflows.js next to the formatter entry file (same directory). It must export an object map: module.exports = { my_workflow: { description, parameters, run } }.',
+      exportRule: 'EVERY export is treated as a workflow. Do not export helpers, constants or the formatter; keep them module-private. An export that is not declared in the platform manifest is skipped with a warning.',
+      declaration: 'Declare each workflow in the platform manifest.json under "workflows": [{ name, description, parameters }]. The description and parameters must be identical to the ones exported from workflows.js. parameters is a map of { paramName: { type, description } } where type is string, number, boolean, object or array. A workflow is only registered if the manifest declares it AND the export has description (non-empty string), parameters (object) and run (function). webpilot_get_formatter_info shows implemented: true for registered ones.',
+      runSignature: 'async run({ params, browser, tabId, findInTree }) -> JSON-serializable object. The server wraps it as { ok: true, ...result }; a thrown error becomes a failed call and is recorded in webpilot_dev_get_formatter_logs. Declared param types are checked before run() starts, but every param is optional, so run() must assert the ones it needs.',
+      browserPrimitives: [
+        'browser.getAccessibilityTree({ tab_id, usePlatformOptimizer? }) -> the formatted result { tree, elementCount, refs, ...extras } (not the raw nodes)',
+        'browser.click({ tab_id, ref? | selector? | x, y, button?, clickCount?, delay?, showCursor? })',
+        'browser.type({ tab_id, text, ref? | selector?, delay?, pressEnter? })',
+        'browser.scroll({ tab_id, ref? | selector?, pixels?, direction?, amount? })',
+        'browser.getTabs() -> open tabs',
+        'browser.createTab({ url })',
+        'browser.resolveRefs({ tab_id, refs, resolver }) -> one JSON value (or null) per ref; resolver is a self-contained function (or its source string) run in the page with this = the element; throws on failure (see nodeResolution)'
+      ],
+      sitePolicy: 'Every primitive except getTabs is checked against the site policy on each call (resolveRefs is checked like getAccessibilityTree). A blocked call throws; let it propagate so the caller gets the policy result, and do not retry.',
+      findInTree: 'findInTree(treeResult, selector) searches the formatted tree STRING (not raw nodes), so match what your formatter prints. Selector keys (all optional, ANDed): role (case-insensitive substring of the line), name (exact line text after the [eN] prefix), name_starts_with (prefix), name_contains (case-insensitive substring). Returns { ref, line } for the first matching line or null. Example: findInTree(tree, { role: "textbox", name_starts_with: "Message " }).',
+      conventions: [
+        'Refs are only valid for the latest tree of a tab. Fetch a tree, find the ref, act on it. If a caller hands you a ref (e.g. as a param), click it directly: fetching a new tree in between invalidates it.',
+        'Set one overall deadline (e.g. a timeoutMs param, default under ~45s) and check it in every wait/poll loop. On expiry return { pending: true, message } telling the caller to re-read state (get the tree) before retrying. Never blindly repeat a click: a click on a background tab can time out yet still apply late.',
+        'Return { ok: false, reason, message } for expected failures (not found, wrong page, blocking dialog). Throw only for genuine errors.',
+        'Validate params at the top of run() (type, non-empty, ranges) and fail fast with a clear message.',
+        'Keep helpers module-private (not exported) and results small: return only what the caller needs.'
+      ],
+      skeleton: [
+        "'use strict';",
+        "module.exports = {",
+        "  open_item: {",
+        "    description: 'Open the first link whose name contains the given text.',",
+        "    parameters: { name: { type: 'string', description: 'Text to look for.' } },",
+        "    async run({ params, browser, tabId, findInTree }) {",
+        "      if (typeof params.name !== 'string' || !params.name) return { ok: false, reason: 'bad_params', message: 'name is required' };",
+        "      const tree = await browser.getAccessibilityTree({ tab_id: tabId });",
+        "      const hit = findInTree(tree, { role: 'link', name_contains: params.name });",
+        "      if (!hit) return { ok: false, reason: 'not_found', message: 'No link matches ' + params.name };",
+        "      await browser.click({ tab_id: tabId, ref: hit.ref });",
+        "      return { clicked: hit.line };",
+        "    }",
+        "  }",
+        "};"
+      ]
+    },
+    platformManifest: {
+      file: '<platform dir>/manifest.json, next to the formatter entry file (e.g. <customFormatterDir>/myplatform/manifest.json).',
+      fields: {
+        name: 'required — platform name; match the directory and the key in the top-level manifest.json',
+        version: 'required — informational semver; bump it on every edit so webpilot_reload_formatters shows your edit took effect. For custom formatters use a suffix such as "1.0.0-custom" to tell it apart from a remote copy',
+        match: 'required — hostname substring (same as in the top-level manifest entry)',
+        source: 'required by the loader but overridden by where the file lives (custom dir => "custom"); write "custom"',
+        description: 'required — one line on what the formatter covers',
+        notes: 'optional but important — this is the text OTHER agents read through webpilot_get_formatter_info. Put usage instructions here: how pages are laid out, what the tree and extras contain, which workflows to use and in what order, their params, edge cases, what a pending result means.',
+        errorHandling: 'optional — { fallbackToRawTree: true } (default) falls back to the default formatter output if your formatter throws; false surfaces the error',
+        workflows: 'optional — array of { name, description, parameters } (see workflows)'
+      },
+      loaderRules: 'If name, version, match, source or description is missing (or the file is not valid JSON) the manifest is replaced by an empty synthesized one: notes are lost and no workflows load. A manifest-declared workflow with no valid implementation shows implemented: false.',
+      shadowing: 'A custom platform with the same name as a remote (auto-updated) platform replaces it for routing and workflows; webpilot_get_formatter_info lists the replaced one under shadowedRemote. Either keep your copy in sync with upstream or remove the custom entry to go back to the remote one.',
+      example: [
+        '{',
+        '  "name": "mysite", "version": "1.0.0-custom", "match": "mysite.com", "source": "custom",',
+        '  "description": "MySite listings and item pages",',
+        '  "notes": "Item pages show [eN] links; run open_item({name}) to open one. Links carry [id=...] tags when node resolution is available.",',
+        '  "errorHandling": { "fallbackToRawTree": true },',
+        '  "workflows": [{ "name": "open_item", "description": "Open the first link whose name contains the given text.", "parameters": { "name": { "type": "string", "description": "Text to look for." } } }]',
+        '}'
+      ]
+    },
+    nodeResolution: {
+      purpose: 'Read values that exist only in the page (e.g. data attributes, framework internals) for specific accessibility nodes, then fold them into the tree. Optional: formatters that do not need it never touch it.',
+      how: 'Attach a NON-ENUMERABLE __resolve = { resolvers, requests, apply } to the returned result. resolvers: { name: "function source string" }. requests: [{ key, backendNodeId, resolver: name }] (build them from the nodes\' backendDOMNodeId while formatting). apply(resolvedByKey) receives { key: value } for non-null results and must return a NEW full result with a string tree. Resolvers run in the page with this = the DOM element for the node; the original refs and elementCount are kept.',
+      workflows: 'Workflows can run the same kind of function on refs from the latest tree: await browser.resolveRefs({ tab_id: tabId, refs: ["e5"], resolver: fn }) returns one value (or null) per ref and throws on failure. Use it when you need data for a few elements without re-annotating the whole tree.',
+      rules: [
+        'Resolvers must be self-contained: no closures over outer variables, no eval/new Function, no imports. They are serialized with fn.toString() and run in the page.',
+        'Return only JSON-serializable values, and only the fields you need (small strings, numbers, flat objects). Return null when nothing is found; wrap the body in try/catch.',
+        'Never read or return secrets: auth tokens, localStorage/sessionStorage, cookies, passwords.',
+        'Cap any walk (ancestors, framework fiber chains, children) with an explicit depth/iteration limit.',
+        'Resolution can fail silently (older extension or server, timeout, thrown error) and then the base result is returned as is, so the base tree must already be valid and useful without the extra data.',
+        'apply must not mutate the original result and must return a plain new object (spreading the result drops the non-enumerable __resolve).'
+      ],
+      limits: 'At most 1000 requests per tree, 500 node ids per extension call, 10 calls (grouped per resolver); resolver source up to 32KB; 5 second timeout; the returned tree may be at most 2x the original length + 4KB, otherwise the base result is used.',
+      failureMode: 'If resolution fails the base result is returned unchanged.',
+      example: [
+        "'use strict';",
+        "// Runs in the page: this = the DOM element. Self-contained, JSON-only, never throws.",
+        "function readItemId() {",
+        "  try {",
+        "    return this.getAttribute('data-item-id') || null;",
+        "  } catch (e) {",
+        "    return null;",
+        "  }",
+        "}",
+        "module.exports = function formatMysite(nodes) {",
+        "  const refs = {};",
+        "  const requests = [];",
+        "  let refCounter = 1;",
+        "  let tree = '';",
+        "  for (const node of nodes) {",
+        "    if (node.ignored) continue;",
+        "    const ref = 'e' + refCounter++;",
+        "    refs[ref] = node.backendDOMNodeId;",
+        "    tree += `[${ref}] ${node.role.value}: ${node.name?.value || ''}\\n`;",
+        "    if (node.role.value === 'link' && node.backendDOMNodeId) {",
+        "      requests.push({ key: ref, backendNodeId: node.backendDOMNodeId, resolver: 'itemId' });",
+        "    }",
+        "  }",
+        "  const result = { tree, elementCount: Object.keys(refs).length, refs };",
+        "  Object.defineProperty(result, '__resolve', {",
+        "    enumerable: false,",
+        "    value: {",
+        "      resolvers: { itemId: readItemId.toString() },",
+        "      requests,",
+        "      apply(resolvedByKey) {",
+        "        const lines = tree.split('\\n').map((line) => {",
+        "          const m = line.match(/^\\[(e\\d+)\\]/);",
+        "          return m && resolvedByKey[m[1]] ? `${line} [id=${resolvedByKey[m[1]]}]` : line;",
+        "        });",
+        "        return { ...result, tree: lines.join('\\n') };",
+        "      }",
+        "    }",
+        "  });",
+        "  return result;",
+        "};"
+      ]
     },
     autoUpdatedFormatters: {
       step1: 'Add an entry to manifest.json under "platforms" with: "match" (hostname substring to match), "entry" (relative path to your formatter file), and "files" (array of ALL files included in your formatter)',
